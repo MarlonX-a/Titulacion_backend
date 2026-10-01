@@ -1,114 +1,169 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Backend del Sistema de Gestión del Proceso de Titulación
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API REST con NestJS 12 y TypeScript, organizada como un monolito modular.
+Las reglas del proyecto están en `AGENTS.md`.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Estado actual
 
-## Description
+Etapas implementadas: configuración por variables de entorno, validación HTTP
+global, Swagger/OpenAPI y conexión a PostgreSQL mediante TypeORM.
+`GET /` conserva la respuesta `Hello World!` de la plantilla inicial.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Se utiliza PostgreSQL 17 para aprovechar la instalación local existente, en
+lugar del PostgreSQL 16 indicado en el C4. La base de desarrollo es
+`titulacion_bd`; las tablas del DER se incorporarán junto con cada módulo.
+La autenticación institucional y los módulos de titulación siguen pendientes.
+La integración de Observe permanece desactivada.
 
-## Project setup
+Dependencias de base de datos: `@nestjs/typeorm` 12.0.2, `typeorm` 0.3.31 y
+`pg` 8.23.1. Se usó el parche 0.3.31 en lugar del 0.3.28 previsto para corregir
+la [vulnerabilidad del generador de migraciones](https://github.com/typeorm/typeorm/security/advisories/GHSA-2rp8-mm9q-fp49).
 
-```bash
-$ npm install
+## Instalación y ejecución
+
+Las herramientas actuales del proyecto requieren Node.js `22.22.3` o superior
+en la rama 22, o `24.15.0` o superior en la rama 24.
+
+Desde la raíz del backend:
+
+```powershell
+npm ci
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-## Compile and run the project
+Configura las credenciales de PostgreSQL en `.env` antes de iniciar el backend.
+`DB_PASSWORD=CAMBIAR_PASSWORD` es únicamente un ejemplo, no una contraseña real.
+No incluyas `.env` en Git. También puedes proporcionar todas las variables desde
+el entorno de ejecución; en ese caso no necesitas el archivo.
 
-```bash
-# development
-$ npm run start
+La base indicada en `DB_NAME` debe existir y PostgreSQL debe estar iniciado.
+La aplicación no crea bases de datos ni usuarios de PostgreSQL.
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+```powershell
+npm run db:check
+npm run start:dev
 ```
 
-## Run tests
+Con la configuración de desarrollo:
 
-```bash
-# unit tests
-$ npm run test
+- [Aplicación](http://localhost:3000/)
+- [Swagger](http://localhost:3000/docs)
+- [OpenAPI JSON](http://localhost:3000/docs-json)
 
-# e2e tests
-$ npm run test:e2e
+Después de cambiar variables de entorno, reinicia el proceso.
 
-# test coverage
-$ npm run test:cov
+## Variables de entorno
+
+El backend lee `.env`. Una variable definida en el entorno de ejecución tiene
+prioridad sobre la misma variable del archivo.
+
+| Variable          | Valores permitidos                  | Predeterminado si se omite                        |
+| ----------------- | ----------------------------------- | ------------------------------------------------- |
+| `NODE_ENV`        | `development`, `test`, `production` | `development`                                     |
+| `PORT`            | Entero decimal entre `1` y `65535`  | `3000`                                            |
+| `SWAGGER_ENABLED` | Exactamente `true` o `false`        | `true` fuera de producción; `false` en producción |
+| `DB_HOST`         | Host no vacío                       | `localhost`                                       |
+| `DB_PORT`         | Entero decimal entre `1` y `65535`  | `5432`                                            |
+| `DB_USERNAME`     | Usuario PostgreSQL no vacío         | Obligatorio                                       |
+| `DB_PASSWORD`     | Contraseña no vacía                 | Obligatorio                                       |
+| `DB_NAME`         | Nombre de base de datos no vacío    | Obligatorio                                       |
+
+Un valor vacío o inválido detiene el arranque e identifica la variable afectada,
+sin incluir su valor en el error. `PORT` se convierte a número y
+`SWAGGER_ENABLED` a booleano antes de usarlos. `DB_PORT` también se convierte
+a número. Las credenciales de base de datos son obligatorias en todos los
+entornos, incluidas las pruebas, que usan valores ficticios.
+
+`.env.example` habilita Swagger explícitamente. Para deshabilitarlo, usa
+`SWAGGER_ENABLED=false`. Para aplicar el comportamiento automático según
+`NODE_ENV`, elimina o comenta la línea `SWAGGER_ENABLED`.
+
+Para ejecutar la compilación en producción desde PowerShell:
+
+```powershell
+npm run build
+$env:NODE_ENV = 'production'
+$env:SWAGGER_ENABLED = 'false'
+npm run start:prod
 ```
 
-## Deployment
+## Conexión y migraciones
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+`DatabaseModule` usa las mismas opciones de conexión que el `DataSource` del CLI.
+El arranque espera a PostgreSQL y realiza hasta tres intentos, con 1 segundo
+entre intentos y un máximo de 5 segundos para establecer cada conexión.
+La aplicación cierra su conexión al apagarse. Los errores de inicialización
+no imprimen credenciales.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+`synchronize`, `dropSchema`, `migrationsRun` e `installExtensions` están
+desactivados. Iniciar la API y ejecutar `db:check` no crea tablas ni ejecuta
+migraciones. `db:check` comprueba `SELECT 1`, cierra la conexión y termina con
+código `0` si funciona o `1` si falla.
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+Desde la raíz del backend, los comandos disponibles son:
+
+```powershell
+# Ver migraciones disponibles y aplicadas
+npm run migration:show
+
+# Generar una migración al incorporar o modificar entidades
+npm run migration:generate -- src/database/migrations/NombreDelCambio
+
+# Crear una migración para escribir SQL manualmente cuando corresponda
+npm run migration:create -- src/database/migrations/NombreDelCambio
+
+# Aplicar migraciones pendientes
+npm run migration:run
+
+# Revertir únicamente la última migración aplicada, ejecutando su down()
+npm run migration:revert
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Todavía no hay entidades ni migraciones de dominio. No es necesario ejecutar
+`migration:create` ahora. Si no hay diferencias de esquema, `migration:generate`
+no genera archivos y termina con código `1`; eso no indica un fallo de conexión.
+Revisa el SQL generado y el DER antes de aplicar una migración.
 
-## Observability
+TypeORM puede crear la tabla técnica `migrations` al consultar o ejecutar
+migraciones por primera vez. Esa tabla registra las migraciones aplicadas y no
+forma parte del dominio de titulación.
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+Los comandos que necesitan conexión compilan previamente y cargan
+`dist/database/data-source.js`. Las entidades se descubrirán como
+`*.entity.js` dentro de `dist`, y las migraciones como `*.js` en
+`dist/database/migrations`. Los archivos fuente se mantienen en TypeScript y
+las migraciones se guardan en `src/database/migrations`. No se requieren
+`ts-node`, Docker ni cambios manuales del esquema para esta etapa.
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+## Validación y documentación
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+La configuración compartida de la aplicación está en `src/config/setup-app.ts`;
+el arranque y las pruebas HTTP usan la misma función.
 
-## Resources
+Las futuras entradas HTTP deben utilizar clases DTO con decoradores de
+`class-validator`. La validación global transforma el body a su clase DTO y
+rechaza datos inválidos o propiedades no declaradas con HTTP `400`.
+Las conversiones de campos deben declararse explícitamente con
+`class-transformer` cuando correspondan. Las reglas de negocio pertenecen a
+los servicios de cada módulo.
 
-Check out a few resources that may come in handy when working with NestJS:
+Swagger documenta la API existente; todavía no hay login ni endpoints del
+proceso de titulación. El controlador para comprobar DTO existe únicamente
+en las pruebas, no en la aplicación.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## Verificación
 
-## Support
+```powershell
+npm run lint
+npm run test
+npm run test:e2e
+npm run build
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+Las pruebas cubren los valores predeterminados, configuración inválida,
+validación de DTO, transformación, rechazo de propiedades adicionales,
+Swagger habilitado/deshabilitado y compatibilidad de `GET /`.
 
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
+variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la
+contraseña del `.env` local. La conexión real se verifica con `npm run db:check`.
