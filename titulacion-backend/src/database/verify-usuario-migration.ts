@@ -6,16 +6,22 @@ import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateU
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuariosService } from '../usuarios/usuarios.service.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
+import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { ConflictException } from '@nestjs/common';
 import { provisionLocalDemoAccounts } from '../auth/local/provision-local-demo-accounts.js';
+import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
+import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
+import { Docente } from '../docentes/entities/docente.entity.js';
+import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
+import { DocentesService } from '../docentes/docentes.service.js';
 
-const schema = `test_usuario_${randomBytes(8).toString('hex')}`;
+const schema = `test_perfiles_${randomBytes(8).toString('hex')}`;
 let schemaCreated = false;
 let adminDataSource: DatabaseDataSource | undefined;
 let isolatedDataSource: DatabaseDataSource | undefined;
 
 function schemaIdentifier(): string {
-  if (!/^test_usuario_[a-f0-9]{16}$/.test(schema)) {
+  if (!/^test_perfiles_[a-f0-9]{16}$/.test(schema)) {
     throw new Error('El esquema temporal generado no es válido.');
   }
   return `"${schema}"`;
@@ -36,8 +42,11 @@ async function verify(): Promise<void> {
   isolatedDataSource = new DatabaseDataSource({
     ...baseOptions,
     schema,
-    entities: [Usuario],
-    migrations: [CreateUsuario20261002000000],
+    entities: [Usuario, Estudiante, Docente],
+    migrations: [
+      CreateUsuario20261002000000,
+      CreateEstudianteDocente20261002010000,
+    ],
   });
   await isolatedDataSource.initialize();
   await isolatedDataSource.runMigrations({ transaction: 'all' });
@@ -135,22 +144,119 @@ async function verify(): Promise<void> {
     .getRepository(Usuario)
     .update({ id: demoAdmin.id }, { rol: UsuarioRol.ADMIN });
 
+  const estudiantesService = new EstudiantesService(
+    isolatedDataSource.getRepository(Estudiante),
+    isolatedDataSource,
+  );
+  const docentesService = new DocentesService(
+    isolatedDataSource.getRepository(Docente),
+    isolatedDataSource,
+  );
+  const demoStudent = await isolatedDataSource
+    .getRepository(Usuario)
+    .findOneByOrFail({ email: 'estudiante@example.test' });
+  const demoTeacher = await isolatedDataSource
+    .getRepository(Usuario)
+    .findOneByOrFail({ email: 'docente@example.test' });
+  const studentProfile = await estudiantesService.create({
+    usuario_id: demoStudent.id,
+    cedula: '0102030400',
+    matricula: 'VERIFY-001',
+    carrera: 'Sistemas',
+    nivel: 1,
+  });
+  const teacherProfile = await docentesService.create({
+    usuario_id: demoTeacher.id,
+    cedula: '3002030405',
+    titulo_academico: 'Magíster',
+    departamento: 'Verificación',
+  });
+
+  if (
+    studentProfile.usuario.id !== demoStudent.id ||
+    teacherProfile.usuario.id !== demoTeacher.id ||
+    teacherProfile.habilitado_tutoria
+  ) {
+    throw new Error('Los perfiles no se vincularon con sus usuarios esperados.');
+  }
+
+  let duplicateProfileRejected = false;
+  try {
+    await estudiantesService.create({
+      usuario_id: demoStudent.id,
+      cedula: '0102030418',
+      matricula: 'VERIFY-002',
+      carrera: 'Sistemas',
+      nivel: 2,
+    });
+  } catch (error: unknown) {
+    duplicateProfileRejected = error instanceof ConflictException;
+  }
+  if (!duplicateProfileRejected) {
+    throw new Error('La restricción única de usuario_id no rechazó un duplicado.');
+  }
+
+  const concurrentStudent = await isolatedDataSource
+    .getRepository(Usuario)
+    .save(
+      isolatedDataSource.getRepository(Usuario).create({
+        email: 'concurrent.student@universidad.example',
+        nombres: 'Estudiante',
+        apellidos: 'Concurrente',
+        rol: UsuarioRol.ESTUDIANTE,
+        estado: UsuarioEstado.ACTIVO,
+        ultimo_acceso: null,
+        id_externo_sso: 'test-concurrent-student-sub',
+      }),
+    );
+  const concurrentCreates = await Promise.allSettled([
+    estudiantesService.create({
+      usuario_id: concurrentStudent.id,
+      cedula: '0102030418',
+      matricula: 'VERIFY-003',
+      carrera: 'Sistemas',
+      nivel: 3,
+    }),
+    estudiantesService.create({
+      usuario_id: concurrentStudent.id,
+      cedula: '0102030426',
+      matricula: 'VERIFY-004',
+      carrera: 'Sistemas',
+      nivel: 4,
+    }),
+  ]);
+  const concurrentSuccesses = concurrentCreates.filter(
+    (result) => result.status === 'fulfilled',
+  ).length;
+  const concurrentConflicts = concurrentCreates.filter(
+    (result) =>
+      result.status === 'rejected' &&
+      result.reason instanceof ConflictException,
+  ).length;
+  if (concurrentSuccesses !== 1 || concurrentConflicts !== 1) {
+    throw new Error('La creación concurrente duplicó o rechazó ambos perfiles.');
+  }
+
   let downProtected = false;
   try {
     await isolatedDataSource.undoLastMigration();
   } catch (error: unknown) {
     downProtected =
       error instanceof Error &&
-      error.message.includes('la tabla usuario contiene registros');
+      error.message.includes('las tablas de perfiles contienen registros');
   }
   if (!downProtected) {
-    throw new Error('La reversión no protegió los registros existentes.');
+    throw new Error('La reversión no protegió los perfiles existentes.');
   }
-  const preservedAdmins = await isolatedDataSource
-    .getRepository(Usuario)
-    .countBy({ id: admin.id });
-  if (preservedAdmins !== 1) {
-    throw new Error('La verificación de reversión afectó datos de usuario.');
+  const [preservedAdmin, preservedStudent, preservedTeacher] = await Promise.all([
+    isolatedDataSource.getRepository(Usuario).countBy({ id: admin.id }),
+    isolatedDataSource.getRepository(Estudiante).countBy({
+      id: studentProfile.id,
+    }),
+    isolatedDataSource.getRepository(Docente).countBy({ id: teacherProfile.id }),
+  ]);
+  if (preservedAdmin !== 1 || preservedStudent !== 1 || preservedTeacher !== 1) {
+    throw new Error('La verificación de reversión alteró datos existentes.');
   }
 }
 
@@ -192,7 +298,7 @@ try {
   verified = true;
 } catch {
   console.error(
-    'Falló la verificación aislada de la migración de usuarios. La base pública no se modificó.',
+    'Falló la verificación aislada de las migraciones de usuarios y perfiles. La base pública no se modificó.',
   );
   process.exitCode = 1;
 } finally {
@@ -206,6 +312,6 @@ try {
 
 if (verified && process.exitCode !== 1) {
   console.info(
-    'Migración usuario, cuentas locales idempotentes, restricciones e inicialización concurrente verificadas en esquema temporal.',
+    'Migraciones de usuarios y perfiles, restricciones, perfiles concurrentes y cuentas locales verificadas en esquema temporal.',
   );
 }

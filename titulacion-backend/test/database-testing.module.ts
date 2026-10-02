@@ -4,11 +4,24 @@ import { getDataSourceToken } from '@nestjs/typeorm';
 import { QueryFailedError } from 'typeorm';
 import { Usuario } from '../src/usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../src/usuarios/enums/usuario-estado.enum.js';
+import { Estudiante } from '../src/estudiantes/entities/estudiante.entity.js';
+import { Docente } from '../src/docentes/entities/docente.entity.js';
+import { PeriodoTitulacion } from '../src/periodos/entities/periodo-titulacion.entity.js';
+import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
+import { EstudianteHabilitado } from '../src/habilitados/entities/estudiante-habilitado.entity.js';
+import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { Auditoria } from '../src/auditoria/entities/auditoria.entity.js';
+import { HabilitadoOrigen } from '../src/habilitados/enums/habilitado-origen.enum.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
 
 const records: Usuario[] = [];
+const estudianteRecords: Estudiante[] = [];
+const docenteRecords: Docente[] = [];
+const periodoRecords: PeriodoTitulacion[] = [];
+const habilitadoRecords: EstudianteHabilitado[] = [];
+const auditoriaRecords: Auditoria[] = [];
 let transactionQueue: Promise<void> = Promise.resolve();
 
 function createRecord(value: UsuarioRecord): Usuario {
@@ -47,6 +60,12 @@ export const usuarioTestRepository = {
         ([key, value]) => record[key as keyof Usuario] === value,
       ),
     ) ?? null,
+  findOne: async (options: { where: Partial<Usuario> }) =>
+    records.find((record) =>
+      Object.entries(options.where).every(
+        ([key, value]) => record[key as keyof Usuario] === value,
+      ),
+    ) ?? null,
   findAndCount: async (options: { skip: number; take: number }) => {
     const ordered = [...records].sort(
       (left, right) =>
@@ -75,6 +94,185 @@ export const usuarioTestRepository = {
     ).length,
 };
 
+function duplicateError(query: string): QueryFailedError {
+  const driverError = Object.assign(new Error('duplicate'), { code: '23505' });
+  return new QueryFailedError(query, [], driverError);
+}
+
+export const estudianteTestRepository = {
+  create: (value: Partial<Estudiante>) => ({ ...value }) as Estudiante,
+  save: async (estudiante: Estudiante) => {
+    if (
+      estudianteRecords.some(
+        (record) =>
+          record.usuario.id === estudiante.usuario.id ||
+          record.cedula === estudiante.cedula ||
+          record.matricula === estudiante.matricula,
+      )
+    ) {
+      throw duplicateError('INSERT INTO estudiante');
+    }
+    const stored = {
+      ...estudiante,
+      id: estudiante.id ?? randomUUID(),
+    };
+    estudianteRecords.push(stored);
+    return stored;
+  },
+  findAndCount: async (options: { skip: number; take: number }) => {
+    const ordered = [...estudianteRecords].sort((a, b) =>
+      a.id.localeCompare(b.id),
+    );
+    return [
+      ordered.slice(options.skip, options.skip + options.take),
+      estudianteRecords.length,
+    ] as const;
+  },
+  findOne: async (options: {
+    where: { id?: string; usuario?: { id: string } };
+  }) =>
+    estudianteRecords.find(
+      (record) =>
+        (options.where.id !== undefined && record.id === options.where.id) ||
+        (options.where.usuario !== undefined &&
+          record.usuario.id === options.where.usuario.id),
+    ) ?? null,
+};
+
+export const docenteTestRepository = {
+  create: (value: Partial<Docente>) => ({ ...value }) as Docente,
+  save: async (docente: Docente) => {
+    if (
+      docenteRecords.some(
+        (record) =>
+          record.usuario.id === docente.usuario.id ||
+          record.cedula === docente.cedula,
+      )
+    ) {
+      throw duplicateError('INSERT INTO docente');
+    }
+    const stored = { ...docente, id: docente.id ?? randomUUID() };
+    docenteRecords.push(stored);
+    return stored;
+  },
+  findAndCount: async (options: { skip: number; take: number }) => {
+    const ordered = [...docenteRecords].sort((a, b) => a.id.localeCompare(b.id));
+    return [
+      ordered.slice(options.skip, options.skip + options.take),
+      docenteRecords.length,
+    ] as const;
+  },
+  findOne: async (options: {
+    where: { id?: string; usuario?: { id: string } };
+  }) =>
+    docenteRecords.find(
+      (record) =>
+        (options.where.id !== undefined && record.id === options.where.id) ||
+        (options.where.usuario !== undefined &&
+          record.usuario.id === options.where.usuario.id),
+    ) ?? null,
+};
+
+export const periodoTestRepository = {
+  create: (value: Partial<PeriodoTitulacion>) =>
+    ({ ...value }) as PeriodoTitulacion,
+  save: async (periodo: PeriodoTitulacion) => {
+    if (
+      periodoRecords.some(
+        (record) =>
+          record.codigo === periodo.codigo && record.id !== periodo.id,
+      )
+    ) {
+      throw duplicateError('INSERT INTO periodo_titulacion');
+    }
+    const existingIndex = periodoRecords.findIndex(
+      (record) => record.id === periodo.id,
+    );
+    const stored = {
+      ...periodo,
+      id: periodo.id ?? randomUUID(),
+      estado: periodo.estado ?? PeriodoEstado.BORRADOR,
+    };
+    if (existingIndex >= 0) periodoRecords[existingIndex] = stored;
+    else periodoRecords.push(stored);
+    return stored;
+  },
+  findAndCount: async (options: { skip: number; take: number }) => {
+    const ordered = [...periodoRecords].sort(
+      (left, right) =>
+        right.fecha_inicio_postulacion.getTime() -
+          left.fecha_inicio_postulacion.getTime() ||
+        left.id.localeCompare(right.id),
+    );
+    return [
+      ordered.slice(options.skip, options.skip + options.take),
+      periodoRecords.length,
+    ] as const;
+  },
+  findOneBy: async (criteria: Partial<PeriodoTitulacion>) =>
+    periodoRecords.find((record) =>
+      Object.entries(criteria).every(
+        ([key, value]) => record[key as keyof PeriodoTitulacion] === value,
+      ),
+    ) ?? null,
+  findOne: async (options: { where: Partial<PeriodoTitulacion> }) =>
+    periodoRecords.find((record) =>
+      Object.entries(options.where).every(
+        ([key, value]) => record[key as keyof PeriodoTitulacion] === value,
+      ),
+    ) ?? null,
+};
+
+function matchesRecord(record: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    const actual = record[key];
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      return actual !== null && typeof actual === 'object' &&
+        matchesRecord(actual as Record<string, unknown>, value as Record<string, unknown>);
+    }
+    return actual === value;
+  });
+}
+
+export const habilitadoTestRepository = {
+  create: (value: Partial<EstudianteHabilitado>) => ({ ...value }) as EstudianteHabilitado,
+  save: async (record: EstudianteHabilitado) => {
+    if (habilitadoRecords.some((existing) =>
+      existing.periodo.id === record.periodo.id &&
+      existing.estudiante.id === record.estudiante.id && existing.id !== record.id)) {
+      throw duplicateError('INSERT INTO estudiante_habilitado');
+    }
+    const existingIndex = habilitadoRecords.findIndex((existing) => existing.id === record.id);
+    const stored = {
+      ...record,
+      id: record.id ?? randomUUID(),
+      estado: record.estado ?? HabilitadoEstado.HABILITADO,
+      origen: record.origen ?? HabilitadoOrigen.MANUAL,
+      fecha_habilitacion: record.fecha_habilitacion ?? new Date(),
+    };
+    if (existingIndex < 0) habilitadoRecords.push(stored);
+    else habilitadoRecords[existingIndex] = stored;
+    return stored;
+  },
+  findAndCount: async (options: { where: Record<string, unknown>; skip: number; take: number }) => {
+    const filtered = habilitadoRecords.filter((record) => matchesRecord(record as unknown as Record<string, unknown>, options.where));
+    const ordered = filtered.sort((left, right) =>
+      right.fecha_habilitacion.getTime() - left.fecha_habilitacion.getTime() || left.id.localeCompare(right.id));
+    return [ordered.slice(options.skip, options.skip + options.take), filtered.length] as const;
+  },
+  findOne: async (options: { where: Record<string, unknown> }) =>
+    habilitadoRecords.find((record) => matchesRecord(record as unknown as Record<string, unknown>, options.where)) ?? null,
+};
+
+export const auditoriaTestRepository = {
+  create: (value: Partial<Auditoria>) => ({ ...value }) as Auditoria,
+  save: async (record: Auditoria) => {
+    const stored = { ...record, id: String(auditoriaRecords.length + 1) };
+    auditoriaRecords.push(stored);
+    return stored;
+  },
+};
+
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
   let release: () => void = () => undefined;
@@ -91,25 +289,77 @@ async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
 
 export const usuarioTestDataSource = {
   options: { type: 'postgres' },
-  entityMetadatas: [{ target: Usuario }],
-  getRepository: () => usuarioTestRepository,
+  connection: { options: { schema: 'public' } },
+  entityMetadatas: [
+    { target: Usuario },
+    { target: Estudiante },
+    { target: Docente },
+    { target: PeriodoTitulacion },
+    { target: EstudianteHabilitado },
+    { target: Auditoria },
+  ],
+  getRepository: (entity: unknown) => {
+    if (entity === Usuario) return usuarioTestRepository;
+    if (entity === Estudiante) return estudianteTestRepository;
+    if (entity === Docente) return docenteTestRepository;
+    if (entity === PeriodoTitulacion) return periodoTestRepository;
+    if (entity === EstudianteHabilitado) return habilitadoTestRepository;
+    if (entity === Auditoria) return auditoriaTestRepository;
+    throw new Error('Entidad no configurada en los repositorios de prueba.');
+  },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
     withTransaction(() =>
       callback({
-        query: async () => undefined,
-        getRepository: () => usuarioTestRepository,
+        connection: usuarioTestDataSource,
+        query: async (sql: string, parameters?: unknown[]) => {
+          if (sql.includes('SELECT "usuario_id" FROM "public"."estudiante"')) {
+            const profile = estudianteRecords.find((record) => record.id === parameters?.[0]);
+            return profile ? [{ usuario_id: profile.usuario.id }] : [];
+          }
+          return undefined;
+        },
+        getRepository: (entity: unknown) => {
+          if (entity === Usuario) return usuarioTestRepository;
+          if (entity === Estudiante) return estudianteTestRepository;
+          if (entity === Docente) return docenteTestRepository;
+          if (entity === PeriodoTitulacion) return periodoTestRepository;
+          if (entity === EstudianteHabilitado) return habilitadoTestRepository;
+          if (entity === Auditoria) return auditoriaTestRepository;
+          throw new Error('Entidad no configurada en la transacción de prueba.');
+        },
       }),
     ),
 };
 
 export function clearUsuarioTestRecords(): void {
   records.length = 0;
+  estudianteRecords.length = 0;
+  docenteRecords.length = 0;
+  periodoRecords.length = 0;
+  habilitadoRecords.length = 0;
+  auditoriaRecords.length = 0;
+}
+
+export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {
+  return habilitadoRecords;
+}
+
+export function auditoriaTestRecords(): readonly Auditoria[] {
+  return auditoriaRecords;
 }
 
 export function addUsuarioTestRecord(value: UsuarioRecord): Usuario {
   const record = createRecord(value);
   records.push(record);
   return record;
+}
+
+export function setPeriodoTestEstado(
+  id: string,
+  estado: PeriodoEstado,
+): void {
+  const periodo = periodoRecords.find((record) => record.id === id);
+  if (periodo) periodo.estado = estado;
 }
 
 // Simula también el bloqueo del primer ADMIN y los repositorios para pruebas HTTP.

@@ -1,0 +1,5 @@
+export enum HabilitadoOrigen {
+  MANUAL = 'MANUAL',
+  IMPORTACION = 'IMPORTACION',
+  SINCRONIZACION = 'SINCRONIZACION',
+}
