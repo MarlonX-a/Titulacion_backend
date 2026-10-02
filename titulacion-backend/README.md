@@ -8,13 +8,17 @@ Las reglas del proyecto están en `AGENTS.md`.
 Etapas implementadas: configuración por variables de entorno, validación HTTP
 global, Swagger/OpenAPI, conexión a PostgreSQL mediante TypeORM y validación
 base de autenticación JWT institucional mediante JWKS.
-`GET /` conserva la respuesta `Hello World!` de la plantilla inicial.
+`GET /` conserva la respuesta `Hello World!` de la plantilla inicial. Ya están
+implementadas las cuentas de usuario y los perfiles básicos de estudiante y
+docente, además de la configuración de períodos en estado `BORRADOR`. La
+habilitación por período y los módulos de negocio continúan para etapas
+posteriores.
 
 Se utiliza PostgreSQL 17 para aprovechar la instalación local existente, en
 lugar del PostgreSQL 16 indicado en el C4. La base de desarrollo es
 `titulacion_bd`; las tablas del DER se incorporarán junto con cada módulo.
-El proveedor institucional real, los perfiles de estudiante/docente y módulos
-del proceso siguen pendientes. La integración de Observe permanece desactivada.
+El proveedor institucional real y los módulos del proceso siguen pendientes.
+La integración de Observe permanece desactivada.
 
 Dependencias de base de datos: `@nestjs/typeorm` 12.0.2, `typeorm` 0.3.31 y
 `pg` 8.23.1. Se usó el parche 0.3.31 en lugar del 0.3.28 previsto para corregir
@@ -168,8 +172,11 @@ npm run migration:generate -- src/database/migrations/NombreDelCambio
 # Crear una migración para escribir SQL manualmente cuando corresponda
 npm run migration:create -- src/database/migrations/NombreDelCambio
 
-# Comprobar la migración de usuarios en un esquema temporal aislado
-npm run db:verify-usuarios
+# Comprobar usuarios, perfiles y concurrencia en un esquema temporal aislado
+npm run db:verify-perfiles
+
+# Comprobar restricciones y concurrencia de períodos en esquema temporal
+npm run db:verify-periodos
 
 # Aplicar migraciones pendientes en la base de desarrollo
 npm run migration:run
@@ -184,12 +191,14 @@ npm run auth:local:setup
 npm run migration:revert
 ```
 
-La migración inicial crea la entidad `usuario`. `db:verify-usuarios` genera un
-esquema temporal con nombre aleatorio, comprueba restricciones, unicidad, la
-concurrencia del primer ADMIN, la preparación idempotente de cuentas locales y
-la protección al revertir con datos; al terminar elimina únicamente ese esquema
-temporal. Para crear la tabla real de desarrollo,
-ejecuta `migration:run` explícitamente. Si no hay diferencias de esquema,
+Las migraciones crean `usuario`, `estudiante`, `docente` y `periodo_titulacion`.
+`db:verify-perfiles`
+genera un esquema temporal con nombre aleatorio, comprueba restricciones,
+unicidad, la concurrencia del primer ADMIN y de la vinculación de perfiles, la
+preparación idempotente de cuentas locales y la protección al revertir con
+datos; al terminar elimina únicamente ese esquema temporal. El nombre anterior
+`db:verify-usuarios` se conserva como alias. Para crear las tablas reales de
+desarrollo, ejecuta `migration:run` explícitamente. Si no hay diferencias de esquema,
 `migration:generate` no genera archivos y termina con código `1`; eso no indica
 un fallo de conexión. Revisa el SQL generado y el DER antes de aplicar cambios.
 
@@ -258,6 +267,43 @@ coincidir con la identidad que enviará el proveedor institucional.
 Las respuestas de usuario omiten `id_externo_sso`; el campo se envía al crear
 la cuenta y se usa internamente para vincularla con el token.
 
+## Perfiles de estudiantes y docentes
+
+Un ADMIN activo crea perfiles para cuentas existentes desde `POST /estudiantes`
+y `POST /docentes`. Primero registra o consulta las cuentas en `/usuarios` y
+usa su `id` como `usuario_id`. La cuenta debe estar activa y tener el rol que
+corresponde al perfil. No se crean perfiles automáticamente al iniciar sesión.
+
+`GET /estudiantes` y `GET /docentes` muestran listados paginados solo a ADMIN;
+`GET /estudiantes/:id` y `GET /docentes/:id` permiten consultar un perfil por
+UUID. Cada estudiante puede consultar `/estudiantes/me` y cada docente
+`/docentes/me`. Estos endpoints devuelven un resumen de la cuenta vinculada y
+no exponen `id_externo_sso`.
+
+Las cédulas deben contener diez dígitos, código provincial 01–24 o 30 y checksum
+módulo 10 válido. El perfil de estudiante todavía no habilita participación en
+un período. El campo `habilitado_tutoria` del docente empieza en `false` si no
+se indica otro valor al crearlo.
+
+## Períodos de titulación
+
+Un ADMIN puede crear, consultar y editar períodos mientras estén en estado
+`BORRADOR`. Los endpoints están disponibles en `/periodos` y
+`/periodos/:id`; el listado usa `page` y `limit`, y `PATCH /periodos/:id`
+actualiza solo los campos enviados. El estado y el ID los asigna el servidor.
+
+Al crear un período se debe indicar código, nombre, fechas de inicio y fin de
+postulaciones, fecha de inicio de titulación y máximo predeterminado de
+integrantes. Las fechas deben incluir zona horaria, por ejemplo:
+`2026-11-02T08:00:00-05:00`. La API verifica que el fin de postulaciones sea
+posterior al inicio y que la titulación comience al cierre o después; devuelve
+las fechas en UTC. PostgreSQL protege también esas reglas y la unicidad exacta
+del código.
+
+Los estados posteriores a `BORRADOR` están definidos en el modelo, pero sus
+transiciones se implementarán cuando estén disponibles las validaciones de
+estudiantes habilitados y condicionados.
+
 ## Verificación
 
 ```powershell
@@ -268,10 +314,13 @@ npm run build
 ```
 
 Las pruebas cubren configuración, validación DTO, autenticación con JWKS local,
-permisos, altas, duplicados, paginación, Swagger y compatibilidad de `GET /`.
+permisos, altas y consultas de usuarios, perfiles y períodos, duplicados, paginación,
+Swagger y compatibilidad de `GET /`.
 
 Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
 variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la
 contraseña del `.env` local. La conexión real se verifica con `npm run db:check`;
-la migración de usuarios, sus restricciones y la inicialización concurrente se
-comprueban con `npm run db:verify-usuarios`.
+las migraciones de usuarios y perfiles, sus restricciones y las altas
+concurrentes se comprueban con `npm run db:verify-perfiles`; para períodos se
+usa `npm run db:verify-periodos`. Ambos comandos operan en esquemas temporales
+aislados.
