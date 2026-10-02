@@ -10,6 +10,11 @@ async function bootstrap() {
   configureApplication(app);
 
   const config = app.get(ConfigService<AppEnvironment, true>);
-  await app.listen(config.get('PORT', { infer: true }));
+  const port = config.get('PORT', { infer: true });
+  if (config.get('AUTH_MODE', { infer: true }) === 'local') {
+    await app.listen(port, '127.0.0.1');
+  } else {
+    await app.listen(port);
+  }
 }
 await bootstrap();

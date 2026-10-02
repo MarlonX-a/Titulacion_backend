@@ -19,12 +19,19 @@ export function configureApplication(app: INestApplication): void {
     const options = new DocumentBuilder()
       .setTitle('Sistema de Gestión del Proceso de Titulación')
       .setDescription(
-        'API REST del backend. Primera etapa: configuración base.',
+        'API REST del Sistema de Gestión del Proceso de Titulación.',
       )
       .setVersion('0.0.1')
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        'bearer',
+      )
       .build();
 
     const document = SwaggerModule.createDocument(app, options);
+    if (config.get('AUTH_MODE', { infer: true }) !== 'local') {
+      delete document.paths['/auth/local/login'];
+    }
     SwaggerModule.setup('docs', app, document, {
       jsonDocumentUrl: '/docs-json',
       raw: ['json'],

@@ -13,6 +13,7 @@ import {
 import { configureApplication } from '../src/config/setup-app.js';
 import { DatabaseModule } from '../src/database/database.module.js';
 import { DatabaseTestingModule } from './database-testing.module.js';
+import { Public } from '../src/auth/public.decorator.js';
 
 class ValidationInputDto {
   @IsString({ message: 'nombre debe ser un texto.' })
@@ -27,6 +28,7 @@ class ValidationInputDto {
 
 // Este controlador solo se registra en las pruebas, nunca en AppModule.
 @Controller('test-validation')
+@Public()
 class ValidationController {
   @Post()
   validate(@Body() dto: ValidationInputDto) {
@@ -65,13 +67,19 @@ async function createTestApplication(
 describe('Variables de entorno (e2e)', () => {
   beforeEach(() => {
     vi.stubEnv('NODE_ENV', undefined);
+    vi.stubEnv('AUTH_MODE', undefined);
     vi.stubEnv('PORT', undefined);
     vi.stubEnv('SWAGGER_ENABLED', undefined);
     vi.stubEnv('DB_HOST', undefined);
     vi.stubEnv('DB_PORT', undefined);
+    vi.stubEnv('DB_SCHEMA', undefined);
     vi.stubEnv('DB_USERNAME', 'test_user');
     vi.stubEnv('DB_PASSWORD', 'test_password');
     vi.stubEnv('DB_NAME', 'test_database');
+    vi.stubEnv('OIDC_ISSUER', undefined);
+    vi.stubEnv('OIDC_AUDIENCE', undefined);
+    vi.stubEnv('JWKS_URI', undefined);
+    vi.stubEnv('LOCAL_AUTH_PASSWORD', undefined);
   });
 
   afterEach(() => {
@@ -93,13 +101,19 @@ describe('Variables de entorno (e2e)', () => {
       const config = moduleFixture.get(ConfigService<AppEnvironment, true>);
       return {
         NODE_ENV: config.get('NODE_ENV', { infer: true }),
+        AUTH_MODE: config.get('AUTH_MODE', { infer: true }),
         PORT: config.get('PORT', { infer: true }),
         SWAGGER_ENABLED: config.get('SWAGGER_ENABLED', { infer: true }),
         DB_HOST: config.get('DB_HOST', { infer: true }),
         DB_PORT: config.get('DB_PORT', { infer: true }),
+        DB_SCHEMA: config.get('DB_SCHEMA', { infer: true }),
         DB_USERNAME: config.get('DB_USERNAME', { infer: true }),
         DB_PASSWORD: config.get('DB_PASSWORD', { infer: true }),
         DB_NAME: config.get('DB_NAME', { infer: true }),
+        OIDC_ISSUER: config.get('OIDC_ISSUER', { infer: true }),
+        OIDC_AUDIENCE: config.get('OIDC_AUDIENCE', { infer: true }),
+        JWKS_URI: config.get('JWKS_URI', { infer: true }),
+        LOCAL_AUTH_PASSWORD: config.get('LOCAL_AUTH_PASSWORD', { infer: true }),
       };
     } finally {
       await moduleFixture.close();
@@ -111,14 +125,20 @@ describe('Variables de entorno (e2e)', () => {
     vi.stubEnv('DB_PASSWORD', undefined);
     vi.stubEnv('DB_NAME', undefined);
     expect(await readConfiguration()).toEqual({
-      NODE_ENV: 'development',
+        NODE_ENV: 'development',
+      AUTH_MODE: 'institutional',
       PORT: 3000,
       SWAGGER_ENABLED: true,
       DB_HOST: 'localhost',
       DB_PORT: 5432,
+      DB_SCHEMA: 'public',
       DB_USERNAME: 'postgres',
       DB_PASSWORD: 'CAMBIAR_PASSWORD',
       DB_NAME: 'titulacion_bd',
+      OIDC_ISSUER: undefined,
+      OIDC_AUDIENCE: undefined,
+      JWKS_URI: undefined,
+      LOCAL_AUTH_PASSWORD: undefined,
     });
   });
 
@@ -128,44 +148,80 @@ describe('Variables de entorno (e2e)', () => {
     vi.stubEnv('SWAGGER_ENABLED', 'false');
     vi.stubEnv('DB_HOST', 'db.test');
     vi.stubEnv('DB_PORT', '5433');
+    vi.stubEnv('OIDC_ISSUER', 'https://issuer.test');
+    vi.stubEnv('OIDC_AUDIENCE', 'api-test');
+    vi.stubEnv('JWKS_URI', 'https://issuer.test/keys');
 
     expect(await readConfiguration()).toEqual({
       NODE_ENV: 'production',
+      AUTH_MODE: 'institutional',
       PORT: 4500,
       SWAGGER_ENABLED: false,
       DB_HOST: 'db.test',
       DB_PORT: 5433,
+      DB_SCHEMA: 'public',
       DB_USERNAME: 'test_user',
       DB_PASSWORD: 'test_password',
       DB_NAME: 'test_database',
+      OIDC_ISSUER: 'https://issuer.test',
+      OIDC_AUDIENCE: 'api-test',
+      JWKS_URI: 'https://issuer.test/keys',
+      LOCAL_AUTH_PASSWORD: undefined,
     });
   });
 
   it('aplica valores predeterminados sin archivo de entorno', async () => {
     expect(await readConfiguration(true)).toEqual({
       NODE_ENV: 'development',
+      AUTH_MODE: 'institutional',
       PORT: 3000,
       SWAGGER_ENABLED: true,
       DB_HOST: 'localhost',
       DB_PORT: 5432,
+      DB_SCHEMA: 'public',
       DB_USERNAME: 'test_user',
       DB_PASSWORD: 'test_password',
       DB_NAME: 'test_database',
+      OIDC_ISSUER: undefined,
+      OIDC_AUDIENCE: undefined,
+      JWKS_URI: undefined,
+      LOCAL_AUTH_PASSWORD: undefined,
+    });
+  });
+
+  it('permite elegir autenticación local desde el entorno sobre el archivo', async () => {
+    vi.stubEnv('AUTH_MODE', 'local');
+    vi.stubEnv('DB_SCHEMA', 'local_demo');
+    vi.stubEnv('LOCAL_AUTH_PASSWORD', 'clave-local-de-pruebas-larga');
+
+    expect(await readConfiguration()).toMatchObject({
+      AUTH_MODE: 'local',
+      DB_SCHEMA: 'local_demo',
+      LOCAL_AUTH_PASSWORD: 'clave-local-de-pruebas-larga',
     });
   });
 
   it('deshabilita Swagger por defecto en producción', async () => {
     vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('OIDC_ISSUER', 'https://issuer.test');
+    vi.stubEnv('OIDC_AUDIENCE', 'api-test');
+    vi.stubEnv('JWKS_URI', 'https://issuer.test/keys');
 
     expect(await readConfiguration(true)).toEqual({
       NODE_ENV: 'production',
+      AUTH_MODE: 'institutional',
       PORT: 3000,
       SWAGGER_ENABLED: false,
       DB_HOST: 'localhost',
       DB_PORT: 5432,
+      DB_SCHEMA: 'public',
       DB_USERNAME: 'test_user',
       DB_PASSWORD: 'test_password',
       DB_NAME: 'test_database',
+      OIDC_ISSUER: 'https://issuer.test',
+      OIDC_AUDIENCE: 'api-test',
+      JWKS_URI: 'https://issuer.test/keys',
+      LOCAL_AUTH_PASSWORD: undefined,
     });
   });
 
@@ -237,6 +293,7 @@ describe('Configuración global (e2e)', () => {
       .expect(200)
       .expect('Content-Type', /json/)
       .expect((response) => {
+        expect(response.body.paths).not.toHaveProperty('/auth/local/login');
         expect(response.body).toMatchObject({
           info: {
             title: 'Sistema de Gestión del Proceso de Titulación',
@@ -254,6 +311,20 @@ describe('Configuración global (e2e)', () => {
                     },
                   },
                 },
+              },
+            },
+            '/auth/me': {
+              get: {
+                security: [{ bearer: [] }],
+              },
+            },
+          },
+          components: {
+            securitySchemes: {
+              bearer: {
+                type: 'http',
+                scheme: 'bearer',
+                bearerFormat: 'JWT',
               },
             },
           },

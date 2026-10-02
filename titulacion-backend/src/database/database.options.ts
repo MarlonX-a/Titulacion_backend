@@ -4,7 +4,12 @@ import type { AppEnvironment } from '../config/environment.js';
 
 export type DatabaseEnvironment = Pick<
   AppEnvironment,
-  'DB_HOST' | 'DB_PORT' | 'DB_USERNAME' | 'DB_PASSWORD' | 'DB_NAME'
+  | 'DB_HOST'
+  | 'DB_PORT'
+  | 'DB_USERNAME'
+  | 'DB_PASSWORD'
+  | 'DB_NAME'
+  | 'DB_SCHEMA'
 >;
 
 export function createDatabaseOptions(
@@ -17,7 +22,7 @@ export function createDatabaseOptions(
     username: environment.DB_USERNAME,
     password: environment.DB_PASSWORD,
     database: environment.DB_NAME,
-    schema: 'public',
+    schema: environment.DB_SCHEMA,
     applicationName: 'titulacion-backend',
     connectTimeoutMS: 5000,
     synchronize: false,
