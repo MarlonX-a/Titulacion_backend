@@ -16,19 +16,108 @@ describe('validateEnvironment', () => {
       ...databaseVariables,
       DB_HOST: 'localhost',
       DB_PORT: 5432,
+      DB_SCHEMA: 'public',
+      AUTH_MODE: 'institutional',
       NODE_ENV: 'development',
       PORT: 3000,
       SWAGGER_ENABLED: true,
     });
   });
 
+  it('permite omitir autenticación en desarrollo y pruebas', () => {
+    expect(validateEnvironment({}).OIDC_ISSUER).toBeUndefined();
+    expect(validateEnvironment({ NODE_ENV: 'test' }).JWKS_URI).toBeUndefined();
+  });
+
+  it.each(['development', 'test'])(
+    'exige las tres variables juntas cuando se configura autenticación en %s',
+    (nodeEnv) => {
+      expect(() =>
+        validateEnvironment({
+          NODE_ENV: nodeEnv,
+          OIDC_ISSUER: 'https://id.test',
+        }),
+      ).toThrow('OIDC_AUDIENCE');
+    },
+  );
+
+  it('exige autenticación en producción', () => {
+    expect(() => validateEnvironment({ NODE_ENV: 'production' })).toThrow(
+      'OIDC_ISSUER',
+    );
+  });
+
+  it('acepta HTTP únicamente para URLs locales fuera de producción', () => {
+    expect(
+      validateEnvironment({
+        OIDC_ISSUER: 'http://localhost:4100/issuer',
+        OIDC_AUDIENCE: 'api-test',
+        JWKS_URI: 'http://127.0.0.1:4100/keys',
+      }).OIDC_ISSUER,
+    ).toBe('http://localhost:4100/issuer');
+  });
+
+  it.each([
+    {
+      config: {
+        OIDC_ISSUER: 'http://example.test',
+        OIDC_AUDIENCE: 'api',
+        JWKS_URI: 'https://keys.test',
+      },
+      variable: 'OIDC_ISSUER',
+    },
+    {
+      config: {
+        OIDC_ISSUER: 'https://id.test',
+        OIDC_AUDIENCE: 'api',
+        JWKS_URI: 'http://example.test',
+      },
+      variable: 'JWKS_URI',
+    },
+    {
+      config: {
+        OIDC_ISSUER: 'http://localhost:4100',
+        OIDC_AUDIENCE: 'api',
+        JWKS_URI: 'https://keys.test',
+        NODE_ENV: 'production',
+      },
+      variable: 'OIDC_ISSUER',
+    },
+    {
+      config: {
+        OIDC_ISSUER: 'https://user:secret@id.test',
+        OIDC_AUDIENCE: 'api',
+        JWKS_URI: 'https://keys.test',
+      },
+      variable: 'OIDC_ISSUER',
+    },
+  ])(
+    'rechaza configuración de URL insegura sin revelar valores: $variable',
+    ({ config, variable }) => {
+      expect(() => validateEnvironment(config)).toThrow(variable);
+    },
+  );
+
   it.each(['development', 'test', 'production'])(
     'acepta NODE_ENV=%s y aplica el valor predeterminado de Swagger',
     (nodeEnv) => {
-      expect(validateEnvironment({ NODE_ENV: nodeEnv })).toEqual({
+      const authConfiguration =
+        nodeEnv === 'production'
+          ? {
+              OIDC_ISSUER: 'https://id.test',
+              OIDC_AUDIENCE: 'api',
+              JWKS_URI: 'https://id.test/keys',
+            }
+          : {};
+
+      expect(
+        validateEnvironment({ NODE_ENV: nodeEnv, ...authConfiguration }),
+      ).toMatchObject({
         ...databaseVariables,
         DB_HOST: 'localhost',
         DB_PORT: 5432,
+        DB_SCHEMA: 'public',
+        AUTH_MODE: 'institutional',
         NODE_ENV: nodeEnv,
         PORT: 3000,
         SWAGGER_ENABLED: nodeEnv !== 'production',
@@ -70,6 +159,9 @@ describe('validateEnvironment', () => {
       validateEnvironment({
         NODE_ENV: 'production',
         SWAGGER_ENABLED: 'true',
+        OIDC_ISSUER: 'https://id.test',
+        OIDC_AUDIENCE: 'api',
+        JWKS_URI: 'https://id.test/keys',
       }).SWAGGER_ENABLED,
     ).toBe(true);
   });
@@ -129,6 +221,43 @@ describe('validateEnvironment', () => {
     expect(validateEnvironment({ DB_PASSWORD: password }).DB_PASSWORD).toBe(
       password,
     );
+  });
+
+  it('permite modo local solo con esquema aislado, host local y contraseña', () => {
+    expect(
+      validateEnvironment({
+        AUTH_MODE: 'local',
+        DB_SCHEMA: 'local_demo',
+        LOCAL_AUTH_PASSWORD: 'clave-local-de-pruebas-segura',
+      }),
+    ).toMatchObject({
+      AUTH_MODE: 'local',
+      DB_SCHEMA: 'local_demo',
+      LOCAL_AUTH_PASSWORD: 'clave-local-de-pruebas-segura',
+    });
+  });
+
+  it.each([
+    { NODE_ENV: 'production', AUTH_MODE: 'local' },
+    { AUTH_MODE: 'local', DB_SCHEMA: 'public' },
+    { AUTH_MODE: 'institutional', DB_SCHEMA: 'local_demo' },
+    { AUTH_MODE: 'local', DB_HOST: 'db.example.test' },
+    {
+      AUTH_MODE: 'local',
+      DB_SCHEMA: 'local_demo',
+      LOCAL_AUTH_PASSWORD: 'short',
+    },
+    { AUTH_MODE: 'local', DB_SCHEMA: 'local_demo' },
+    {
+      AUTH_MODE: 'local',
+      DB_SCHEMA: 'local_demo',
+      LOCAL_AUTH_PASSWORD: 'clave-local-de-pruebas-segura',
+      OIDC_ISSUER: 'https://issuer.test',
+      OIDC_AUDIENCE: 'api-test',
+      JWKS_URI: 'https://issuer.test/keys',
+    },
+  ])('rechaza configuraciones locales inseguras: %j', (config) => {
+    expect(() => validateEnvironment(config)).toThrow('Configuración inválida');
   });
 
   it('los errores de base de datos no exponen valores sensibles', () => {
