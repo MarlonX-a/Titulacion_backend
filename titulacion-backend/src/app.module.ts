@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { EstudiantesModule } from './estudiantes/estudiantes.module.js';
 import { DocentesModule } from './docentes/docentes.module.js';
 import { PeriodosModule } from './periodos/periodos.module.js';
+import { HabilitadosModule } from './habilitados/habilitados.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { PeriodosModule } from './periodos/periodos.module.js';
     EstudiantesModule,
     DocentesModule,
     PeriodosModule,
+    HabilitadosModule,
   ],
   controllers: [AppController],
   providers: [AppService],

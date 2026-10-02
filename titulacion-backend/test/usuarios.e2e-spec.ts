@@ -17,10 +17,13 @@ import { UsuarioEstado } from '../src/usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../src/usuarios/enums/usuario-rol.enum.js';
 import { UsuariosService } from '../src/usuarios/usuarios.service.js';
 import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
+import { CondicionIngreso } from '../src/habilitados/enums/condicion-ingreso.enum.js';
+import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import {
   addUsuarioTestRecord,
   clearUsuarioTestRecords,
   setPeriodoTestEstado,
+  auditoriaTestRecords,
   DatabaseTestingModule,
 } from './database-testing.module.js';
 
@@ -128,6 +131,33 @@ describe('Usuarios (e2e)', () => {
       apellidos: 'Administradora',
       rol: UsuarioRol.ADMIN,
     });
+  }
+
+  async function createPeriod(code = 'HABILITADOS-1') {
+    return authenticated('post', '/periodos', 'admin-sub')
+      .send({
+        codigo: code,
+        nombre: 'Período de prueba',
+        fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
+        fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
+        fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        max_integrantes_default: 5,
+      })
+      .expect(201);
+  }
+
+  async function createStudentProfile(subject = 'student-sub', cedula = '0102030400', matricula = 'H-1001') {
+    const account = addUsuarioTestRecord({
+      id_externo_sso: subject,
+      email: `${matricula}@universidad.edu`,
+      nombres: 'Estudiante',
+      apellidos: 'Habilitado',
+      rol: UsuarioRol.ESTUDIANTE,
+    });
+    const profile = await authenticated('post', '/estudiantes', 'admin-sub')
+      .send({ usuario_id: account.id, cedula, matricula, carrera: 'Sistemas', nivel: 5 })
+      .expect(201);
+    return { account, profile };
   }
 
   it('crea usuarios solo por ADMIN y normaliza email y nombres', async () => {
@@ -711,5 +741,154 @@ describe('Usuarios (e2e)', () => {
     await authenticated('patch', `/periodos/${created.body.id}`, 'admin-sub')
       .send({ nombre: 'No editable' })
       .expect(409);
+  });
+
+  it('registra habilitaciones regulares y condicionadas y permite la consulta propia', async () => {
+    addAdmin();
+    const { profile } = await createStudentProfile();
+    const period = await createPeriod();
+    const regular = await authenticated(
+      'post', `/periodos/${period.body.id}/habilitados`, 'admin-sub',
+    ).send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR })
+      .expect(201);
+    expect(regular.body).toMatchObject({
+      periodo_id: period.body.id,
+      estudiante_id: profile.body.id,
+      origen: 'MANUAL',
+      estado: 'HABILITADO',
+      condicion_ingreso: CondicionIngreso.REGULAR,
+      requisito_pendiente: null,
+      situacion_ingreso: SituacionIngreso.ADMITIDO,
+      resuelto_por_id: expect.any(String),
+      estudiante: { id: profile.body.id, nombres: 'Estudiante', matricula: 'H-1001' },
+    });
+    expect(regular.body).not.toHaveProperty('estudiante.usuario.id_externo_sso');
+
+    const { profile: secondProfile } = await createStudentProfile(
+      'other-student-sub', '0102030418', 'H-1002',
+    );
+    const pending = await authenticated(
+      'post', `/periodos/${period.body.id}/habilitados`, 'admin-sub',
+    ).send({
+      estudiante_id: secondProfile.body.id,
+      condicion_ingreso: CondicionIngreso.CONDICIONADO,
+      requisito_pendiente: '  Aprobar asignatura pendiente  ',
+    }).expect(201);
+    expect(pending.body).toMatchObject({
+      situacion_ingreso: SituacionIngreso.PENDIENTE,
+      requisito_pendiente: 'Aprobar asignatura pendiente',
+    });
+    expect(auditoriaTestRecords()).toHaveLength(2);
+
+    const list = await authenticated(
+      'get', `/periodos/${period.body.id}/habilitados?condicion_ingreso=REGULAR`, 'admin-sub',
+    ).expect(200);
+    expect(list.body).toMatchObject({ total: 1, page: 1, limit: 20 });
+    expect(list.body.data[0].id).toBe(regular.body.id);
+    await authenticated('get', `/periodos/${period.body.id}/habilitados/me`, 'student-sub')
+      .expect(200)
+      .then((response) => expect(response.body.id).toBe(regular.body.id));
+    await authenticated('get', `/periodos/${period.body.id}/habilitados/${regular.body.id}`, 'admin-sub').expect(200);
+    await authenticated('get', `/periodos/${period.body.id}/habilitados/me`, 'other-student-sub')
+      .expect(200)
+      .then((response) => expect(response.body.id).toBe(pending.body.id));
+    await authenticated('get', `/periodos/${period.body.id}/habilitados/me`, 'docente-sub').expect(403);
+    await authenticated('get', `/periodos/${period.body.id}/habilitados`, 'student-sub').expect(403);
+  });
+
+  it('valida altas condicionadas, duplicados, datos administrados y cuentas incompatibles', async () => {
+    addAdmin();
+    const { profile } = await createStudentProfile();
+    const period = await createPeriod();
+    const path = `/periodos/${period.body.id}/habilitados`;
+    const conditional = {
+      estudiante_id: profile.body.id,
+      condicion_ingreso: CondicionIngreso.CONDICIONADO,
+      requisito_pendiente: 'Aprobar asignatura',
+    };
+    await authenticated('post', path, 'admin-sub').send({
+      estudiante_id: profile.body.id,
+      condicion_ingreso: CondicionIngreso.CONDICIONADO,
+    }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ ...conditional, requisito_pendiente: ' ' }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ ...conditional, estado: 'SUSPENDIDO' }).expect(400);
+    const created = await authenticated('post', path, 'admin-sub').send(conditional).expect(201);
+    expect(created.body).toMatchObject({
+      situacion_ingreso: SituacionIngreso.PENDIENTE,
+      requisito_pendiente: 'Aprobar asignatura',
+      fecha_resolucion_ingreso: null,
+      resuelto_por_id: null,
+    });
+    await authenticated('post', path, 'admin-sub').send(conditional).expect(409);
+    await authenticated('get', `/periodos/${period.body.id}/habilitados/me`, 'other-student-sub').expect(403);
+    await authenticated('get', `/periodos/${period.body.id}/habilitados?estado=INVALIDO`, 'admin-sub').expect(400);
+
+    const { account: inactiveAccount, profile: inactiveProfile } = await createStudentProfile(
+      'inactive-sub', '3002030405', 'H-1003',
+    );
+    inactiveAccount.estado = UsuarioEstado.INACTIVO;
+    await authenticated('post', path, 'admin-sub').send({
+      estudiante_id: inactiveProfile.body.id,
+      condicion_ingreso: CondicionIngreso.REGULAR,
+    }).expect(409);
+  });
+
+  it('resuelve condicionados una sola vez, conserva el requisito y registra auditoría atómica', async () => {
+    addAdmin();
+    const { profile } = await createStudentProfile();
+    const period = await createPeriod();
+    const created = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({
+        estudiante_id: profile.body.id,
+        condicion_ingreso: CondicionIngreso.CONDICIONADO,
+        requisito_pendiente: 'Completar prácticas',
+      }).expect(201);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${created.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO }).expect(400);
+    const resolved = await authenticated('post', `/periodos/${period.body.id}/habilitados/${created.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+    expect(resolved.body).toMatchObject({
+      situacion_ingreso: SituacionIngreso.ADMITIDO,
+      requisito_pendiente: 'Completar prácticas',
+      resuelto_por_id: expect.any(String),
+    });
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${created.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'Resolución tardía' }).expect(409);
+    expect(auditoriaTestRecords()).toHaveLength(2);
+    expect(auditoriaTestRecords()[1].valores_anteriores?.situacion_ingreso).toBe(SituacionIngreso.PENDIENTE);
+    expect(auditoriaTestRecords()[1].ip_origen).toBeTruthy();
+
+    const { profile: secondProfile } = await createStudentProfile(
+      'other-student-sub', '0102030418', 'H-1002',
+    );
+    const second = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: secondProfile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Completar prácticas' })
+      .expect(201);
+    const rejected = await authenticated('post', `/periodos/${period.body.id}/habilitados/${second.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No completó el requisito.' })
+      .expect(200);
+    expect(rejected.body).toMatchObject({
+      situacion_ingreso: SituacionIngreso.NO_ADMITIDO,
+      observacion_ingreso: 'No completó el requisito.',
+      estado: 'HABILITADO',
+    });
+    expect(auditoriaTestRecords()).toHaveLength(4);
+  });
+
+  it('requiere períodos BORRADOR para altas y resoluciones, y refleja la API en Swagger', async () => {
+    addAdmin();
+    const { profile } = await createStudentProfile();
+    const period = await createPeriod();
+    const created = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Completar prácticas' })
+      .expect(201);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_ABIERTA);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR }).expect(409);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${created.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(409);
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.components.schemas.HabilitadoResponseDto).toBeDefined();
+    expect(docs.body.paths[`/periodos/{periodoId}/habilitados/me`].get).toBeDefined();
   });
 });

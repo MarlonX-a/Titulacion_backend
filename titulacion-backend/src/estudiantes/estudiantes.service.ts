@@ -6,7 +6,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { UsuarioResumenDto } from '../common/dto/usuario-resumen.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -59,6 +60,45 @@ export class EstudiantesService {
     private readonly repository: Repository<Estudiante>,
     private readonly dataSource: DataSource,
   ) {}
+
+  async getActiveProfileForHabilitacion(
+    estudianteId: string,
+    manager: EntityManager,
+  ): Promise<Estudiante> {
+    const options = manager.connection.options as PostgresConnectionOptions;
+    const schema = options.schema ?? 'public';
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(schema)) {
+      throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
+    }
+    const rows = (await manager.query(
+      `SELECT "usuario_id" FROM "${schema}"."estudiante" WHERE "id" = $1 FOR UPDATE`,
+      [estudianteId],
+    )) as Array<{ usuario_id: string }>;
+    const usuarioId = rows[0]?.usuario_id;
+    if (!usuarioId) {
+      throw new NotFoundException('No existe el perfil de estudiante indicado.');
+    }
+    const usuario = await manager.getRepository(Usuario).findOne({
+      where: { id: usuarioId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    const estudiante = await manager.getRepository(Estudiante).findOne({
+      where: { id: estudianteId },
+      relations: { usuario: true },
+    });
+    if (!usuario || !estudiante) {
+      throw new NotFoundException('No existe el perfil de estudiante indicado.');
+    }
+    if (
+      usuario.estado !== UsuarioEstado.ACTIVO ||
+      usuario.rol !== UsuarioRol.ESTUDIANTE
+    ) {
+      throw new ConflictException(
+        'El perfil debe pertenecer a una cuenta activa con rol ESTUDIANTE.',
+      );
+    }
+    return estudiante;
+  }
 
   async create(dto: CreateEstudianteDto): Promise<EstudianteResponseDto> {
     try {

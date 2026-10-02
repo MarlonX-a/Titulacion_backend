@@ -10,9 +10,9 @@ global, Swagger/OpenAPI, conexión a PostgreSQL mediante TypeORM y validación
 base de autenticación JWT institucional mediante JWKS.
 `GET /` conserva la respuesta `Hello World!` de la plantilla inicial. Ya están
 implementadas las cuentas de usuario y los perfiles básicos de estudiante y
-docente, además de la configuración de períodos en estado `BORRADOR`. La
-habilitación por período y los módulos de negocio continúan para etapas
-posteriores.
+docente, además de la configuración de períodos en estado `BORRADOR` y la
+habilitación de estudiantes por período con resolución de condicionados.
+Importaciones Excel y los módulos posteriores continúan para etapas posteriores.
 
 Se utiliza PostgreSQL 17 para aprovechar la instalación local existente, en
 lugar del PostgreSQL 16 indicado en el C4. La base de desarrollo es
@@ -178,6 +178,9 @@ npm run db:verify-perfiles
 # Comprobar restricciones y concurrencia de períodos en esquema temporal
 npm run db:verify-periodos
 
+# Comprobar habilitados, lotes, auditoría y concurrencia en esquema temporal
+npm run db:verify-habilitados
+
 # Aplicar migraciones pendientes en la base de desarrollo
 npm run migration:run
 
@@ -191,7 +194,8 @@ npm run auth:local:setup
 npm run migration:revert
 ```
 
-Las migraciones crean `usuario`, `estudiante`, `docente` y `periodo_titulacion`.
+Las migraciones crean `usuario`, `estudiante`, `docente`, `periodo_titulacion`,
+`lote_importacion`, `estudiante_habilitado` y la tabla base `auditoria`.
 `db:verify-perfiles`
 genera un esquema temporal con nombre aleatorio, comprueba restricciones,
 unicidad, la concurrencia del primer ADMIN y de la vinculación de perfiles, la
@@ -304,6 +308,39 @@ Los estados posteriores a `BORRADOR` están definidos en el modelo, pero sus
 transiciones se implementarán cuando estén disponibles las validaciones de
 estudiantes habilitados y condicionados.
 
+## Estudiantes habilitados
+
+En un período `BORRADOR`, ADMIN puede habilitar un perfil existente desde
+`POST /periodos/:periodoId/habilitados`. Una habilitación `REGULAR` queda con
+ingreso `ADMITIDO`; una `CONDICIONADA` necesita el requisito pendiente y queda
+en `PENDIENTE`. Primero se registra la cuenta y el perfil de estudiante; la
+habilitación es un paso separado.
+
+`GET /periodos/:periodoId/habilitados` permite a ADMIN consultar el listado
+paginado y filtrar por condición, situación de ingreso y estado. El detalle se
+consulta en `GET /periodos/:periodoId/habilitados/:id`. Cada estudiante puede
+consultar exclusivamente su registro en
+`GET /periodos/:periodoId/habilitados/me`.
+
+ADMIN resuelve un caso condicionado pendiente en
+`POST /periodos/:periodoId/habilitados/:id/resolver-ingreso`, indicando
+`ADMITIDO` o `NO_ADMITIDO`. Para `NO_ADMITIDO` debe registrar una observación.
+La fecha y el responsable provienen del servidor y la cuenta autenticada. El
+requisito original se conserva y cada alta o resolución registra una fila de
+auditoría dentro de la misma transacción.
+
+Las escrituras solo se permiten mientras el período está en `BORRADOR`. El
+resultado `NO_ADMITIDO` no cambia el estado separado de habilitación; grupos y
+asignaciones aplicarán la decisión cuando esos módulos estén disponibles.
+La tabla `lote_importacion` queda preparada para conservar la relación del DER,
+aunque la importación de Excel todavía no está implementada.
+
+Para probar el flujo desde Swagger, crea una cuenta con rol `ESTUDIANTE`, crea
+su perfil usando `POST /estudiantes`, crea un período con `POST /periodos` y
+registra su habilitación. Usa `admin@example.test` para las operaciones
+administrativas y `estudiante@example.test` para consultar `/me`. Aplica la
+migración explícitamente después de verificar que `DB_SCHEMA=local_demo`.
+
 ## Verificación
 
 ```powershell
@@ -314,13 +351,15 @@ npm run build
 ```
 
 Las pruebas cubren configuración, validación DTO, autenticación con JWKS local,
-permisos, altas y consultas de usuarios, perfiles y períodos, duplicados, paginación,
-Swagger y compatibilidad de `GET /`.
+permisos, altas y consultas de usuarios, perfiles, períodos e habilitaciones,
+resolución de condicionados, auditoría, duplicados, paginación, Swagger y
+compatibilidad de `GET /`.
 
 Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
 variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la
 contraseña del `.env` local. La conexión real se verifica con `npm run db:check`;
 las migraciones de usuarios y perfiles, sus restricciones y las altas
 concurrentes se comprueban con `npm run db:verify-perfiles`; para períodos se
-usa `npm run db:verify-periodos`. Ambos comandos operan en esquemas temporales
+usa `npm run db:verify-periodos`; para habilitados, lotes y auditoría se usa
+`npm run db:verify-habilitados`. Estos comandos operan en esquemas temporales
 aislados.

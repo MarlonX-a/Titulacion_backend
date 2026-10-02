@@ -9,5 +9,6 @@ import { CedulaEcuatorianaValidator } from '../common/validators/cedula-ecuatori
   imports: [TypeOrmModule.forFeature([Estudiante])],
   controllers: [EstudiantesController],
   providers: [EstudiantesService, CedulaEcuatorianaValidator],
+  exports: [EstudiantesService],
 })
 export class EstudiantesModule {}
