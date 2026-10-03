@@ -9,6 +9,7 @@ import { EstudiantesModule } from './estudiantes/estudiantes.module.js';
 import { DocentesModule } from './docentes/docentes.module.js';
 import { PeriodosModule } from './periodos/periodos.module.js';
 import { HabilitadosModule } from './habilitados/habilitados.module.js';
+import { LineasInvestigacionModule } from './lineas-investigacion/lineas-investigacion.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { HabilitadosModule } from './habilitados/habilitados.module.js';
     DocentesModule,
     PeriodosModule,
     HabilitadosModule,
+    LineasInvestigacionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

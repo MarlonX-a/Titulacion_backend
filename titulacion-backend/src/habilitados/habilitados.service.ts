@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
-import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
+import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
@@ -68,6 +68,7 @@ export class HabilitadosService {
     private readonly repository: Repository<EstudianteHabilitado>,
     private readonly dataSource: DataSource,
     private readonly estudiantes: EstudiantesService,
+    private readonly auditoria: AuditoriaService,
   ) {}
 
   async create(
@@ -103,7 +104,7 @@ export class HabilitadosService {
           resuelto_por: isRegular ? actor : null,
           observacion_ingreso: null,
         }));
-        await this.writeAudit(manager, actor, 'CREAR_HABILITACION', record.id, null, {
+        await this.auditoria.registrar(manager, { actor, accion: 'CREAR_HABILITACION', entidad_tipo: 'estudiante_habilitado', entidad_id: record.id, valores_anteriores: null, valores_nuevos: {
           periodo_id: periodo.id,
           estudiante_id: estudiante.id,
           condicion_ingreso: record.condicion_ingreso,
@@ -111,7 +112,7 @@ export class HabilitadosService {
           origen: record.origen,
           estado: record.estado,
           requisito_pendiente: record.requisito_pendiente,
-        }, ip);
+        }, ip_origen: ip });
         return responseFrom(record);
       });
     } catch (error: unknown) {
@@ -200,12 +201,12 @@ export class HabilitadosService {
         record.resuelto_por = actor;
         record.observacion_ingreso = dto.observacion_ingreso?.trim() || null;
         const updated = await repository.save(record);
-        await this.writeAudit(manager, actor, 'RESOLVER_INGRESO', record.id, previous, {
+        await this.auditoria.registrar(manager, { actor, accion: 'RESOLVER_INGRESO', entidad_tipo: 'estudiante_habilitado', entidad_id: record.id, valores_anteriores: previous, valores_nuevos: {
           situacion_ingreso: updated.situacion_ingreso,
           fecha_resolucion_ingreso: updated.fecha_resolucion_ingreso,
           resuelto_por_id: actor.id,
           observacion_ingreso: updated.observacion_ingreso,
-        }, ip);
+        }, ip_origen: ip });
         return responseFrom(updated);
       });
     } catch (error: unknown) {
@@ -223,28 +224,6 @@ export class HabilitadosService {
       throw new ConflictException('Las habilitaciones solo se administran en períodos BORRADOR.');
     }
     return period;
-  }
-
-  private async writeAudit(
-    manager: EntityManager,
-    actor: Usuario,
-    action: string,
-    entityId: string,
-    previous: Record<string, unknown> | null,
-    next: Record<string, unknown>,
-    ip: string | null,
-  ): Promise<void> {
-    const repository = manager.getRepository(Auditoria);
-    await repository.save(repository.create({
-      usuario: actor,
-      accion: action,
-      entidad_tipo: 'estudiante_habilitado',
-      entidad_id: entityId,
-      valores_anteriores: previous,
-      valores_nuevos: next,
-      ip_origen: ip,
-      fecha_hora: new Date(),
-    }));
   }
 
   private handleDatabaseError(error: unknown): never {

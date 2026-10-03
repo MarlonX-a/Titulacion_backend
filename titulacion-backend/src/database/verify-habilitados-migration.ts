@@ -12,6 +12,7 @@ import { HabilitadoEstado } from '../habilitados/enums/habilitado-estado.enum.js
 import { HabilitadoOrigen } from '../habilitados/enums/habilitado-origen.enum.js';
 import { LoteImportacion } from '../importaciones/entities/lote-importacion.entity.js';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
+import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
@@ -102,6 +103,7 @@ async function verify(): Promise<void> {
     isolatedDataSource.getRepository(EstudianteHabilitado),
     isolatedDataSource,
     new EstudiantesService(students, isolatedDataSource),
+    new AuditoriaService(),
   );
   const conditional = {
     estudiante_id: studentProfiles[0].id,

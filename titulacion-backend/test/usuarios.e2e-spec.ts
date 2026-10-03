@@ -891,4 +891,58 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.components.schemas.HabilitadoResponseDto).toBeDefined();
     expect(docs.body.paths[`/periodos/{periodoId}/habilitados/me`].get).toBeDefined();
   });
+
+  it('administra líneas y aplica visibilidad por rol, normalización y auditoría', async () => {
+    addAdmin();
+    addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Prueba', rol: UsuarioRol.DOCENTE });
+    addUsuarioTestRecord({ id_externo_sso: 'student-sub', email: 'estudiante@universidad.edu', nombres: 'Estudiante', apellidos: 'Prueba', rol: UsuarioRol.ESTUDIANTE });
+
+    const created = await authenticated('post', '/lineas-investigacion', 'admin-sub')
+      .send({ codigo: '  IA  ', nombre: '  Inteligencia artificial ', descripcion: ' Sistemas inteligentes ' })
+      .expect(201);
+    expect(created.body).toMatchObject({ codigo: 'IA', nombre: 'Inteligencia artificial', descripcion: 'Sistemas inteligentes', activa: true });
+    expect(auditoriaTestRecords()).toHaveLength(1);
+
+    const duplicate = await authenticated('post', '/lineas-investigacion', 'admin-sub')
+      .send({ codigo: 'IA', nombre: 'Otro nombre válido' }).expect(409);
+    expect(duplicate.body.message).not.toContain('SQL');
+    await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: ' ', nombre: 'Vacío' }).expect(400);
+    await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'C'.repeat(21), nombre: 'Código largo' }).expect(400);
+    await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'NOMBRE-LARGO', nombre: 'N'.repeat(151) }).expect(400);
+    await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'OTRA', nombre: 'Válida', activa: false }).expect(400);
+    await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'OTRA', nombre: 'Válida', descripcion: null }).expect(400);
+
+    const noOp = await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub')
+      .send({ nombre: 'Inteligencia artificial' }).expect(200);
+    expect(noOp.body).toMatchObject({ id: created.body.id, activa: true });
+    expect(auditoriaTestRecords()).toHaveLength(1);
+    await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub').send({}).expect(400);
+    await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub').send({ activa: 'false' }).expect(400);
+    await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub').send({ codigo: null }).expect(400);
+    await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub').send({ desconocido: true }).expect(400);
+
+    const inactive = await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub')
+      .send({ activa: false, descripcion: null }).expect(200);
+    expect(inactive.body).toMatchObject({ activa: false, descripcion: null });
+    expect(auditoriaTestRecords()).toHaveLength(2);
+    const adminList = await authenticated('get', '/lineas-investigacion', 'admin-sub').expect(200);
+    expect(adminList.body).toMatchObject({ total: 1, page: 1, limit: 20 });
+    expect(adminList.body.data[0].activa).toBe(false);
+    await authenticated('get', '/lineas-investigacion?activa=false', 'docente-sub').expect(403);
+    await authenticated('get', '/lineas-investigacion?activa=FALSE', 'admin-sub').expect(400);
+    await authenticated('get', `/lineas-investigacion/${created.body.id}`, 'docente-sub').expect(404);
+    await authenticated('get', '/lineas-investigacion', 'student-sub').expect(200).then((result) => expect(result.body.total).toBe(0));
+    await authenticated('patch', `/lineas-investigacion/${created.body.id}`, 'admin-sub').send({ activa: true }).expect(200);
+    await authenticated('get', `/lineas-investigacion/${created.body.id}`, 'docente-sub').expect(200);
+    await authenticated('post', '/lineas-investigacion', 'docente-sub').send({ codigo: 'DOC', nombre: 'No autorizado' }).expect(403);
+
+    const inactiveAccount = addUsuarioTestRecord({ id_externo_sso: 'inactive-sub', email: 'inactive@universidad.edu', nombres: 'Inactivo', apellidos: 'Prueba', rol: UsuarioRol.DOCENTE });
+    inactiveAccount.estado = UsuarioEstado.INACTIVO;
+    await authenticated('get', '/lineas-investigacion', 'inactive-sub').expect(403);
+
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.components.schemas.LineaInvestigacionResponseDto).toBeDefined();
+    expect(docs.body.paths['/lineas-investigacion'].post).toBeDefined();
+    expect(docs.body.paths['/lineas-investigacion/{id}'].patch).toBeDefined();
+  });
 });

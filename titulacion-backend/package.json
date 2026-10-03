@@ -21,6 +21,7 @@
     "db:verify-perfiles": "npm run build && node dist/database/verify-usuario-migration.js",
     "db:verify-periodos": "npm run build && node dist/database/verify-periodos-migration.js",
     "db:verify-habilitados": "npm run build && node dist/database/verify-habilitados-migration.js",
+    "db:verify-lineas": "npm run build && node dist/database/verify-lineas-migration.js",
     "db:verify-periodos": "npm run build && node dist/database/verify-periodos-migration.js",
     "migration:create": "typeorm migration:create",
     "migration:generate": "npm run build && typeorm migration:generate -d dist/database/data-source.js",
