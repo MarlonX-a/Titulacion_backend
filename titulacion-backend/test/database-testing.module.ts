@@ -12,6 +12,7 @@ import { EstudianteHabilitado } from '../src/habilitados/entities/estudiante-hab
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
 import { Auditoria } from '../src/auditoria/entities/auditoria.entity.js';
 import { HabilitadoOrigen } from '../src/habilitados/enums/habilitado-origen.enum.js';
+import { LineaInvestigacion } from '../src/lineas-investigacion/entities/linea-investigacion.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -22,6 +23,7 @@ const docenteRecords: Docente[] = [];
 const periodoRecords: PeriodoTitulacion[] = [];
 const habilitadoRecords: EstudianteHabilitado[] = [];
 const auditoriaRecords: Auditoria[] = [];
+const lineaRecords: LineaInvestigacion[] = [];
 let transactionQueue: Promise<void> = Promise.resolve();
 
 function createRecord(value: UsuarioRecord): Usuario {
@@ -273,6 +275,25 @@ export const auditoriaTestRepository = {
   },
 };
 
+export const lineaTestRepository = {
+  create: (value: Partial<LineaInvestigacion>) => ({ ...value }) as LineaInvestigacion,
+  save: async (linea: LineaInvestigacion) => {
+    if (lineaRecords.some((record) => record.codigo === linea.codigo && record.id !== linea.id)) throw duplicateError('INSERT INTO linea_investigacion');
+    const index = lineaRecords.findIndex((record) => record.id === linea.id);
+    const stored = { ...linea, id: linea.id ?? randomUUID(), activa: linea.activa ?? true, descripcion: linea.descripcion ?? null };
+    if (index >= 0) lineaRecords[index] = stored;
+    else lineaRecords.push(stored);
+    return stored;
+  },
+  findAndCount: async (options: { where?: Partial<LineaInvestigacion>; skip: number; take: number }) => {
+    const filtered = lineaRecords.filter((record) => !options.where || matchesRecord(record as unknown as Record<string, unknown>, options.where as Record<string, unknown>));
+    const ordered = filtered.sort((a, b) => a.codigo.localeCompare(b.codigo) || a.id.localeCompare(b.id));
+    return [ordered.slice(options.skip, options.skip + options.take), filtered.length] as const;
+  },
+  findOne: async (options: { where: Partial<LineaInvestigacion> }) => lineaRecords.find((record) => matchesRecord(record as unknown as Record<string, unknown>, options.where as Record<string, unknown>)) ?? null,
+  findOneBy: async (where: Partial<LineaInvestigacion>) => lineaRecords.find((record) => matchesRecord(record as unknown as Record<string, unknown>, where as Record<string, unknown>)) ?? null,
+};
+
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
   let release: () => void = () => undefined;
@@ -297,6 +318,7 @@ export const usuarioTestDataSource = {
     { target: PeriodoTitulacion },
     { target: EstudianteHabilitado },
     { target: Auditoria },
+    { target: LineaInvestigacion },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -305,6 +327,7 @@ export const usuarioTestDataSource = {
     if (entity === PeriodoTitulacion) return periodoTestRepository;
     if (entity === EstudianteHabilitado) return habilitadoTestRepository;
     if (entity === Auditoria) return auditoriaTestRepository;
+    if (entity === LineaInvestigacion) return lineaTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -325,6 +348,7 @@ export const usuarioTestDataSource = {
           if (entity === PeriodoTitulacion) return periodoTestRepository;
           if (entity === EstudianteHabilitado) return habilitadoTestRepository;
           if (entity === Auditoria) return auditoriaTestRepository;
+          if (entity === LineaInvestigacion) return lineaTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
@@ -338,6 +362,7 @@ export function clearUsuarioTestRecords(): void {
   periodoRecords.length = 0;
   habilitadoRecords.length = 0;
   auditoriaRecords.length = 0;
+  lineaRecords.length = 0;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {

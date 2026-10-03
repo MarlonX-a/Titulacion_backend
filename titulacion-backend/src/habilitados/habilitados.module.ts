@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { EstudiantesModule } from '../estudiantes/estudiantes.module.js';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
@@ -11,6 +12,7 @@ import { HabilitadosService } from './habilitados.service.js';
   imports: [
     TypeOrmModule.forFeature([EstudianteHabilitado, PeriodoTitulacion, Auditoria]),
     EstudiantesModule,
+    AuditoriaModule,
   ],
   controllers: [HabilitadosController],
   providers: [HabilitadosService],

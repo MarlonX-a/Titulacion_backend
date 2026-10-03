@@ -335,6 +335,27 @@ asignaciones aplicarán la decisión cuando esos módulos estén disponibles.
 La tabla `lote_importacion` queda preparada para conservar la relación del DER,
 aunque la importación de Excel todavía no está implementada.
 
+## Líneas de investigación
+
+El catálogo de `/lineas-investigacion` es global y no pertenece a un período.
+ADMIN puede crear, editar, desactivar y reactivar líneas; DOCENTE y ESTUDIANTE
+pueden consultar únicamente las activas. Las líneas se conservan: no se
+eliminan físicamente y el código no se libera al desactivarlas. El código es
+único exacto (distingue mayúsculas y minúsculas); el nombre puede repetirse.
+
+La creación requiere `codigo` y `nombre`; la descripción es opcional. El
+listado acepta `page` y `limit` (por defecto 1 y 20, máximo 100). ADMIN puede
+ver todo el catálogo o filtrar con `activa=true|false`. Los otros roles solo
+ven activas; pedir `activa=false` devuelve `403`, y una línea inactiva se oculta
+como `404` en el detalle. ADMIN puede cambiar `activa` desde
+`PATCH /lineas-investigacion/:id`; enviar `descripcion: null` la limpia.
+Altas y cambios se registran en `auditoria` dentro de la misma transacción; un
+PATCH sin cambios no añade un registro de auditoría.
+
+Aplicar la nueva migración explícitamente después de comprobar que
+`DB_SCHEMA=local_demo`, con `npm run migration:run`. No se insertan líneas de
+ejemplo.
+
 Para probar el flujo desde Swagger, crea una cuenta con rol `ESTUDIANTE`, crea
 su perfil usando `POST /estudiantes`, crea un período con `POST /periodos` y
 registra su habilitación. Usa `admin@example.test` para las operaciones
@@ -348,6 +369,7 @@ npm run lint
 npm run test
 npm run test:e2e
 npm run build
+npx tsc --noEmit --incremental false
 ```
 
 Las pruebas cubren configuración, validación DTO, autenticación con JWKS local,
@@ -362,4 +384,6 @@ las migraciones de usuarios y perfiles, sus restricciones y las altas
 concurrentes se comprueban con `npm run db:verify-perfiles`; para períodos se
 usa `npm run db:verify-periodos`; para habilitados, lotes y auditoría se usa
 `npm run db:verify-habilitados`. Estos comandos operan en esquemas temporales
-aislados.
+aislados. El catálogo global y sus restricciones, altas concurrentes,
+auditoría atómica y reversión protegida se comprueban con
+`npm run db:verify-lineas`.
