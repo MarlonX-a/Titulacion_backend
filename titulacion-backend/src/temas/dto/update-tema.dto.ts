@@ -1,4 +1,4 @@
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsString, IsUUID, Length, Max, Min, ValidateIf } from 'class-validator';
 
@@ -32,7 +32,6 @@ export class UpdateTemaDto {
 
   @ApiPropertyOptional({ minimum: 1, maximum: 32767, type: Number })
   @ValidateIf(supplied)
-  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(32767)
@@ -40,7 +39,6 @@ export class UpdateTemaDto {
 
   @ApiPropertyOptional({ minimum: 1, maximum: 32767, type: Number })
   @ValidateIf(supplied)
-  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(32767)

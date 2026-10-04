@@ -1,5 +1,6 @@
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto.js';
 import { EstadoTema } from '../enums/estado-tema.enum.js';
 
@@ -18,4 +19,12 @@ export class ListTemasQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(EstadoTema)
   estado?: EstadoTema;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 32767, type: Number, description: 'Filtra temas cuyo rango de integrantes incluye esta cantidad.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(32767)
+  num_integrantes?: number;
 }

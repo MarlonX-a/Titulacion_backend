@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Global, Module } from '@nestjs/common';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { QueryFailedError } from 'typeorm';
+import { FindOperator, QueryFailedError } from 'typeorm';
 import { Usuario } from '../src/usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../src/usuarios/enums/usuario-estado.enum.js';
 import { Estudiante } from '../src/estudiantes/entities/estudiante.entity.js';
@@ -233,6 +233,13 @@ export const periodoTestRepository = {
 function matchesRecord(record: Record<string, unknown>, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
     const actual = record[key];
+    if (value instanceof FindOperator) {
+      const expected = value.value;
+      if (typeof actual !== 'number' || typeof expected !== 'number') return false;
+      if (value.type === 'lessThanOrEqual') return actual <= expected;
+      if (value.type === 'moreThanOrEqual') return actual >= expected;
+      return actual === expected;
+    }
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
       return actual !== null && typeof actual === 'object' &&
         matchesRecord(actual as Record<string, unknown>, value as Record<string, unknown>);
@@ -430,6 +437,18 @@ export function setPeriodoTestEstado(
 ): void {
   const periodo = periodoRecords.find((record) => record.id === id);
   if (periodo) periodo.estado = estado;
+}
+
+export function setPeriodoTestFechas(
+  id: string,
+  inicio: Date,
+  fin: Date,
+): void {
+  const periodo = periodoRecords.find((record) => record.id === id);
+  if (periodo) {
+    periodo.fecha_inicio_postulacion = inicio;
+    periodo.fecha_fin_postulacion = fin;
+  }
 }
 
 // Simula también el bloqueo del primer ADMIN y los repositorios para pruebas HTTP.

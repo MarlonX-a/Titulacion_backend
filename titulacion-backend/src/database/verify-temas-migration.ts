@@ -21,7 +21,11 @@ import { CreateTemaDto } from '../temas/dto/create-tema.dto.js';
 import { UpdateTemaDto } from '../temas/dto/update-tema.dto.js';
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { Tema } from '../temas/entities/tema.entity.js';
+import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { TemasService } from '../temas/temas.service.js';
+import { PeriodosService } from '../periodos/periodos.service.js';
+import type { AbrirPostulacionDto } from '../periodos/dto/abrir-postulacion.dto.js';
+import type { PublicarTemaDto } from '../temas/dto/publicar-tema.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
@@ -67,7 +71,13 @@ async function verify(): Promise<void> {
   const linea = await lineas.save(lineas.create({ codigo: 'IA', nombre: 'Inteligencia artificial', descripcion: null, activa: true }));
   const periodos = isolated.getRepository(PeriodoTitulacion);
   const periodo = await periodos.save(periodos.create({ codigo: 'TEMAS-VERIFY', nombre: 'Verificación temas', fecha_inicio_postulacion: new Date('2026-11-02T13:00:00Z'), fecha_fin_postulacion: new Date('2026-12-01T04:59:00Z'), fecha_inicio_titulacion: new Date('2026-12-01T13:00:00Z'), estado: PeriodoEstado.BORRADOR, max_integrantes_default: 5 }));
-  const service = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), docentes, isolated, new AuditoriaService());
+  const auditoria = new AuditoriaService();
+  const service = new TemasService(
+    isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), docentes,
+    isolated.getRepository(Estudiante), isolated.getRepository(EstudianteHabilitado),
+    isolated.getRepository(PeriodoTitulacion), isolated, auditoria,
+  );
+  const periodosService = new PeriodosService(periodos, isolated, auditoria);
   const dto = { linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;
 
   step = 'alta e historial inicial';
@@ -82,13 +92,57 @@ async function verify(): Promise<void> {
   await service.update(periodo.id, created.id, { max_integrantes: 4 } as UpdateTemaDto, actor, '127.0.0.1');
   if (await isolated.getRepository(TemaHistorial).count() !== 2 || await isolated.getRepository(Auditoria).count() !== 2) throw new Error('La edición no fue trazable.');
 
+  step = 'apertura y publicación concurrentes';
+  const now = Date.now();
+  periodo.fecha_inicio_postulacion = new Date(now - 60_000);
+  periodo.fecha_fin_postulacion = new Date(now + 5 * 60_000);
+  periodo.fecha_inicio_titulacion = new Date(now + 10 * 60_000);
+  await periodos.save(periodo);
+  const openingAuditCount = await isolated.getRepository(Auditoria).count();
+  const openFailFn = `${schemaSql()}."rechazar_auditoria_apertura"`;
+  const auditTable = `${schemaSql()}."auditoria"`;
+  await isolated.query(`CREATE FUNCTION ${openFailFn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo de auditoría'; END; $$`);
+  await isolated.query(`CREATE TRIGGER "TRG_verify_open_audit_failure" BEFORE INSERT ON ${auditTable} FOR EACH ROW EXECUTE FUNCTION ${openFailFn}()`);
+  let openControlled = false;
+  try { await periodosService.abrirPostulacion(periodo.id, {} as AbrirPostulacionDto, actor, null); } catch (error: unknown) { openControlled = error instanceof ServiceUnavailableException; }
+  await isolated.query(`DROP TRIGGER "TRG_verify_open_audit_failure" ON ${auditTable}`);
+  await isolated.query(`DROP FUNCTION ${openFailFn}()`);
+  if (!openControlled || (await periodos.findOneBy({ id: periodo.id }))?.estado !== PeriodoEstado.BORRADOR || await isolated.getRepository(Auditoria).count() !== openingAuditCount) {
+    throw new Error('La apertura dejó el período actualizado sin su auditoría.');
+  }
+  const abrir = () => periodosService.abrirPostulacion(periodo.id, {} as AbrirPostulacionDto, actor, null);
+  const aperturas = await Promise.allSettled([abrir(), abrir()]);
+  if (aperturas.filter((result) => result.status === 'fulfilled').length !== 1 || (await periodos.findOneBy({ id: periodo.id }))?.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
+    throw new Error('La apertura concurrente no produjo una sola transición exitosa.');
+  }
+  const publicar = () => service.publish(periodo.id, created.id, {} as PublicarTemaDto, actor, null);
+  const publicaciones = await Promise.allSettled([publicar(), publicar()]);
+  if (publicaciones.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('La publicación concurrente produjo más de una transición exitosa.');
+  if ((await isolated.getRepository(Tema).findOneBy({ id: created.id }))?.estado !== EstadoTema.PUBLICADO) throw new Error('El tema no quedó publicado.');
+  const publishHistory = await isolated.getRepository(TemaHistorial).findOne({ where: { tema: { id: created.id }, estado_nuevo: EstadoTema.PUBLICADO } });
+  if (publishHistory?.estado_anterior !== EstadoTema.BORRADOR) throw new Error('El historial de publicación no conservó BORRADOR como estado anterior.');
+
+  step = 'publicación atómica de estado, historial y auditoría';
+  const secondDraft = await service.create(periodo.id, dto, actor, null);
+  const historyBeforeFailedPublish = await isolated.getRepository(TemaHistorial).count();
+  const auditsBeforeFailedPublish = await isolated.getRepository(Auditoria).count();
+  const publishFailFn = `${schemaSql()}."rechazar_auditoria_publicacion"`;
+  await isolated.query(`CREATE FUNCTION ${publishFailFn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo de auditoría'; END; $$`);
+  await isolated.query(`CREATE TRIGGER "TRG_verify_publication_audit_failure" BEFORE INSERT ON ${auditTable} FOR EACH ROW EXECUTE FUNCTION ${publishFailFn}()`);
+  let publishControlled = false;
+  try { await service.publish(periodo.id, secondDraft.id, {} as PublicarTemaDto, actor, null); } catch (error: unknown) { publishControlled = error instanceof ServiceUnavailableException; }
+  await isolated.query(`DROP TRIGGER "TRG_verify_publication_audit_failure" ON ${auditTable}`);
+  await isolated.query(`DROP FUNCTION ${publishFailFn}()`);
+  if (!publishControlled || (await isolated.getRepository(Tema).findOneBy({ id: secondDraft.id }))?.estado !== EstadoTema.BORRADOR || await isolated.getRepository(TemaHistorial).count() !== historyBeforeFailedPublish || await isolated.getRepository(Auditoria).count() !== auditsBeforeFailedPublish) {
+    throw new Error('La publicación dejó estado, historial o auditoría parcialmente persistidos.');
+  }
+
   step = 'restricciones de rango';
   let rejected = false;
   try { await isolated.query(`INSERT INTO ${schemaSql()}."tema" ("periodo_id", "linea_id", "docente_proponente_id", "titulo", "descripcion", "min_integrantes", "max_integrantes") VALUES ($1,$2,$3,'Inválido','Descripción',4,2)`, [periodo.id, linea.id, docente.id]); } catch (error: unknown) { rejected = code(error) === '23514'; }
   if (!rejected) throw new Error('PostgreSQL aceptó límites incompatibles.');
 
   step = 'atomicidad tema-historial-auditoría';
-  const auditTable = `${schemaSql()}."auditoria"`;
   const fn = `${schemaSql()}."rechazar_auditoria_temas"`;
   await isolated.query(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo de auditoría'; END; $$`);
   await isolated.query(`CREATE TRIGGER "TRG_verify_temas_audit_failure" BEFORE INSERT ON ${auditTable} FOR EACH ROW EXECUTE FUNCTION ${fn}()`);
@@ -119,4 +173,4 @@ try { await verify(); verified = true; } catch (error: unknown) {
   console.error(`Falló la verificación aislada durante ${step}: ${detail}. No se modificó el esquema configurado.`);
   process.exitCode = 1;
 } finally { try { await cleanup(); } catch { console.error('No se pudo limpiar el esquema temporal de verificación.'); process.exitCode = 1; } }
-if (verified && process.exitCode !== 1) console.info('Migración, restricciones, historial, auditoría atómica y reversión de temas verificadas en esquema temporal.');
+if (verified && process.exitCode !== 1) console.info('Migraciones, restricciones, historiales, apertura y publicación concurrentes, auditoría atómica y reversión de temas verificadas en esquema temporal.');

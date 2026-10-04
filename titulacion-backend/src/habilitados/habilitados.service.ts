@@ -175,7 +175,17 @@ export class HabilitadosService {
   ): Promise<HabilitadoResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        await this.lockDraftPeriod(manager, periodoId);
+        const period = await manager.getRepository(PeriodoTitulacion).findOne({
+          where: { id: periodoId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!period) throw new NotFoundException('No existe el período indicado.');
+        if (period.estado !== PeriodoEstado.BORRADOR && period.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
+          throw new ConflictException('Solo se pueden resolver condicionados en períodos BORRADOR o POSTULACION_ABIERTA.');
+        }
+        if (period.estado === PeriodoEstado.POSTULACION_ABIERTA && new Date() >= period.fecha_inicio_titulacion) {
+          throw new ConflictException('El requisito debe resolverse antes del inicio de titulación.');
+        }
         const repository = manager.getRepository(EstudianteHabilitado);
         const locked = await repository.findOne({
           where: { id, periodo: { id: periodoId } },
