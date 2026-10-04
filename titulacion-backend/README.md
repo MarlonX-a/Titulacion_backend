@@ -329,8 +329,10 @@ La fecha y el responsable provienen del servidor y la cuenta autenticada. El
 requisito original se conserva y cada alta o resolución registra una fila de
 auditoría dentro de la misma transacción.
 
-Las escrituras solo se permiten mientras el período está en `BORRADOR`. El
-resultado `NO_ADMITIDO` no cambia el estado separado de habilitación; grupos y
+El alta manual solo se permite mientras el período está en `BORRADOR`. ADMIN
+puede resolver condicionados pendientes tanto en `BORRADOR` como en
+`POSTULACION_ABIERTA`, siempre antes de `fecha_inicio_titulacion`. El resultado
+`NO_ADMITIDO` no cambia el estado separado de habilitación; grupos y
 asignaciones aplicarán la decisión cuando esos módulos estén disponibles.
 La tabla `lote_importacion` queda preparada para conservar la relación del DER,
 aunque la importación de Excel todavía no está implementada.
@@ -356,6 +358,54 @@ Aplicar la nueva migración explícitamente después de comprobar que
 `DB_SCHEMA=local_demo`, con `npm run migration:run`. No se insertan líneas de
 ejemplo.
 
+## Temas de titulación
+
+ADMIN puede registrar temas en estado `BORRADOR` desde
+`POST /periodos/:periodoId/temas`, indicando una línea activa, un docente
+proponente, título, descripción y obligatoriamente los límites mínimo y máximo
+de integrantes. El máximo del período no se copia automáticamente al tema.
+Los límites deben ser positivos y el máximo no puede ser menor que el mínimo.
+
+ADMIN puede editar parcialmente un tema mientras esté en `BORRADOR` y el
+período esté en `BORRADOR` o `POSTULACION_ABIERTA` dentro del plazo. También
+puede consultar el listado, filtrarlo por línea, docente, estado o por una
+cantidad de integrantes incluida en el rango del tema, y revisar
+`GET /periodos/:periodoId/temas/:id/historial`. Un cambio sin modificaciones
+no crea una entrada nueva. Cada alta, edición y publicación guarda el antes y
+el después en el historial y en la auditoría dentro de la misma transacción.
+
+ADMIN publica un borrador con
+`POST /periodos/:periodoId/temas/:id/publicar`. La línea debe seguir activa y
+el docente proponente debe tener una cuenta activa con rol `DOCENTE`. Se puede
+publicar antes de abrir el período para preparar el catálogo o durante el
+plazo de postulación. Al publicar, el tema pasa a `PUBLICADO`; en esta etapa
+no se editan temas publicados.
+
+DOCENTE puede listar y consultar únicamente los temas que tiene como
+proponente; necesita una cuenta activa y un perfil docente. `habilitado_tutoria`
+no es requisito para proponer temas. ESTUDIANTE consulta únicamente temas
+`PUBLICADO` cuando el período está `POSTULACION_ABIERTA` y tiene una cuenta
+activa, perfil y habilitación `HABILITADO` del mismo período con situación de
+ingreso `PENDIENTE` o `ADMITIDO`. Una situación pendiente permite ver el
+catálogo, aunque deberá resolverse antes del inicio de titulación.
+
+ADMIN abre el período con `POST /periodos/:id/abrir-postulacion`. Solo puede
+hacerlo cuando la hora del servidor está dentro del intervalo configurado:
+inicio incluido y fin excluido. La apertura y la publicación quedan auditadas;
+no se realizan cambios automáticos de estado. El catálogo continúa siendo de
+consulta después del fin del plazo mientras el período siga
+`POSTULACION_ABIERTA`; abrir el período no habilita todavía el envío de
+postulaciones.
+
+Para probarlo desde Swagger, prepara una cuenta DOCENTE y su perfil, crea una
+línea activa y un período con fechas que incluyan el momento actual. Registra y
+publica un tema, abre el período y consulta el catálogo con un estudiante
+habilitado. Para preparar temas antes de abrir, publícalos mientras el período
+sigue en `BORRADOR`. También puedes resolver un condicionado pendiente después
+de abrir el período, antes de la fecha de inicio de titulación. La migración
+se aplica explícitamente con `npm run migration:run` después de confirmar
+`DB_SCHEMA=local_demo`; no se insertan temas de ejemplo.
+
 Para probar el flujo desde Swagger, crea una cuenta con rol `ESTUDIANTE`, crea
 su perfil usando `POST /estudiantes`, crea un período con `POST /periodos` y
 registra su habilitación. Usa `admin@example.test` para las operaciones
@@ -374,8 +424,9 @@ npx tsc --noEmit --incremental false
 
 Las pruebas cubren configuración, validación DTO, autenticación con JWKS local,
 permisos, altas y consultas de usuarios, perfiles, períodos e habilitaciones,
-resolución de condicionados, auditoría, duplicados, paginación, Swagger y
-compatibilidad de `GET /`.
+resolución de condicionados, apertura de período, publicación y visibilidad del
+catálogo, auditoría, duplicados, filtros, paginación, Swagger y compatibilidad
+de `GET /`.
 
 Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
 variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la
@@ -387,3 +438,6 @@ usa `npm run db:verify-periodos`; para habilitados, lotes y auditoría se usa
 aislados. El catálogo global y sus restricciones, altas concurrentes,
 auditoría atómica y reversión protegida se comprueban con
 `npm run db:verify-lineas`.
+Los temas, su historial, restricciones, transiciones concurrentes de apertura
+y publicación, atomicidad de auditoría y reversión protegida se comprueban con
+`npm run db:verify-temas`.

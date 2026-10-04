@@ -10,6 +10,7 @@ import { DocentesModule } from './docentes/docentes.module.js';
 import { PeriodosModule } from './periodos/periodos.module.js';
 import { HabilitadosModule } from './habilitados/habilitados.module.js';
 import { LineasInvestigacionModule } from './lineas-investigacion/lineas-investigacion.module.js';
+import { TemasModule } from './temas/temas.module.js';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { LineasInvestigacionModule } from './lineas-investigacion/lineas-investi
     PeriodosModule,
     HabilitadosModule,
     LineasInvestigacionModule,
+    TemasModule,
   ],
   controllers: [AppController],
   providers: [AppService],

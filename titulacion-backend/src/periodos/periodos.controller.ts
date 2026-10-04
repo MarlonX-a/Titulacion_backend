@@ -2,12 +2,16 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -27,6 +31,9 @@ import {
 import { Roles } from '../common/roles.decorator.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
+import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
+import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { AbrirPostulacionDto } from './dto/abrir-postulacion.dto.js';
 import { CreatePeriodoDto } from './dto/create-periodo.dto.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
@@ -108,5 +115,21 @@ export class PeriodosController {
     @Body() dto: UpdatePeriodoDto,
   ): Promise<PeriodoResponseDto> {
     return this.periodos.update(id, dto);
+  }
+
+  @Post(':id/abrir-postulacion')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Abrir el período dentro del plazo de postulación' })
+  @ApiOkResponse({ type: PeriodoResponseDto })
+  @ApiBadRequestResponse({ description: 'No se admiten propiedades en el cuerpo.' })
+  @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
+  @ApiConflictResponse({ description: 'El estado o las fechas no permiten abrir el período.' })
+  abrirPostulacion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: AbrirPostulacionDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<PeriodoResponseDto> {
+    return this.periodos.abrirPostulacion(id, dto, actor, request.ip || null);
   }
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Global, Module } from '@nestjs/common';
 import { getDataSourceToken } from '@nestjs/typeorm';
-import { QueryFailedError } from 'typeorm';
+import { FindOperator, QueryFailedError } from 'typeorm';
 import { Usuario } from '../src/usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../src/usuarios/enums/usuario-estado.enum.js';
 import { Estudiante } from '../src/estudiantes/entities/estudiante.entity.js';
@@ -13,6 +13,9 @@ import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enu
 import { Auditoria } from '../src/auditoria/entities/auditoria.entity.js';
 import { HabilitadoOrigen } from '../src/habilitados/enums/habilitado-origen.enum.js';
 import { LineaInvestigacion } from '../src/lineas-investigacion/entities/linea-investigacion.entity.js';
+import { Tema } from '../src/temas/entities/tema.entity.js';
+import { TemaHistorial } from '../src/temas/entities/tema-historial.entity.js';
+import { EstadoTema } from '../src/temas/enums/estado-tema.enum.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -24,6 +27,8 @@ const periodoRecords: PeriodoTitulacion[] = [];
 const habilitadoRecords: EstudianteHabilitado[] = [];
 const auditoriaRecords: Auditoria[] = [];
 const lineaRecords: LineaInvestigacion[] = [];
+const temaRecords: Tema[] = [];
+const temaHistorialRecords: TemaHistorial[] = [];
 let transactionQueue: Promise<void> = Promise.resolve();
 
 function createRecord(value: UsuarioRecord): Usuario {
@@ -228,6 +233,13 @@ export const periodoTestRepository = {
 function matchesRecord(record: Record<string, unknown>, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
     const actual = record[key];
+    if (value instanceof FindOperator) {
+      const expected = value.value;
+      if (typeof actual !== 'number' || typeof expected !== 'number') return false;
+      if (value.type === 'lessThanOrEqual') return actual <= expected;
+      if (value.type === 'moreThanOrEqual') return actual >= expected;
+      return actual === expected;
+    }
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
       return actual !== null && typeof actual === 'object' &&
         matchesRecord(actual as Record<string, unknown>, value as Record<string, unknown>);
@@ -294,6 +306,38 @@ export const lineaTestRepository = {
   findOneBy: async (where: Partial<LineaInvestigacion>) => lineaRecords.find((record) => matchesRecord(record as unknown as Record<string, unknown>, where as Record<string, unknown>)) ?? null,
 };
 
+export const temaTestRepository = {
+  create: (value: Partial<Tema>) => ({ ...value }) as Tema,
+  save: async (tema: Tema) => {
+    const index = temaRecords.findIndex((record) => record.id === tema.id);
+    const stored = { ...tema, id: tema.id ?? randomUUID(), estado: tema.estado ?? EstadoTema.BORRADOR, creado_en: tema.creado_en ?? new Date() };
+    if (index >= 0) temaRecords[index] = stored;
+    else temaRecords.push(stored);
+    return stored;
+  },
+  findAndCount: async (options: { where?: Record<string, unknown>; skip: number; take: number }) => {
+    const filtered = temaRecords.filter((record) => !options.where || matchesRecord(record as unknown as Record<string, unknown>, options.where));
+    const ordered = filtered.sort((a, b) => b.creado_en.getTime() - a.creado_en.getTime() || a.id.localeCompare(b.id));
+    return [ordered.slice(options.skip, options.skip + options.take), filtered.length] as const;
+  },
+  findOne: async (options: { where: Record<string, unknown> }) => temaRecords.find((record) => matchesRecord(record as unknown as Record<string, unknown>, options.where)) ?? null,
+  findOneBy: async (where: Record<string, unknown>) => temaRecords.find((record) => matchesRecord(record as unknown as Record<string, unknown>, where)) ?? null,
+};
+
+export const temaHistorialTestRepository = {
+  create: (value: Partial<TemaHistorial>) => ({ ...value }) as TemaHistorial,
+  save: async (item: TemaHistorial) => {
+    const stored = { ...item, id: item.id ?? randomUUID(), fecha: item.fecha ?? new Date() };
+    temaHistorialRecords.push(stored);
+    return stored;
+  },
+  findAndCount: async (options: { where: Record<string, unknown>; skip: number; take: number }) => {
+    const filtered = temaHistorialRecords.filter((record) => matchesRecord(record as unknown as Record<string, unknown>, options.where));
+    const ordered = filtered.sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || a.id.localeCompare(b.id));
+    return [ordered.slice(options.skip, options.skip + options.take), filtered.length] as const;
+  },
+};
+
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
   let release: () => void = () => undefined;
@@ -319,6 +363,8 @@ export const usuarioTestDataSource = {
     { target: EstudianteHabilitado },
     { target: Auditoria },
     { target: LineaInvestigacion },
+    { target: Tema },
+    { target: TemaHistorial },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -328,6 +374,8 @@ export const usuarioTestDataSource = {
     if (entity === EstudianteHabilitado) return habilitadoTestRepository;
     if (entity === Auditoria) return auditoriaTestRepository;
     if (entity === LineaInvestigacion) return lineaTestRepository;
+    if (entity === Tema) return temaTestRepository;
+    if (entity === TemaHistorial) return temaHistorialTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -349,6 +397,8 @@ export const usuarioTestDataSource = {
           if (entity === EstudianteHabilitado) return habilitadoTestRepository;
           if (entity === Auditoria) return auditoriaTestRepository;
           if (entity === LineaInvestigacion) return lineaTestRepository;
+          if (entity === Tema) return temaTestRepository;
+          if (entity === TemaHistorial) return temaHistorialTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
@@ -363,6 +413,8 @@ export function clearUsuarioTestRecords(): void {
   habilitadoRecords.length = 0;
   auditoriaRecords.length = 0;
   lineaRecords.length = 0;
+  temaRecords.length = 0;
+  temaHistorialRecords.length = 0;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {
@@ -385,6 +437,18 @@ export function setPeriodoTestEstado(
 ): void {
   const periodo = periodoRecords.find((record) => record.id === id);
   if (periodo) periodo.estado = estado;
+}
+
+export function setPeriodoTestFechas(
+  id: string,
+  inicio: Date,
+  fin: Date,
+): void {
+  const periodo = periodoRecords.find((record) => record.id === id);
+  if (periodo) {
+    periodo.fecha_inicio_postulacion = inicio;
+    periodo.fecha_fin_postulacion = fin;
+  }
 }
 
 // Simula también el bloqueo del primer ADMIN y los repositorios para pruebas HTTP.

@@ -5,6 +5,7 @@ import { loadEnvironment } from '../config/load-environment.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodosService } from '../periodos/periodos.service.js';
+import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -68,6 +69,7 @@ async function verify(): Promise<void> {
   const service = new PeriodosService(
     isolatedDataSource.getRepository(PeriodoTitulacion),
     isolatedDataSource,
+    new AuditoriaService(),
   );
   const periodData = {
     codigo: 'VERIFY-PERIODO',
