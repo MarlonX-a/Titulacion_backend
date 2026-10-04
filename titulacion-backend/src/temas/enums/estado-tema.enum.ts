@@ -1,0 +1,7 @@
+export enum EstadoTema {
+  BORRADOR = 'BORRADOR',
+  PUBLICADO = 'PUBLICADO',
+  CERRADO = 'CERRADO',
+  ASIGNADO = 'ASIGNADO',
+  RETIRADO = 'RETIRADO',
+}

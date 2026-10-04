@@ -356,6 +356,31 @@ Aplicar la nueva migración explícitamente después de comprobar que
 `DB_SCHEMA=local_demo`, con `npm run migration:run`. No se insertan líneas de
 ejemplo.
 
+## Temas de titulación
+
+ADMIN puede registrar temas en estado `BORRADOR` desde
+`POST /periodos/:periodoId/temas`, indicando una línea activa, un docente
+proponente, título, descripción y obligatoriamente los límites mínimo y máximo
+de integrantes. El máximo del período no se copia automáticamente al tema.
+Los límites deben ser positivos y el máximo no puede ser menor que el mínimo.
+
+ADMIN puede editar parcialmente un tema mientras el período y el tema sigan en
+`BORRADOR`. También puede consultar el listado, filtrarlo por línea, docente o
+estado, y revisar `GET /periodos/:periodoId/temas/:id/historial`. Un cambio sin
+modificaciones no crea una entrada nueva. Cada alta y edición guarda el antes
+y el después en el historial y en la auditoría dentro de la misma transacción.
+
+DOCENTE puede listar y consultar únicamente los temas que tiene como
+proponente; necesita una cuenta activa y un perfil docente. `habilitado_tutoria`
+no es requisito para proponer temas. ESTUDIANTE todavía no consulta este
+catálogo: esa visibilidad se incorporará junto con la publicación de temas.
+
+Para probarlo desde Swagger, prepara una cuenta DOCENTE y su perfil, crea una
+línea activa y un período en `BORRADOR`, registra el tema, edítalo y consulta
+su historial con la cuenta ADMIN. La migración se aplica explícitamente con
+`npm run migration:run` después de confirmar `DB_SCHEMA=local_demo`; no se
+insertan temas de ejemplo.
+
 Para probar el flujo desde Swagger, crea una cuenta con rol `ESTUDIANTE`, crea
 su perfil usando `POST /estudiantes`, crea un período con `POST /periodos` y
 registra su habilitación. Usa `admin@example.test` para las operaciones
@@ -387,3 +412,5 @@ usa `npm run db:verify-periodos`; para habilitados, lotes y auditoría se usa
 aislados. El catálogo global y sus restricciones, altas concurrentes,
 auditoría atómica y reversión protegida se comprueban con
 `npm run db:verify-lineas`.
+Los temas, su historial, restricciones, atomicidad de auditoría y reversión
+protegida se comprueban con `npm run db:verify-temas`.

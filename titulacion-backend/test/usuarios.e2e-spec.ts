@@ -945,4 +945,56 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/lineas-investigacion'].post).toBeDefined();
     expect(docs.body.paths['/lineas-investigacion/{id}'].patch).toBeDefined();
   });
+
+  it('administra temas en borrador, filtra por docente y conserva historial', async () => {
+    addAdmin();
+    const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'IA', nombre: 'Inteligencia artificial' }).expect(201);
+    const period = await createPeriod('TEMAS-1');
+    const path = `/periodos/${period.body.id}/temas`;
+    const created = await authenticated('post', path, 'admin-sub').send({
+      linea_id: line.body.id,
+      docente_proponente_id: teacherProfile.body.id,
+      titulo: '  Sistema de recomendación  ',
+      descripcion: '  Descripción del tema  ',
+      min_integrantes: 1,
+      max_integrantes: 3,
+    }).expect(201);
+    expect(created.body).toMatchObject({ estado: 'BORRADOR', titulo: 'Sistema de recomendación', descripcion: 'Descripción del tema', min_integrantes: 1, max_integrantes: 3, linea: { id: line.body.id }, docente_proponente: { id: teacherProfile.body.id, nombres: 'Docente' } });
+    expect(created.body).not.toHaveProperty('docente_proponente.usuario');
+
+    await authenticated('get', path, 'docente-sub').expect(200).then((response) => {
+      expect(response.body.total).toBe(1);
+      expect(response.body.data[0].id).toBe(created.body.id);
+    });
+    await authenticated('get', `${path}/${created.body.id}`, 'docente-sub').expect(200);
+    await authenticated('get', `${path}/${created.body.id}/historial`, 'admin-sub').expect(200).then((response) => {
+      expect(response.body.total).toBe(1);
+      expect(response.body.data[0]).toMatchObject({ estado_anterior: null, estado_nuevo: 'BORRADOR' });
+    });
+    const noOp = await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({ titulo: 'Sistema de recomendación' }).expect(200);
+    expect(noOp.body.id).toBe(created.body.id);
+    await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({ max_integrantes: 4 }).expect(200);
+    await authenticated('get', `${path}/${created.body.id}/historial`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(2));
+
+    await authenticated('post', path, 'admin-sub').send({ ...created.body, id: created.body.id, estado: 'PUBLICADO' }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Inválido', descripcion: 'Inválido', min_integrantes: 3, max_integrantes: 2 }).expect(400);
+    await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({}).expect(400);
+    await authenticated('get', `${path}/${created.body.id}/historial`, 'docente-sub').expect(403);
+    await authenticated('get', path, 'student-sub').expect(403);
+    await authenticated('patch', `${path}/${created.body.id}`, 'docente-sub').send({ titulo: 'No autorizado' }).expect(403);
+    await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: false }).expect(200);
+    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Línea inactiva', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
+    await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: true }).expect(200);
+    const inactiveTeacher = addUsuarioTestRecord({ id_externo_sso: 'bootstrap-sub', email: 'inactivo@universidad.edu', nombres: 'Docente', apellidos: 'Inactivo', rol: UsuarioRol.DOCENTE });
+    const inactiveTeacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: inactiveTeacher.id, cedula: '0102030418', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    inactiveTeacher.estado = UsuarioEstado.INACTIVO;
+    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: inactiveTeacherProfile.body.id, titulo: 'Docente inactivo', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
+    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: '00000000-0000-4000-8000-000000000001', titulo: 'Docente inexistente', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(404);
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.components.schemas.TemaResponseDto).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/historial'].get).toBeDefined();
+  });
 });
