@@ -16,10 +16,12 @@ import { Grupo } from '../grupos/entities/grupo.entity.js';
 import { GrupoIntegrante } from '../grupos/entities/grupo-integrante.entity.js';
 import { GrupoEstado } from '../grupos/enums/grupo-estado.enum.js';
 import { GruposService } from '../grupos/grupos.service.js';
+import { GrupoGestionService } from '../grupos/grupo-gestion.service.js';
 import { Invitacion } from '../invitaciones/entities/invitacion.entity.js';
 import { InvitacionEstado } from '../invitaciones/enums/invitacion-estado.enum.js';
 import { CreateInvitacionDto } from '../invitaciones/dto/create-invitacion.dto.js';
 import { InvitacionesService } from '../invitaciones/invitaciones.service.js';
+import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { CreateGrupoDto } from '../grupos/dto/create-grupo.dto.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
 import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
@@ -37,6 +39,14 @@ import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { GrupoIntegranteEstado } from '../grupos/enums/grupo-integrante-estado.enum.js';
+import { GroupIntegrityLifecycle20261002070000 } from './migrations/20261002070000-GroupIntegrityLifecycle.js';
+import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
+import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { Docente } from '../docentes/entities/docente.entity.js';
+import { LineaInvestigacion } from '../lineas-investigacion/entities/linea-investigacion.entity.js';
+import { Tema } from '../temas/entities/tema.entity.js';
+import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 
 const schema = `test_grupos_${randomBytes(8).toString('hex')}`;
 let admin: DatabaseDataSource | undefined;
@@ -61,12 +71,12 @@ async function verify(): Promise<void> {
   isolated = new DatabaseDataSource({
     ...options,
     schema,
-    entities: [Usuario, Estudiante, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, Grupo, GrupoIntegrante, Invitacion],
-    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000],
+    entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, TemaHistorial, Grupo, GrupoIntegrante, Invitacion, Postulacion],
+    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000],
   });
   await isolated.initialize();
   await isolated.runMigrations({ transaction: 'all' });
-  const groupStates = await isolated.query(`SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'grupo_estado_enum' ORDER BY e.enumsortorder`) as Array<{ enumlabel: string }>;
+  const groupStates = await isolated.query(`SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = $1 AND t.typname = 'grupo_estado_enum' ORDER BY e.enumsortorder`, [schema]) as Array<{ enumlabel: string }>;
   if (groupStates.map((item) => item.enumlabel).join(',') !== 'EN_CONFORMACION,ACTIVO,DISUELTO,ANULADO') throw new Error('Los estados de grupo no coinciden con el DER corregido.');
 
   step = 'datos aislados de período y estudiantes';
@@ -85,8 +95,11 @@ async function verify(): Promise<void> {
   const audit = new AuditoriaService();
   const students = isolated.getRepository(Estudiante);
   const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit);
-  const groupService = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), students, isolated, habilitadoService, audit);
-  const inviteService = new InvitacionesService(isolated.getRepository(Invitacion), students, isolated, groupService, habilitadoService, audit);
+  const postulacionPersistence = new PostulacionPersistenciaService();
+  const groupService = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), students, isolated, habilitadoService, audit, postulacionPersistence);
+  const inviteService = new InvitacionesService(isolated.getRepository(Invitacion), students, isolated, groupService, habilitadoService, audit, postulacionPersistence);
+  const invitePersistence = new InvitacionPersistenciaService(audit);
+  const management = new GrupoGestionService(isolated, groupService, habilitadoService, audit, invitePersistence, postulacionPersistence);
   const studentUsers = profiles.map((profile) => profile.usuario);
 
   step = 'creación de grupos y representante';
@@ -123,16 +136,96 @@ async function verify(): Promise<void> {
   step = 'límite de integrantes';
   const acceptedGroup = finalGroupA.estado === GrupoEstado.ACTIVO ? finalGroupA : finalGroupB;
   const representative = acceptedGroup.id === groupA.id ? studentUsers[0] : studentUsers[2];
+  period.estado = PeriodoEstado.POSTULACION_ABIERTA;
+  period.max_integrantes_default = 2;
+  await isolated.getRepository(PeriodoTitulacion).save(period);
   const fullConflict = await inviteService.create(period.id, acceptedGroup.id, representative, { estudiante_destino_id: profiles[3].id }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
   if (!fullConflict) throw new Error('El grupo aceptó una invitación después de alcanzar el límite del período.');
 
+  step = 'cambio de representante, retiro y disolución';
+  const activeGroup = await groupService.getById(period.id, acceptedGroup.id, actor, true);
+  const oldRepresentativeId = activeGroup.representante?.id;
+  const otherMember = activeGroup.integrantes.find((member) => member.estado === GrupoIntegranteEstado.ACTIVO && member.estudiante_id !== oldRepresentativeId);
+  if (!oldRepresentativeId || !otherMember) throw new Error('No se encontraron los dos integrantes para probar el cambio de representante.');
+  period.max_integrantes_default = 3;
+  await isolated.getRepository(PeriodoTitulacion).save(period);
+  const oldRepUser = profiles.find((profile) => profile.id === oldRepresentativeId)?.usuario;
+  if (!oldRepUser) throw new Error('No se encontró la cuenta del representante de prueba.');
+  await inviteService.create(period.id, activeGroup.id, oldRepUser, { estudiante_destino_id: profiles[3].id }, null);
+  await management.cambiarRepresentante(period.id, activeGroup.id, actor, true, { estudiante_id: otherMember.estudiante_id, motivo: 'Prueba de transferencia' }, null);
+  const transferred = await groupService.getById(period.id, activeGroup.id, actor, true);
+  if (transferred.representante?.id !== otherMember.estudiante_id) throw new Error('El nuevo representante no quedó activo.');
+  const pendingAfterTransfer = await isolated.getRepository(Invitacion).find({ where: { grupo: { id: activeGroup.id }, estado: InvitacionEstado.PENDIENTE } });
+  if (pendingAfterTransfer.length !== 0) throw new Error('El cambio de representante no canceló las invitaciones pendientes.');
+
+  period.estado = PeriodoEstado.POSTULACION_CERRADA;
+  await isolated.getRepository(PeriodoTitulacion).save(period);
+  await management.retirarIntegrante(period.id, activeGroup.id, otherMember.estudiante_id, actor, { motivo: 'Prueba administrativa', nuevo_representante_id: oldRepresentativeId }, null);
+  const afterAdminRetire = await groupService.getById(period.id, activeGroup.id, actor, true);
+  if (afterAdminRetire.representante?.id !== oldRepresentativeId || afterAdminRetire.estado !== GrupoEstado.EN_CONFORMACION) throw new Error('El retiro administrativo no realizó el reemplazo y la transición esperada.');
+  const reentryConflict = await inviteService.create(period.id, activeGroup.id, oldRepUser, { estudiante_destino_id: otherMember.estudiante_id }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  if (!reentryConflict) throw new Error('El sistema permitió volver a invitar al mismo grupo a un integrante retirado.');
+  await management.disolver(period.id, activeGroup.id, actor, true, { motivo: 'Prueba de disolución' }, null);
+  const dissolved = await groupService.getById(period.id, activeGroup.id, actor, true);
+  if (dissolved.estado !== GrupoEstado.DISUELTO || dissolved.integrantes.some((member) => member.estado === GrupoIntegranteEstado.ACTIVO)) throw new Error('La disolución no conservó el grupo sin integrantes activos.');
+
+  step = 'salida voluntaria y reingreso a otro grupo';
+  period.estado = PeriodoEstado.POSTULACION_ABIERTA;
+  period.max_integrantes_default = 2;
+  await isolated.getRepository(PeriodoTitulacion).save(period);
+  const freshGroup = await groupService.create(period.id, oldRepUser, { nombre: 'Grupo salida voluntaria' } as CreateGrupoDto, null);
+  const leftGroup = await management.salir(period.id, freshGroup.id, oldRepUser, { motivo: 'Prueba de salida' }, null);
+  if (leftGroup.estado !== GrupoEstado.DISUELTO || leftGroup.integrantes[0]?.estado !== GrupoIntegranteEstado.RETIRADO) throw new Error('La salida del último integrante no disolvió el grupo y conservó su membresía.');
+  const anotherGroup = await groupService.create(period.id, oldRepUser, { nombre: 'Grupo nuevo después de salir' } as CreateGrupoDto, null);
+  if (!anotherGroup.id) throw new Error('Un estudiante retirado no pudo formar otro grupo.');
+
+  step = 'concurrencia de aceptación y disolución';
+  const raceInvite = await inviteService.create(period.id, anotherGroup.id, oldRepUser, { estudiante_destino_id: profiles[3].id }, null);
+  const race = await Promise.allSettled([
+    inviteService.accept(period.id, raceInvite.id, studentUsers[3], null),
+    management.disolver(period.id, anotherGroup.id, oldRepUser, false, { motivo: 'Prueba concurrente' }, null),
+  ]);
+  const raceFinal = await groupService.getById(period.id, anotherGroup.id, actor, true);
+  if (raceFinal.estado !== GrupoEstado.DISUELTO || raceFinal.integrantes.some((member) => member.estado === GrupoIntegranteEstado.ACTIVO)) throw new Error('La aceptación concurrente dejó un integrante activo después de disolver el grupo.');
+  if (!race.some((result) => result.status === 'fulfilled')) throw new Error('Ni aceptación ni disolución concurrente pudo completar una operación válida.');
+
+  step = 'reversión transaccional al fallar auditoría';
+  const rollbackGroup = await groupService.create(period.id, studentUsers[1], { nombre: 'Grupo rollback' } as CreateGrupoDto, null);
+  const failingAudit = { registrar: async () => { throw new Error('Fallo de auditoría inyectado.'); } } as unknown as AuditoriaService;
+  const rollbackManagement = new GrupoGestionService(isolated, groupService, habilitadoService, failingAudit, invitePersistence, postulacionPersistence);
+  const auditFailure = await rollbackManagement.disolver(period.id, rollbackGroup.id, studentUsers[1], false, { motivo: 'Forzar rollback' }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 503);
+  const afterAuditFailure = await groupService.getById(period.id, rollbackGroup.id, actor, true);
+  if (!auditFailure || afterAuditFailure.estado !== GrupoEstado.EN_CONFORMACION || afterAuditFailure.integrantes[0]?.estado !== GrupoIntegranteEstado.ACTIVO) throw new Error('El fallo de auditoría no revirtió completamente la disolución.');
+
+  step = 'migración reversible sin pérdida de datos';
+  const lifecycleMigration = new GroupIntegrityLifecycle20261002070000();
+  const lifecycleRunner = isolated.createQueryRunner();
+  await lifecycleRunner.connect();
+  await lifecycleRunner.startTransaction();
+  await lifecycleMigration.down(lifecycleRunner);
+  const retained = await lifecycleRunner.query(`SELECT count(*)::int AS total FROM ${schemaSql()}."grupo_integrante"`) as Array<{ total: number }>;
+  if (Number(retained[0]?.total) < 4) throw new Error('Revertir la migración de integridad alteró el historial existente.');
+  await lifecycleMigration.up(lifecycleRunner);
+  await lifecycleRunner.commitTransaction();
+  await lifecycleRunner.release();
+
+  step = 'protección de grupo terminado sin retiros';
+  const integrityRunner = isolated.createQueryRunner();
+  await integrityRunner.connect();
+  await integrityRunner.startTransaction();
+  await integrityRunner.query(`UPDATE ${schemaSql()}."grupo" SET "estado" = 'DISUELTO' WHERE "id" = $1`, [rollbackGroup.id]);
+  const terminalWithMemberRejected = await integrityRunner.query('SET CONSTRAINTS ALL IMMEDIATE').then(() => false, (error: unknown) => code(error) === '23514');
+  await integrityRunner.rollbackTransaction();
+  await integrityRunner.release();
+  if (!terminalWithMemberRejected) throw new Error('La restricción diferida permitió terminar un grupo con integrantes activos.');
+
   step = 'restricciones e historial de auditoría';
   const memberships = await isolated.getRepository(GrupoIntegrante).find({ where: { periodo: { id: period.id }, estado: GrupoIntegranteEstado.ACTIVO } });
-  if (memberships.length !== 3) throw new Error('Se encontró una pertenencia inesperada después de las aceptaciones concurrentes.');
+  if (memberships.length !== 2) throw new Error('Se encontró una pertenencia inesperada después de las salidas y disoluciones.');
   const representativeRows = await isolated.query(`SELECT count(*)::int AS total FROM ${schemaSql()}."grupo_integrante" WHERE "estado" = 'ACTIVO' AND "rol_en_grupo" = 'REPRESENTANTE'` ) as Array<{ total: number }>;
   if (Number(representativeRows[0]?.total) !== 2) throw new Error('El índice de representante activo no coincide con los grupos creados.');
   const auditRows = await isolated.getRepository(Auditoria).count();
-  if (auditRows < 7) throw new Error('No se registraron todas las operaciones de grupo/invitación en auditoría.');
+  if (auditRows < 15) throw new Error('No se registraron todas las operaciones de grupo/invitación en auditoría.');
   const duplicateMembership = await isolated.query(`INSERT INTO ${schemaSql()}."grupo_integrante" ("grupo_id", "periodo_id", "estudiante_id", "rol_en_grupo") VALUES ($1,$2,$3,'INTEGRANTE')`, [acceptedGroup.id, period.id, (acceptedGroup.id === groupA.id ? profiles[0].id : profiles[2].id)]).then(() => false, (error: unknown) => code(error) === '23505');
   if (!duplicateMembership) throw new Error('La restricción única de pertenencia activa no rechazó un estudiante duplicado.');
 
@@ -148,7 +241,7 @@ async function verify(): Promise<void> {
   if (queryRunner.isTransactionActive) await queryRunner.rollbackTransaction();
   await queryRunner.release();
   if (!revertRejected) throw new Error('La migración permitió revertir tablas con historial existente.');
-  console.log('Verificación de grupos e invitaciones correcta: migraciones, pertenencia única concurrente, límite, activación, auditoría y reversión protegida.');
+  console.log('Verificación de grupos e invitaciones correcta: migraciones, pertenencia y aceptación concurrentes, límites, salidas, cambios de representante, disolución, reingreso, atomicidad de auditoría y reversión protegida.');
 }
 
 try {

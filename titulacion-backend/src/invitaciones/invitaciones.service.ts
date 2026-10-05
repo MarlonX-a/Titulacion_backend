@@ -17,6 +17,7 @@ import { InvitacionResponseDto, PagedInvitacionesResponseDto } from './dto/invit
 import { ListInvitacionesQueryDto } from './dto/list-invitaciones-query.dto.js';
 import { Invitacion } from './entities/invitacion.entity.js';
 import { InvitacionEstado } from './enums/invitacion-estado.enum.js';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, grupo: true, estudiante_emisor: { usuario: true }, estudiante_destino: { usuario: true } } as const;
@@ -42,6 +43,7 @@ export class InvitacionesService {
     private readonly groups: GruposService,
     private readonly habilitados: HabilitadosService,
     private readonly auditoria: AuditoriaService,
+    private readonly postulaciones: PostulacionPersistenciaService,
   ) {}
 
   async create(periodoId: string, grupoId: string, actor: Usuario, dto: CreateInvitacionDto, ip: string | null): Promise<InvitacionResponseDto> {
@@ -49,6 +51,7 @@ export class InvitacionesService {
       const id = await this.dataSource.transaction(async (manager) => {
         const period = await this.groups.lockOpenPeriod(manager, periodoId);
         const group = await this.groups.lockGroup(manager, periodoId, grupoId);
+        if (await this.postulaciones.grupoTienePostulaciones(manager, group.id)) throw new ConflictException('La composición del grupo está cerrada desde su primera postulación.');
         const senderId = await this.groups.studentIdForUser(manager, actor.id);
         await this.groups.assertRepresentative(manager, group.id, senderId);
         await this.groups.assertCurrentMembersEligible(manager, periodoId, group.id);
@@ -57,6 +60,7 @@ export class InvitacionesService {
         if (senderId === targetId) throw new ConflictException('No puedes invitarte a ti mismo.');
         await this.habilitados.getEligibleStudentForGroup(periodoId, targetId, manager);
         await this.groups.assertNoActiveMembership(manager, periodoId, targetId);
+        await this.groups.assertNeverMemberOfGroup(manager, group.id, targetId);
         const targetAlreadyInGroup = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: group.id }, estudiante: { id: targetId }, estado: GrupoIntegranteEstado.ACTIVO } });
         if (targetAlreadyInGroup) throw new ConflictException('El estudiante ya forma parte de este grupo.');
         const existing = await manager.getRepository(Invitacion).findOne({ where: { grupo: { id: group.id }, estudiante_destino: { id: targetId }, estado: InvitacionEstado.PENDIENTE } });
@@ -68,7 +72,9 @@ export class InvitacionesService {
           await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_EXPIRACION_INVITACION', entidad_tipo: 'invitacion', entidad_id: existing.id, valores_anteriores: { estado: InvitacionEstado.PENDIENTE }, valores_nuevos: { estado: InvitacionEstado.EXPIRADA, fecha_respuesta: existing.expira_en }, ip_origen: ip });
         }
         const repo = manager.getRepository(Invitacion);
-        const item = await repo.save(repo.create({ grupo: group, periodo: period, estudiante_emisor: { id: senderId } as Estudiante, estudiante_destino: { id: targetId } as Estudiante, estado: InvitacionEstado.PENDIENTE, fecha_envio: new Date(), expira_en: period.fecha_fin_postulacion, fecha_respuesta: null }));
+        this.groups.assertApplicationWindow(period);
+        const now = new Date();
+        const item = await repo.save(repo.create({ grupo: group, periodo: period, estudiante_emisor: { id: senderId } as Estudiante, estudiante_destino: { id: targetId } as Estudiante, estado: InvitacionEstado.PENDIENTE, fecha_envio: now, expira_en: period.fecha_fin_postulacion, fecha_respuesta: null }));
         await this.auditoria.registrar(manager, { actor, accion: 'ENVIAR_INVITACION_GRUPO', entidad_tipo: 'invitacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { grupo_id: group.id, periodo_id: periodoId, estudiante_emisor_id: senderId, estudiante_destino_id: targetId, estado: item.estado, expira_en: item.expira_en }, ip_origen: ip });
         return item.id;
       });
@@ -149,20 +155,31 @@ export class InvitacionesService {
           return { expired: true, id: invitation.id };
         }
         if (state === InvitacionEstado.ACEPTADA) {
-          this.groups.assertApplicationWindow(period);
+          if (await this.postulaciones.grupoTienePostulaciones(manager, group.id)) throw new ConflictException('La composición del grupo está cerrada desde su primera postulación.');
           if (![GrupoEstado.EN_CONFORMACION, GrupoEstado.ACTIVO].includes(group.estado)) throw new ConflictException('El grupo no admite nuevas invitaciones.');
           const senderId = invitation.estudiante_emisor_id;
           await this.groups.assertRepresentative(manager, group.id, senderId);
           await this.groups.assertCurrentMembersEligible(manager, periodoId, group.id);
           await this.habilitados.getEligibleStudentForGroup(periodoId, actorStudentId, manager);
+          if (await this.postulaciones.estudianteTienePostulacionIndividualActiva(manager, periodoId, actorStudentId)) throw new ConflictException('Cancela tu postulación individual antes de aceptar una invitación.');
           await this.groups.assertNoActiveMembership(manager, periodoId, actorStudentId);
+          await this.groups.assertNeverMemberOfGroup(manager, group.id, actorStudentId);
           if (await this.groups.countActiveMembers(manager, group.id) >= period.max_integrantes_default) throw new ConflictException('El grupo ya alcanzó el máximo de integrantes del período.');
+          this.groups.assertApplicationWindow(period);
+          const resolvedAt = new Date();
+          if (invitation.expira_en.getTime() <= resolvedAt.getTime()) {
+            invitation.estado = InvitacionEstado.EXPIRADA;
+            invitation.fecha_respuesta = invitation.expira_en;
+            await inviteRepo.save(invitation);
+            await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_EXPIRACION_INVITACION', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: InvitacionEstado.PENDIENTE }, valores_nuevos: { estado: InvitacionEstado.EXPIRADA, fecha_respuesta: invitation.expira_en }, ip_origen: ip });
+            return { expired: true, id: invitation.id };
+          }
           const oldState = invitation.estado;
           invitation.estado = state;
-          invitation.fecha_respuesta = now;
+          invitation.fecha_respuesta = resolvedAt;
           await inviteRepo.save(invitation);
           await this.groups.addInvitedMember(manager, group, actorStudentId, actor, ip);
-          await this.auditoria.registrar(manager, { actor, accion: 'ACEPTAR_INVITACION_GRUPO', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: oldState }, valores_nuevos: { estado: state, estudiante_destino_id: actorStudentId, fecha_respuesta: now }, ip_origen: ip });
+          await this.auditoria.registrar(manager, { actor, accion: 'ACEPTAR_INVITACION_GRUPO', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: oldState }, valores_nuevos: { estado: state, estudiante_destino_id: actorStudentId, fecha_respuesta: resolvedAt }, ip_origen: ip });
           return { expired: false, id: invitation.id };
         }
         invitation.estado = state;

@@ -435,8 +435,25 @@ Las consultas `/grupos/me` y el detalle están limitados a integrantes activos
 como `EXPIRADA`; la primera resolución posterior persiste el vencimiento y lo
 audita. La pertenencia se conserva si cambia la situación académica del
 estudiante, pero nuevas invitaciones y aceptaciones se bloquean mientras haya
-integrantes incompatibles. En esta etapa todavía no se puede salir, cambiar de
-representante ni disolver un grupo.
+integrantes incompatibles.
+
+Durante el plazo de postulación, cualquier integrante puede salir mediante
+`POST /periodos/:periodoId/grupos/:id/salir`, indicando un motivo. El
+representante debe transferir primero el cargo si quedan compañeros; si queda
+solo, su salida disuelve el grupo. El representante puede cambiarlo con
+`POST /periodos/:periodoId/grupos/:id/cambiar-representante`, eligiendo un
+integrante activo y elegible. Las invitaciones pendientes se cancelan al hacer
+la transferencia y el nuevo representante puede enviar otras.
+
+El representante puede disolver el grupo con
+`POST /periodos/:periodoId/grupos/:id/disolver`. ADMIN puede hacer lo mismo,
+retirar a un integrante con
+`POST /periodos/:periodoId/grupos/:id/integrantes/:estudianteId/retirar` y
+asignar un reemplazo al retirar al representante. ADMIN puede reorganizar
+grupos con postulación abierta o cerrada hasta antes del inicio de titulación;
+las acciones de estudiantes solo están disponibles dentro del plazo. Cada
+retiro conserva fecha, motivo e historial. Quien salga podrá crear o integrar
+otro grupo, pero no regresar al mismo.
 
 Para probarlo, prepara las cuatro cuentas con `npm run auth:local:setup`, crea
 explícitamente los perfiles de `estudiante@example.test` y
@@ -446,6 +463,57 @@ estudiante. Crea el grupo e invita al segundo; inicia sesión como el segundo,
 consulta sus invitaciones, acepta y verifica `/grupos/me` con ambas cuentas.
 La preparación local solo crea cuentas; no genera perfiles, habilitaciones,
 grupos ni invitaciones.
+
+La integridad de los estados de grupo y las salidas, transferencias y
+disoluciones se comprueban con `npm run db:verify-grupos` en un esquema
+temporal aislado.
+
+## Postulaciones individuales y grupales
+
+Con un período `POSTULACION_ABIERTA` dentro de las fechas, ADMIN publica un
+tema y cada estudiante habilitado puede registrar `POST /periodos/:periodoId/postulaciones`
+con `tema_id` y modalidad `INDIVIDUAL` o `GRUPAL`. Para postular
+individualmente debe estar fuera de todo grupo activo del período. Para la
+modalidad grupal, debe actuar el representante de un grupo `ACTIVO` con al
+menos dos integrantes; el backend cuenta la composición y vuelve a comprobar
+la habilitación de todos. Los condicionados con situación `PENDIENTE` sí pueden
+participar.
+
+Las solicitudes comienzan en `PENDIENTE`. ADMIN y DOCENTE pueden consultar el
+listado (cada docente solo ve solicitudes dirigidas a sus temas); el estudiante
+consulta las suyas en `/periodos/:periodoId/postulaciones/me`. El detalle está
+limitado a ADMIN, proponente y participantes. La respuesta muestra la situación
+académica vigente de cada participante, no datos de contacto ni SSO.
+
+El titular individual o representante puede cancelar con un motivo mediante
+`POST /periodos/:periodoId/postulaciones/:id/cancelar` durante el plazo. ADMIN
+puede hacerlo con postulaciones abiertas o cerradas antes del inicio de
+titulación. La cancelación conserva la fila y su auditoría, libera la
+postulación activa y permite crear otra solicitud; no reabre la composición de
+un grupo.
+
+La primera postulación grupal congela permanentemente sus integrantes e
+invitaciones: no se podrá añadir ni retirar miembros, salir o disolver el grupo.
+Se permite transferir la representación entre los mismos integrantes. Un
+grupo puede registrar nuevas postulaciones con esa misma composición, incluso
+al mismo tema después de cancelar la anterior. Una postulación individual
+activa impide crear grupos o aceptar invitaciones. Aún no se evalúan ni aceptan
+postulaciones, no se proponen tutores y no se comprueba disponibilidad por
+asignaciones; esas etapas quedan pendientes.
+
+Para una prueba manual, prepara un tema publicado y un período actualmente
+abierto, con dos estudiantes habilitados. Como primer estudiante, registra y
+cancela una postulación individual; luego crea el grupo, invita al segundo
+estudiante y acepta la invitación desde su cuenta. El representante registra la
+postulación `GRUPAL`; consulta el resultado desde `/me` en ambas cuentas y
+comprueba `composicion_cerrada: true` en el grupo. Si cancela la solicitud, la
+composición seguirá cerrada, aunque el mismo grupo podrá volver a postular.
+
+La migración se aplica explícitamente con `npm run migration:run` después de
+confirmar que `DB_SCHEMA=local_demo`. `npm run db:verify-postulaciones`
+comprueba la migración, las restricciones, las operaciones concurrentes, la
+integración con grupos/invitaciones y la reversión protegida en un esquema
+temporal aislado; no crea postulaciones en el esquema local.
 
 ## Verificación
 

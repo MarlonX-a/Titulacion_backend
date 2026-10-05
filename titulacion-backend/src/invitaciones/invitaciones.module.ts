@@ -6,11 +6,13 @@ import { HabilitadosModule } from '../habilitados/habilitados.module.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { GruposModule } from '../grupos/grupos.module.js';
 import { Invitacion } from './entities/invitacion.entity.js';
+import { InvitacionPersistenciaModule } from './invitacion-persistencia.module.js';
 import { InvitacionesController } from './invitaciones.controller.js';
 import { InvitacionesService } from './invitaciones.service.js';
+import { PostulacionesPersistenciaModule } from '../postulaciones/postulaciones-persistencia.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Invitacion, Estudiante]), EstudiantesModule, HabilitadosModule, GruposModule, AuditoriaModule],
+  imports: [TypeOrmModule.forFeature([Invitacion, Estudiante]), EstudiantesModule, HabilitadosModule, GruposModule, AuditoriaModule, InvitacionPersistenciaModule, PostulacionesPersistenciaModule],
   controllers: [InvitacionesController],
   providers: [InvitacionesService],
 })

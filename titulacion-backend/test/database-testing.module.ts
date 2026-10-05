@@ -19,6 +19,7 @@ import { EstadoTema } from '../src/temas/enums/estado-tema.enum.js';
 import { Grupo } from '../src/grupos/entities/grupo.entity.js';
 import { GrupoIntegrante } from '../src/grupos/entities/grupo-integrante.entity.js';
 import { Invitacion } from '../src/invitaciones/entities/invitacion.entity.js';
+import { Postulacion } from '../src/postulaciones/entities/postulacion.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -364,6 +365,7 @@ function emptyRepository<T>() {
 const grupoTestRepository = emptyRepository<Grupo>();
 const grupoIntegranteTestRepository = emptyRepository<GrupoIntegrante>();
 const invitacionTestRepository = emptyRepository<Invitacion>();
+const postulacionTestRepository = emptyRepository<Postulacion>();
 
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
@@ -395,6 +397,7 @@ export const usuarioTestDataSource = {
     { target: Grupo },
     { target: GrupoIntegrante },
     { target: Invitacion },
+    { target: Postulacion },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -409,6 +412,7 @@ export const usuarioTestDataSource = {
     if (entity === Grupo) return grupoTestRepository;
     if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
     if (entity === Invitacion) return invitacionTestRepository;
+    if (entity === Postulacion) return postulacionTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -435,6 +439,7 @@ export const usuarioTestDataSource = {
           if (entity === Grupo) return grupoTestRepository;
           if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
           if (entity === Invitacion) return invitacionTestRepository;
+          if (entity === Postulacion) return postulacionTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),

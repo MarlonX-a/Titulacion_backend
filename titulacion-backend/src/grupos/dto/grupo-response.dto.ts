@@ -27,6 +27,7 @@ export class GrupoResponseDto {
   @ApiProperty() nombre: string;
   @ApiProperty({ enum: GrupoEstado }) estado: GrupoEstado;
   @ApiProperty() creado_en: Date;
+  @ApiProperty({ description: 'Indica que el grupo ya registró al menos una postulación.' }) composicion_cerrada: boolean;
   @ApiProperty({ type: GrupoPersonaDto, nullable: true }) representante: GrupoPersonaDto | null;
   @ApiProperty({ type: [GrupoIntegranteResponseDto] }) integrantes: GrupoIntegranteResponseDto[];
 }
