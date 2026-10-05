@@ -1,0 +1,6 @@
+export enum GrupoEstado {
+  EN_CONFORMACION = 'EN_CONFORMACION',
+  ACTIVO = 'ACTIVO',
+  DISUELTO = 'DISUELTO',
+  ANULADO = 'ANULADO',
+}

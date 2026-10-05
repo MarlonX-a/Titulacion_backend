@@ -11,6 +11,8 @@ import { PeriodosModule } from './periodos/periodos.module.js';
 import { HabilitadosModule } from './habilitados/habilitados.module.js';
 import { LineasInvestigacionModule } from './lineas-investigacion/lineas-investigacion.module.js';
 import { TemasModule } from './temas/temas.module.js';
+import { GruposModule } from './grupos/grupos.module.js';
+import { InvitacionesModule } from './invitaciones/invitaciones.module.js';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { TemasModule } from './temas/temas.module.js';
     HabilitadosModule,
     LineasInvestigacionModule,
     TemasModule,
+    GruposModule,
+    InvitacionesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -8,6 +8,7 @@ const accountDetails = [
   { nombres: 'Administrador', apellidos: 'Local' },
   { nombres: 'Docente', apellidos: 'Local' },
   { nombres: 'Estudiante', apellidos: 'Local' },
+  { nombres: 'Estudiante 2', apellidos: 'Local' },
 ] as const;
 
 async function provisionInTransaction(manager: EntityManager): Promise<void> {

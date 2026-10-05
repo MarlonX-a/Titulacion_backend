@@ -113,7 +113,7 @@ en `127.0.0.1` y exige PostgreSQL en una dirección local. Este modo no inicia
 en producción, no admite configuración OIDC simultánea y usa el esquema
 `local_demo` para mantener aisladas las cuentas ficticias.
 
-Prepara explícitamente el esquema y las tres cuentas de prueba:
+Prepara explícitamente el esquema y las cuatro cuentas de prueba:
 
 ```powershell
 npm run auth:local:setup
@@ -128,6 +128,7 @@ uno de estos correos y la clave común de `LOCAL_AUTH_PASSWORD`:
 | Administrador | `admin@example.test` |
 | Docente | `docente@example.test` |
 | Estudiante | `estudiante@example.test` |
+| Segundo estudiante | `estudiante2@example.test` |
 
 Copia el `access_token` de la respuesta y pégalo en **Authorize** como Bearer
 token. Así puedes consultar el listado de usuarios como ADMIN y el perfil
@@ -181,6 +182,9 @@ npm run db:verify-periodos
 # Comprobar habilitados, lotes, auditoría y concurrencia en esquema temporal
 npm run db:verify-habilitados
 
+# Comprobar grupos, invitaciones, cupos y pertenencia concurrente
+npm run db:verify-grupos
+
 # Aplicar migraciones pendientes en la base de desarrollo
 npm run migration:run
 
@@ -195,7 +199,8 @@ npm run migration:revert
 ```
 
 Las migraciones crean `usuario`, `estudiante`, `docente`, `periodo_titulacion`,
-`lote_importacion`, `estudiante_habilitado` y la tabla base `auditoria`.
+`lote_importacion`, `estudiante_habilitado`, `grupo`, `grupo_integrante`,
+`invitacion` y la tabla base `auditoria`.
 `db:verify-perfiles`
 genera un esquema temporal con nombre aleatorio, comprueba restricciones,
 unicidad, la concurrencia del primer ADMIN y de la vinculación de perfiles, la
@@ -248,7 +253,7 @@ se registran tokens ni se devuelven errores internos del proveedor.
 
 El modo local usa `POST /auth/local/login`, disponible únicamente con
 `AUTH_MODE=local`. Sus tokens RS256 duran 15 minutos y sus claves cambian al
-reiniciar. El modo exige `DB_SCHEMA=local_demo`, utiliza las tres cuentas
+reiniciar. El modo exige `DB_SCHEMA=local_demo`, utiliza las cuatro cuentas
 ficticias descritas arriba y no acepta tokens institucionales ni roles enviados
 por el cliente. En modo institucional, la ruta responde 404 y no aparece en
 Swagger.
@@ -412,6 +417,36 @@ registra su habilitación. Usa `admin@example.test` para las operaciones
 administrativas y `estudiante@example.test` para consultar `/me`. Aplica la
 migración explícitamente después de verificar que `DB_SCHEMA=local_demo`.
 
+## Grupos e invitaciones
+
+Con un período en `POSTULACION_ABIERTA` y dentro de su plazo, un estudiante
+activo con perfil y habilitación `HABILITADO` (situación `PENDIENTE` o
+`ADMITIDO`) crea un grupo con `POST /periodos/:periodoId/grupos`. El creador es
+el representante. Solo este puede invitar con
+`POST /periodos/:periodoId/grupos/:grupoId/invitaciones`; el destinatario ve
+sus invitaciones en `GET /periodos/:periodoId/invitaciones/me` y las acepta,
+rechaza o el representante cancela mediante las acciones documentadas en
+Swagger. Al incorporarse el segundo estudiante el grupo pasa a `ACTIVO`.
+`max_integrantes_default` del período limita el grupo y una aceptación no
+reserva cupo. La pertenencia única por período se protege en PostgreSQL.
+
+Las consultas `/grupos/me` y el detalle están limitados a integrantes activos
+(ADMIN puede consultar todos los grupos). Las invitaciones vencidas se muestran
+como `EXPIRADA`; la primera resolución posterior persiste el vencimiento y lo
+audita. La pertenencia se conserva si cambia la situación académica del
+estudiante, pero nuevas invitaciones y aceptaciones se bloquean mientras haya
+integrantes incompatibles. En esta etapa todavía no se puede salir, cambiar de
+representante ni disolver un grupo.
+
+Para probarlo, prepara las cuatro cuentas con `npm run auth:local:setup`, crea
+explícitamente los perfiles de `estudiante@example.test` y
+`estudiante2@example.test`, habilita a ambos en un período con máximo de al
+menos dos integrantes, abre la postulación y entra en Swagger con el primer
+estudiante. Crea el grupo e invita al segundo; inicia sesión como el segundo,
+consulta sus invitaciones, acepta y verifica `/grupos/me` con ambas cuentas.
+La preparación local solo crea cuentas; no genera perfiles, habilitaciones,
+grupos ni invitaciones.
+
 ## Verificación
 
 ```powershell
@@ -425,8 +460,8 @@ npx tsc --noEmit --incremental false
 Las pruebas cubren configuración, validación DTO, autenticación con JWKS local,
 permisos, altas y consultas de usuarios, perfiles, períodos e habilitaciones,
 resolución de condicionados, apertura de período, publicación y visibilidad del
-catálogo, auditoría, duplicados, filtros, paginación, Swagger y compatibilidad
-de `GET /`.
+catálogo, rutas y DTO de grupos/invitaciones, permisos, auditoría, duplicados,
+filtros, paginación, Swagger y compatibilidad de `GET /`.
 
 Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
 variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la
@@ -441,3 +476,6 @@ auditoría atómica y reversión protegida se comprueban con
 Los temas, su historial, restricciones, transiciones concurrentes de apertura
 y publicación, atomicidad de auditoría y reversión protegida se comprueban con
 `npm run db:verify-temas`.
+Grupos, pertenencia única concurrente, cupo máximo, activación, auditoría y
+reversión protegida se comprueban con `npm run db:verify-grupos` en un esquema
+temporal aislado.

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   NotFoundException,
@@ -10,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
+import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -70,6 +72,35 @@ export class HabilitadosService {
     private readonly estudiantes: EstudiantesService,
     private readonly auditoria: AuditoriaService,
   ) {}
+
+  /** Comprueba y bloquea una habilitación para una operación de grupo dentro de la transacción actual. */
+  async getEligibleStudentForGroup(
+    periodoId: string,
+    estudianteId: string,
+    manager: EntityManager,
+  ): Promise<Estudiante> {
+    let student: Estudiante;
+    try {
+      student = await this.estudiantes.getActiveProfileForHabilitacion(estudianteId, manager);
+    } catch (error: unknown) {
+      if (error instanceof ConflictException) throw new ForbiddenException('La cuenta del estudiante no está activa o ya no tiene el rol requerido.');
+      throw error;
+    }
+    const locked = await manager.getRepository(EstudianteHabilitado)
+      .createQueryBuilder('habilitado')
+      .select(['habilitado.id'])
+      .where('habilitado.periodo_id = :periodoId', { periodoId })
+      .andWhere('habilitado.estudiante_id = :estudianteId', { estudianteId })
+      .setLock('pessimistic_write')
+      .getOne();
+    if (!locked) throw new ForbiddenException('El estudiante no está habilitado en este período.');
+    const record = await manager.getRepository(EstudianteHabilitado).findOne({ where: { id: locked.id } });
+    if (!record || record.estado !== HabilitadoEstado.HABILITADO ||
+      ![SituacionIngreso.PENDIENTE, SituacionIngreso.ADMITIDO].includes(record.situacion_ingreso)) {
+      throw new ForbiddenException('La situación del estudiante no permite incorporarlo a un grupo.');
+    }
+    return student;
+  }
 
   async create(
     periodoId: string,

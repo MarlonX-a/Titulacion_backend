@@ -16,5 +16,6 @@ import { HabilitadosService } from './habilitados.service.js';
   ],
   controllers: [HabilitadosController],
   providers: [HabilitadosService],
+  exports: [HabilitadosService],
 })
 export class HabilitadosModule {}

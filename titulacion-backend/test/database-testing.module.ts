@@ -16,6 +16,9 @@ import { LineaInvestigacion } from '../src/lineas-investigacion/entities/linea-i
 import { Tema } from '../src/temas/entities/tema.entity.js';
 import { TemaHistorial } from '../src/temas/entities/tema-historial.entity.js';
 import { EstadoTema } from '../src/temas/enums/estado-tema.enum.js';
+import { Grupo } from '../src/grupos/entities/grupo.entity.js';
+import { GrupoIntegrante } from '../src/grupos/entities/grupo-integrante.entity.js';
+import { Invitacion } from '../src/invitaciones/entities/invitacion.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -29,6 +32,9 @@ const auditoriaRecords: Auditoria[] = [];
 const lineaRecords: LineaInvestigacion[] = [];
 const temaRecords: Tema[] = [];
 const temaHistorialRecords: TemaHistorial[] = [];
+const grupoRecords: Grupo[] = [];
+const grupoIntegranteRecords: GrupoIntegrante[] = [];
+const invitacionRecords: Invitacion[] = [];
 let transactionQueue: Promise<void> = Promise.resolve();
 
 function createRecord(value: UsuarioRecord): Usuario {
@@ -338,6 +344,27 @@ export const temaHistorialTestRepository = {
   },
 };
 
+function emptyRepository<T>() {
+  return {
+    create: (value: Partial<T>) => ({ ...value }) as T,
+    save: async (value: T) => value,
+    findOne: async () => null,
+    find: async () => [],
+    findAndCount: async () => [[], 0] as const,
+    count: async () => 0,
+    createQueryBuilder: () => ({
+      select() { return this; }, where() { return this; }, andWhere() { return this; },
+      setLock() { return this; }, orderBy() { return this; }, addOrderBy() { return this; },
+      skip() { return this; }, take() { return this; }, leftJoinAndSelect() { return this; },
+      getOne: async () => null, getManyAndCount: async () => [[], 0] as const,
+    }),
+  };
+}
+
+const grupoTestRepository = emptyRepository<Grupo>();
+const grupoIntegranteTestRepository = emptyRepository<GrupoIntegrante>();
+const invitacionTestRepository = emptyRepository<Invitacion>();
+
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
   let release: () => void = () => undefined;
@@ -365,6 +392,9 @@ export const usuarioTestDataSource = {
     { target: LineaInvestigacion },
     { target: Tema },
     { target: TemaHistorial },
+    { target: Grupo },
+    { target: GrupoIntegrante },
+    { target: Invitacion },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -376,6 +406,9 @@ export const usuarioTestDataSource = {
     if (entity === LineaInvestigacion) return lineaTestRepository;
     if (entity === Tema) return temaTestRepository;
     if (entity === TemaHistorial) return temaHistorialTestRepository;
+    if (entity === Grupo) return grupoTestRepository;
+    if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
+    if (entity === Invitacion) return invitacionTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -399,6 +432,9 @@ export const usuarioTestDataSource = {
           if (entity === LineaInvestigacion) return lineaTestRepository;
           if (entity === Tema) return temaTestRepository;
           if (entity === TemaHistorial) return temaHistorialTestRepository;
+          if (entity === Grupo) return grupoTestRepository;
+          if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
+          if (entity === Invitacion) return invitacionTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
@@ -415,6 +451,9 @@ export function clearUsuarioTestRecords(): void {
   lineaRecords.length = 0;
   temaRecords.length = 0;
   temaHistorialRecords.length = 0;
+  grupoRecords.length = 0;
+  grupoIntegranteRecords.length = 0;
+  invitacionRecords.length = 0;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {
