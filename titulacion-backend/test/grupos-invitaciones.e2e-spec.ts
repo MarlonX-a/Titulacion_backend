@@ -136,10 +136,13 @@ describe('Grupos e invitaciones (e2e)', () => {
   it('valida DTO, permisos y acciones del API de postulaciones', async () => {
     const period = '00000000-0000-4000-8000-000000000010';
     const application = '00000000-0000-4000-8000-000000000003';
-    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ tema_id: '00000000-0000-4000-8000-000000000010', modalidad: 'INDIVIDUAL' }).expect(201);
-    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ tema_id: 'not-a-uuid', modalidad: 'INDIVIDUAL' }).expect(400);
-    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ tema_id: '00000000-0000-4000-8000-000000000010', modalidad: 'INDIVIDUAL', estudiante_id: '00000000-0000-4000-8000-000000000011' }).expect(400);
-    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.docente}`).send({ tema_id: '00000000-0000-4000-8000-000000000010', modalidad: 'GRUPAL' }).expect(403);
+    const payload = { tema_id: '00000000-0000-4000-8000-000000000010', modalidad: 'INDIVIDUAL', tutores_propuestos: ['00000000-0000-4000-8000-000000000014'] };
+    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send(payload).expect(201);
+    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ ...payload, tema_id: 'not-a-uuid' }).expect(400);
+    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ ...payload, estudiante_id: '00000000-0000-4000-8000-000000000011' }).expect(400);
+    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ tema_id: payload.tema_id, modalidad: payload.modalidad }).expect(400);
+    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).send({ ...payload, tutores_propuestos: [payload.tutores_propuestos[0], payload.tutores_propuestos[0]] }).expect(400);
+    await request(app.getHttpServer()).post(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.docente}`).send(payload).expect(403);
     await request(app.getHttpServer()).get(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.admin}`).expect(200);
     await request(app.getHttpServer()).get(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.docente}`).expect(200);
     await request(app.getHttpServer()).get(`/periodos/${period}/postulaciones`).set('Authorization', `Bearer ${tokens.student}`).expect(403);

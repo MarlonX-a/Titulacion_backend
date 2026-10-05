@@ -14,5 +14,6 @@ import { TemasService } from './temas.service.js';
   imports: [TypeOrmModule.forFeature([Tema, TemaHistorial, Docente, Estudiante, EstudianteHabilitado, PeriodoTitulacion]), AuditoriaModule],
   controllers: [TemasController],
   providers: [TemasService],
+  exports: [TemasService],
 })
 export class TemasModule {}

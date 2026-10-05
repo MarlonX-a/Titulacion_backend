@@ -8,8 +8,11 @@ import { Roles } from '../common/roles.decorator.js';
 import { CancelarPostulacionDto } from './dto/cancelar-postulacion.dto.js';
 import { CreatePostulacionDto } from './dto/create-postulacion.dto.js';
 import { ListPostulacionesQueryDto } from './dto/list-postulaciones-query.dto.js';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { PagedPostulacionesResponseDto, PostulacionResponseDto } from './dto/postulacion-response.dto.js';
 import { PostulacionesService } from './postulaciones.service.js';
+import { TutoresPropuestosService } from './tutores-propuestos.service.js';
+import { TutoresPropuestosInputDto, PagedTutorsResponseDto, TutorPropuestoResponseDto } from './dto/tutores-propuestos.dto.js';
 
 @ApiTags('Postulaciones')
 @ApiBearerAuth('bearer')
@@ -17,18 +20,40 @@ import { PostulacionesService } from './postulaciones.service.js';
 @ApiServiceUnavailableResponse({ description: 'PostgreSQL no está disponible.' })
 @Controller('periodos/:periodoId/postulaciones')
 export class PostulacionesController {
-  constructor(private readonly postulaciones: PostulacionesService) {}
+  constructor(private readonly postulaciones: PostulacionesService, private readonly tutores: TutoresPropuestosService) {}
 
   @Post()
   @Roles(UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Registrar postulación individual o grupal durante el plazo' })
   @ApiCreatedResponse({ type: PostulacionResponseDto })
-  @ApiBadRequestResponse({ description: 'UUID, modalidad o propiedades inválidas.' })
+  @ApiBadRequestResponse({ description: 'UUID, modalidad, lista de tutores o propiedades inválidas.' })
   @ApiForbiddenResponse({ description: 'Estudiante no habilitado o no representante del grupo.' })
   @ApiNotFoundResponse({ description: 'Período o tema inexistente.' })
   @ApiConflictResponse({ description: 'Plazo, tema, rango, pertenencia o postulación activa incompatible.' })
   create(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Body() dto: CreatePostulacionDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
     return this.postulaciones.create(periodoId, actor, dto, request.ip ?? null);
+  }
+
+  @Post(':id/tutores-propuestos')
+  @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Completar una sola vez las preferencias de una postulación antigua' })
+  @ApiCreatedResponse({ type: TutorPropuestoResponseDto, isArray: true, description: 'Preferencias registradas. La respuesta contiene la lista completa.' })
+  @ApiBadRequestResponse({ description: 'Lista vacía, UUID inválido o docentes repetidos.' })
+  @ApiForbiddenResponse({ description: 'Solo el titular o representante actual puede completar la lista.' })
+  @ApiNotFoundResponse({ description: 'La postulación no existe o no es visible.' })
+  @ApiConflictResponse({ description: 'La postulación ya tiene tutores o no está dentro del plazo.' })
+  async completeTutors(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: TutoresPropuestosInputDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
+    await this.postulaciones.completarTutores(periodoId, id, actor, dto.tutores_propuestos, request.ip ?? null);
+    return this.tutores.listarTodasDePostulacion(periodoId, id);
+  }
+
+  @Get(':id/tutores-propuestos')
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Consultar preferencias ordenadas con elegibilidad actual de cada docente' })
+  @ApiOkResponse({ type: PagedTutorsResponseDto })
+  async listTutors(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Query() query: PaginationQueryDto, @CurrentUsuario() actor: Usuario) {
+    await this.postulaciones.getById(periodoId, id, actor, actor.rol === UsuarioRol.ADMIN);
+    return this.tutores.listarDePostulacion(periodoId, id, query.page, query.limit);
   }
 
   @Get()

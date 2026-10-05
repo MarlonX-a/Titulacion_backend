@@ -497,15 +497,17 @@ invitaciones: no se podrá añadir ni retirar miembros, salir o disolver el grup
 Se permite transferir la representación entre los mismos integrantes. Un
 grupo puede registrar nuevas postulaciones con esa misma composición, incluso
 al mismo tema después de cancelar la anterior. Una postulación individual
-activa impide crear grupos o aceptar invitaciones. Aún no se evalúan ni aceptan
-postulaciones, no se proponen tutores y no se comprueba disponibilidad por
-asignaciones; esas etapas quedan pendientes.
+activa impide crear grupos o aceptar invitaciones. Al postular se conserva una
+lista ordenada de docentes habilitados para tutoría. Aún no se evalúan ni
+aceptan postulaciones ni se comprueba disponibilidad por asignaciones; esas
+etapas quedan pendientes.
 
 Para una prueba manual, prepara un tema publicado y un período actualmente
 abierto, con dos estudiantes habilitados. Como primer estudiante, registra y
 cancela una postulación individual; luego crea el grupo, invita al segundo
 estudiante y acepta la invitación desde su cuenta. El representante registra la
-postulación `GRUPAL`; consulta el resultado desde `/me` en ambas cuentas y
+postulación `GRUPAL` con `tutores_propuestos` en el orden de preferencia;
+consulta el resultado desde `/me` en ambas cuentas y
 comprueba `composicion_cerrada: true` en el grupo. Si cancela la solicitud, la
 composición seguirá cerrada, aunque el mismo grupo podrá volver a postular.
 
@@ -514,6 +516,22 @@ confirmar que `DB_SCHEMA=local_demo`. `npm run db:verify-postulaciones`
 comprueba la migración, las restricciones, las operaciones concurrentes, la
 integración con grupos/invitaciones y la reversión protegida en un esquema
 temporal aislado; no crea postulaciones en el esquema local.
+
+## Tutores propuestos
+
+Antes de postular, el docente debe tener perfil, cuenta activa con rol `DOCENTE` y `habilitado_tutoria=true`. Consulta candidatos con `GET /periodos/:periodoId/temas/:temaId/tutores-disponibles`; el proponente del tema aparece primero si está habilitado. Al registrar una postulación, envía el arreglo ordenado `tutores_propuestos` junto con `tema_id` y `modalidad`. Por ejemplo:
+
+```json
+{
+  "tema_id": "UUID-del-tema-publicado",
+  "modalidad": "INDIVIDUAL",
+  "tutores_propuestos": ["UUID-del-docente-preferido", "UUID-del-segundo-docente"]
+}
+```
+
+Las preferencias no se pueden editar ni borrar y no constituyen asignación. Se consultan en `GET /periodos/:periodoId/postulaciones/:id/tutores-propuestos`. Si una postulación existente quedó sin propuestas, el titular o representante puede completarlas una sola vez mediante `POST /periodos/:periodoId/postulaciones/:id/tutores-propuestos`, durante el plazo y mientras siga `PENDIENTE`. La comprobación de migración, restricciones, concurrencia y reversión protegida se ejecuta con `npm run db:verify-tutores-propuestos` en un esquema aislado.
+
+La migración se aplica explícitamente con `npm run migration:run`, después de confirmar que `DB_SCHEMA=local_demo`. No crea tutores ni postulaciones de ejemplo.
 
 ## Verificación
 

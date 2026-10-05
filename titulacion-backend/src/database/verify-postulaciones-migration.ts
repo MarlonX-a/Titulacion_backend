@@ -26,6 +26,7 @@ import { CreateInvitacionDto } from '../invitaciones/dto/create-invitacion.dto.j
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
+import { CreateTutoresPropuestos20261002090000 } from './migrations/20261002090000-CreateTutoresPropuestos.js';
 import { CreateGruposInvitaciones20261002060000 } from './migrations/20261002060000-CreateGruposInvitaciones.js';
 import { GroupIntegrityLifecycle20261002070000 } from './migrations/20261002070000-GroupIntegrityLifecycle.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
@@ -35,6 +36,7 @@ import { CreateHabilitados20261002030000 } from './migrations/20261002030000-Cre
 import { CreateLineaInvestigacion20261002040000 } from './migrations/20261002040000-CreateLineaInvestigacion.js';
 import { CreateTemas20261002050000 } from './migrations/20261002050000-CreateTemas.js';
 import { Tema } from '../temas/entities/tema.entity.js';
+import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
@@ -42,10 +44,13 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CreatePostulacionDto } from '../postulaciones/dto/create-postulacion.dto.js';
 import { CancelarPostulacionDto } from '../postulaciones/dto/cancelar-postulacion.dto.js';
 import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
+import { TutorPropuesto } from '../postulaciones/entities/tutor-propuesto.entity.js';
 import { ModalidadPostulacion } from '../postulaciones/enums/modalidad-postulacion.enum.js';
 import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enum.js';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
 import { PostulacionesService } from '../postulaciones/postulaciones.service.js';
+import { TutoresPropuestosService } from '../postulaciones/tutores-propuestos.service.js';
+import { TemasService } from '../temas/temas.service.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
@@ -70,7 +75,7 @@ async function verify(): Promise<void> {
   await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`);
   createdSchema = true;
-  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, Grupo, GrupoIntegrante, Invitacion, Postulacion], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000] });
+  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, Grupo, GrupoIntegrante, Invitacion, Postulacion, TutorPropuesto], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000] });
   await isolated.initialize();
   await isolated.runMigrations({ transaction: 'all' });
 
@@ -79,7 +84,11 @@ async function verify(): Promise<void> {
   await userRepo.save(userRepo.create({ email: 'admin@postulaciones.verify', nombres: 'Admin', apellidos: 'Verificador', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-admin', ultimo_acceso: null }));
   const teacherUser = await userRepo.save(userRepo.create({ email: 'docente@postulaciones.verify', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente', ultimo_acceso: null }));
   const teacherRepo = isolated.getRepository(Docente);
-  const teacher = await teacherRepo.save(teacherRepo.create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: false }));
+  const teacher = await teacherRepo.save(teacherRepo.create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true }));
+  const secondTeacherUser = await userRepo.save(userRepo.create({ email: 'docente2@postulaciones.verify', nombres: 'Docente 2', apellidos: 'Alternativo', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente-2', ultimo_acceso: null }));
+  const secondTeacher = await teacherRepo.save(teacherRepo.create({ usuario: secondTeacherUser, cedula: '0102030400'.replace('0400', '0418'), titulo_academico: 'Doctor', departamento: 'Sistemas', habilitado_tutoria: true }));
+  const disabledTeacherUser = await userRepo.save(userRepo.create({ email: 'docente3@postulaciones.verify', nombres: 'Docente 3', apellidos: 'No habilitado', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente-3', ultimo_acceso: null }));
+  const disabledTeacher = await teacherRepo.save(teacherRepo.create({ usuario: disabledTeacherUser, cedula: '0102030426', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: false }));
   const studentRepo = isolated.getRepository(Estudiante);
   const studentUsers: Usuario[] = [];
   const students: Estudiante[] = [];
@@ -101,18 +110,67 @@ async function verify(): Promise<void> {
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
   const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit);
+  const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit);
+  const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);
   const persistence = new PostulacionPersistenciaService();
   const invitePersistence = new InvitacionPersistenciaService(audit);
   const groups = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), studentRepo, isolated, habilitados, audit, persistence);
   const groupManagement = new GrupoGestionService(isolated, groups, habilitados, audit, invitePersistence, persistence);
   const invitations = new InvitacionesService(isolated.getRepository(Invitacion), studentRepo, isolated, groups, habilitados, audit, persistence);
-  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence);
+  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores);
+
+  step = 'postulación antigua sin preferencias y carga única';
+  await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" DISABLE TRIGGER "TRG_postulacion_requiere_tutores"`);
+  const legacy = await isolated.getRepository(Postulacion).save(isolated.getRepository(Postulacion).create({
+    tema: topic, periodo: period, grupo: null, estudiante: students[3]!, num_integrantes: 1,
+    registrada_por: studentUsers[3]!, estado: EstadoPostulacion.PENDIENTE, observacion: null,
+  }));
+  await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" ENABLE TRIGGER "TRG_postulacion_requiere_tutores"`);
+  await service.completarTutores(period.id, legacy.id, studentUsers[3]!, [teacher.id, secondTeacher.id], null);
+  const completionConflict = await service.completarTutores(period.id, legacy.id, studentUsers[3]!, [secondTeacher.id], null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  if (!completionConflict) throw new Error('Una postulación completada permitió reemplazar sus preferencias.');
+  await service.cancel(period.id, legacy.id, studentUsers[3]!, false, { motivo: 'Liberar registro histórico de prueba' }, null);
+
+  step = 'restricción diferida y atomicidad de postulaciones y auditoría';
+  const deferredRunner = isolated.createQueryRunner();
+  await deferredRunner.connect();
+  await deferredRunner.startTransaction();
+  let deferredRejected = false;
+  try {
+    await deferredRunner.query(`INSERT INTO ${schemaSql()}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id") VALUES ($1,$2,$3,1,$4)`, [topic.id, period.id, students[4]!.id, studentUsers[4]!.id]);
+    await deferredRunner.commitTransaction();
+  } catch (error: unknown) {
+    deferredRejected = code(error) === '23514';
+    if (deferredRunner.isTransactionActive) await deferredRunner.rollbackTransaction();
+  } finally { await deferredRunner.release(); }
+  if (!deferredRejected) throw new Error('PostgreSQL aceptó una nueva postulación sin tutores propuestos.');
+
+  await isolated.query(`CREATE FUNCTION ${schemaSql()}."fallar_auditoria_tutores"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'falla de auditoría de prueba' USING ERRCODE='P0001'; END $$`);
+  await isolated.query(`CREATE TRIGGER "TRG_fallar_auditoria_tutores" BEFORE INSERT ON ${schemaSql()}."auditoria" FOR EACH ROW EXECUTE FUNCTION ${schemaSql()}."fallar_auditoria_tutores"()`);
+  const beforeRollbackApps = await isolated.getRepository(Postulacion).countBy({ estudiante: { id: students[4]!.id } });
+  const beforeRollbackPreferences = await isolated.getRepository(TutorPropuesto).count();
+  const rollbackConfirmed = await service.create(period.id, studentUsers[4]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.INDIVIDUAL, tutores_propuestos: [teacher.id] }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 503);
+  await isolated.query(`DROP TRIGGER "TRG_fallar_auditoria_tutores" ON ${schemaSql()}."auditoria"`);
+  await isolated.query(`DROP FUNCTION ${schemaSql()}."fallar_auditoria_tutores"()`);
+  const afterRollbackApps = await isolated.getRepository(Postulacion).countBy({ estudiante: { id: students[4]!.id } });
+  const afterRollbackPreferences = await isolated.getRepository(TutorPropuesto).count();
+  if (!rollbackConfirmed || beforeRollbackApps !== afterRollbackApps || beforeRollbackPreferences !== afterRollbackPreferences) throw new Error('La falla simulada de auditoría dejó una postulación o preferencias parcialmente guardadas.');
 
   step = 'postulación individual concurrente y cancelación';
-  const individualDto: CreatePostulacionDto = { tema_id: topic.id, modalidad: ModalidadPostulacion.INDIVIDUAL };
+  const individualDto: CreatePostulacionDto = { tema_id: topic.id, modalidad: ModalidadPostulacion.INDIVIDUAL, tutores_propuestos: [secondTeacher.id, teacher.id] };
+  step = 'catálogo de candidatos y preferencias ordenadas';
+  const candidates = await tutores.disponibles(period.id, topic.id, studentUsers[0]!, { page: 1, limit: 20 });
+  if (candidates.data[0]?.id !== teacher.id || candidates.data.some((candidate) => 'cedula' in candidate)) throw new Error('El catálogo no sugirió al proponente primero o expuso datos sensibles.');
+  const ineligibleRejected = await service.create(period.id, studentUsers[3]!, { ...individualDto, tutores_propuestos: [disabledTeacher.id] }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  if (!ineligibleRejected) throw new Error('El servicio permitió proponer un docente no habilitado.');
+  individualDto.tutores_propuestos = [teacher.id, secondTeacher.id];
   const parallel = await Promise.allSettled([service.create(period.id, studentUsers[0]!, individualDto, null), service.create(period.id, studentUsers[0]!, individualDto, null)]);
   if (parallel.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('La unicidad de postulación activa no serializó dos envíos del mismo estudiante.');
   const individual = (parallel.find((result) => result.status === 'fulfilled') as PromiseFulfilledResult<Awaited<ReturnType<typeof service.create>>>).value;
+  const savedPreferences = await tutores.listarDePostulacion(period.id, individual.id, 1, 20);
+  if (savedPreferences.data.length !== 2 || savedPreferences.data[0]?.docente_id !== teacher.id || savedPreferences.data[0]?.orden_prioridad !== 1 || !savedPreferences.data[0]?.es_proponente_tema) throw new Error('Las preferencias no conservaron orden, proponente o prioridad.');
+  const immutablePreference = await isolated.getRepository(TutorPropuesto).delete(savedPreferences.data[0]!.id).then(() => false, (error: unknown) => code(error) === '23514');
+  if (!immutablePreference) throw new Error('PostgreSQL permitió eliminar una preferencia histórica.');
   const individualConflict = await groups.create(period.id, studentUsers[0]!, { nombre: 'Grupo bloqueado por individual' } as CreateGrupoDto, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
   if (!individualConflict) throw new Error('Una postulación individual activa no bloqueó la creación del grupo.');
   await service.cancel(period.id, individual.id, studentUsers[0]!, false, { motivo: 'Prueba de cancelación' } as CancelarPostulacionDto, null);
@@ -124,7 +182,7 @@ async function verify(): Promise<void> {
   await invitations.accept(period.id, invitation.id, studentUsers[1]!, null);
   const invitationDuringPost = await invitations.create(period.id, group.id, studentUsers[0]!, { estudiante_destino_id: students[3]!.id } as CreateInvitacionDto, null);
   const groupAndAcceptRace = await Promise.allSettled([
-    service.create(period.id, studentUsers[0]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL }, null),
+    service.create(period.id, studentUsers[0]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null),
     invitations.accept(period.id, invitationDuringPost.id, studentUsers[3]!, null),
   ]);
   const groupApplicationResult = groupAndAcceptRace[0];
@@ -139,7 +197,7 @@ async function verify(): Promise<void> {
   if (!inviteBlocked) throw new Error('El grupo permitió invitar después de cerrar su composición.');
   const cancelledGroupApplication = await service.cancel(period.id, groupApplication.id, studentUsers[0]!, false, { motivo: 'Ajuste de preferencias' }, null);
   if (cancelledGroupApplication.estado !== EstadoPostulacion.CANCELADA) throw new Error('No se pudo cancelar la postulación grupal pendiente.');
-  const groupRetry = await service.create(period.id, studentUsers[0]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL }, null);
+  const groupRetry = await service.create(period.id, studentUsers[0]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null);
   if (groupRetry.estado !== EstadoPostulacion.PENDIENTE) throw new Error('El grupo no pudo volver a postular después de cancelar, conservando su composición.');
 
   step = 'carrera entre postulación individual y aceptación de invitación';
@@ -158,7 +216,7 @@ async function verify(): Promise<void> {
 
   step = 'carrera entre postulación grupal y salida voluntaria';
   const groupExitRace = await Promise.allSettled([
-    service.create(period.id, studentUsers[2]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL }, null),
+    service.create(period.id, studentUsers[2]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null),
     groupManagement.salir(period.id, otherGroup.id, studentUsers[4]!, { motivo: 'Carrera con postulación' }, null),
   ]);
   if (groupExitRace.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('La carrera entre postulación grupal y salida cambió la composición simultáneamente o rechazó ambas operaciones.');
@@ -172,13 +230,13 @@ async function verify(): Promise<void> {
   step = 'reversión protegida y auditoría';
   const auditCount = await isolated.getRepository(Auditoria).count();
   if (auditCount < 5) throw new Error('Faltan auditorías de altas/cancelaciones de postulaciones e invitaciones.');
-  const migration = new CreatePostulaciones20261002080000();
-  const runner = isolated.createQueryRunner();
-  await runner.connect(); await runner.startTransaction();
-  const revertRejected = await migration.down(runner).then(() => false, async (error: unknown) => { await runner.rollbackTransaction(); return error instanceof Error && error.message.includes('contiene registros'); });
-  if (runner.isTransactionActive) await runner.rollbackTransaction(); await runner.release();
+  const migration = new CreateTutoresPropuestos20261002090000();
+  const revertRunner = isolated.createQueryRunner();
+  await revertRunner.connect(); await revertRunner.startTransaction();
+  const revertRejected = await migration.down(revertRunner).then(() => false, async (error: unknown) => { await revertRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('contiene registros'); });
+  if (revertRunner.isTransactionActive) await revertRunner.rollbackTransaction(); await revertRunner.release();
   if (!revertRejected) throw new Error('La migración permitió eliminar postulaciones con historial.');
-  console.log('Verificación de postulaciones correcta: migraciones aisladas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, restricciones y reversión protegida.');
+  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, restricciones de tutores y reversión protegida.');
 }
 
 try { await verify(); }
