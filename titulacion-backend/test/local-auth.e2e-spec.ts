@@ -33,6 +33,11 @@ const demoUsers = [
     subject: 'local-demo-estudiante',
     role: UsuarioRol.ESTUDIANTE,
   },
+  {
+    email: 'estudiante2@example.test',
+    subject: 'local-demo-estudiante2',
+    role: UsuarioRol.ESTUDIANTE,
+  },
 ] as const;
 
 describe('Inicio de sesión local de pruebas (e2e)', () => {

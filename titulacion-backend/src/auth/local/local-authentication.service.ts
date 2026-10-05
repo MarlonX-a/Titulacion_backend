@@ -32,6 +32,11 @@ export const LOCAL_DEMO_USERS = [
     subject: 'local-demo-estudiante',
     role: UsuarioRol.ESTUDIANTE,
   },
+  {
+    email: 'estudiante2@example.test',
+    subject: 'local-demo-estudiante2',
+    role: UsuarioRol.ESTUDIANTE,
+  },
 ] as const;
 
 const ISSUER_PATH = '/auth/local';

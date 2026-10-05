@@ -1,0 +1,7 @@
+export enum InvitacionEstado {
+  PENDIENTE = 'PENDIENTE',
+  ACEPTADA = 'ACEPTADA',
+  RECHAZADA = 'RECHAZADA',
+  CANCELADA = 'CANCELADA',
+  EXPIRADA = 'EXPIRADA',
+}
