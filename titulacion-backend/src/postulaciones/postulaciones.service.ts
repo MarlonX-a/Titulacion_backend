@@ -24,6 +24,7 @@ import { CreatePostulacionDto } from './dto/create-postulacion.dto.js';
 import { CancelarPostulacionDto } from './dto/cancelar-postulacion.dto.js';
 import { ListPostulacionesQueryDto } from './dto/list-postulaciones-query.dto.js';
 import { PagedPostulacionesResponseDto, PostulacionResponseDto } from './dto/postulacion-response.dto.js';
+import { TutoresPropuestosService } from './tutores-propuestos.service.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, tema: { linea: true, docente_proponente: { usuario: true } }, grupo: true, estudiante: { usuario: true }, registrada_por: true } as const;
@@ -38,6 +39,7 @@ export class PostulacionesService {
     private readonly habilitados: HabilitadosService,
     private readonly auditoria: AuditoriaService,
     private readonly invitaciones: InvitacionPersistenciaService,
+    private readonly tutores: TutoresPropuestosService,
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreatePostulacionDto, ip: string | null): Promise<PostulacionResponseDto> {
@@ -77,10 +79,54 @@ export class PostulacionesService {
           await this.invitaciones.resolverPendientesDelGrupo(manager, groupId, actor, 'Composición cerrada por primera postulación grupal', ip, 'POSTULAR_GRUPO');
         }
         const item = await repo.save(repo.create({ tema: topic, periodo: period, grupo: groupId ? { id: groupId } as Grupo : null, estudiante: studentId ? { id: studentId } as Estudiante : null, num_integrantes: count, registrada_por: actor, estado: EstadoPostulacion.PENDIENTE, fecha_postulacion: new Date(), observacion: null }));
-        await this.auditoria.registrar(manager, { actor, accion: 'CREAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tema_id: topic.id, periodo_id: period.id, grupo_id: groupId, estudiante_id: studentId, participantes: participantIds, num_integrantes: count, estado: item.estado, fecha_postulacion: item.fecha_postulacion }, ip_origen: ip });
+        await this.tutores.agregar(manager, item.id, dto.tutores_propuestos);
+        await this.auditoria.registrar(manager, { actor, accion: 'CREAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tema_id: topic.id, periodo_id: period.id, grupo_id: groupId, estudiante_id: studentId, participantes: participantIds, num_integrantes: count, estado: item.estado, fecha_postulacion: item.fecha_postulacion, tutores_propuestos: dto.tutores_propuestos.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
+        await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_TUTORES_PROPUESTOS', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tutores_propuestos: dto.tutores_propuestos.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
         return item.id;
       });
       return this.getRecord(periodoId, id);
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  async completarTutores(periodoId: string, id: string, actor: Usuario, docenteIds: string[], ip: string | null): Promise<void> {
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const period = await this.lockPeriod(manager, periodoId);
+        this.assertStudentWindow(period);
+        const initial = await manager.getRepository(Postulacion).findOne({ where: { id, periodo: { id: periodoId } }, relations: { tema: true, grupo: true, estudiante: true } });
+        if (!initial) throw new NotFoundException('No existe esa postulación en el período indicado.');
+        const topic = await manager.getRepository(Tema).findOne({ where: { id: initial.tema.id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
+        if (!topic) throw new NotFoundException('No existe el tema de esa postulación.');
+        if (initial.grupo) {
+          const group = await manager.getRepository(Grupo).findOne({ where: { id: initial.grupo.id }, lock: { mode: 'pessimistic_write' } });
+          if (!group) throw new NotFoundException('No existe el grupo de esa postulación.');
+        }
+        const schema = this.schemaName(manager);
+        const locked = await manager.query(`SELECT "id" FROM ${schema}."postulacion" WHERE "id"=$1 AND "periodo_id"=$2 FOR UPDATE`, [id, periodoId]) as Array<{ id: string }>;
+        if (!locked[0]) throw new NotFoundException('No existe esa postulación en el período indicado.');
+        const repo = manager.getRepository(Postulacion);
+        const item = await repo.findOne({ where: { id }, relations: { tema: true, grupo: true, estudiante: true } });
+        if (!item) throw new NotFoundException('No existe esa postulación en el período indicado.');
+        if (item.estado !== EstadoPostulacion.PENDIENTE) throw new ConflictException('Solo se pueden completar postulaciones PENDIENTE.');
+        const existing = await manager.query(`SELECT 1 FROM ${schema}."tutor_propuesto" WHERE "postulacion_id"=$1 LIMIT 1`, [id]) as unknown[];
+        if (existing.length) throw new ConflictException('Esta postulación ya tiene una lista de tutores y no puede modificarse.');
+        if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('El tema ya no está publicado.');
+        if (item.grupo) {
+          const representative = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: item.grupo.id }, estudiante: { usuario: { id: actor.id } }, estado: GrupoIntegranteEstado.ACTIVO, rol_en_grupo: GrupoIntegranteRol.REPRESENTANTE } });
+          if (!representative) throw new NotFoundException('No existe esa postulación visible para el usuario.');
+          const participants = await manager.getRepository(GrupoIntegrante).find({ where: { grupo: { id: item.grupo.id }, estado: GrupoIntegranteEstado.ACTIVO }, order: { estudiante: { id: 'ASC' } } });
+          for (const participant of participants) await this.habilitados.getEligibleStudentForGroup(periodoId, participant.estudiante.id, manager);
+          if (participants.length !== item.num_integrantes || participants.length < topic.min_integrantes || participants.length > topic.max_integrantes) throw new ConflictException('La composición o el rango del tema ya no es compatible.');
+        } else {
+          const studentId = await this.studentId(manager, actor.id);
+          if (item.estudiante?.id !== studentId) throw new NotFoundException('No existe esa postulación visible para el usuario.');
+          await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
+          if (topic.min_integrantes > 1 || topic.max_integrantes < 1) throw new ConflictException('El tema no admite una postulación individual.');
+        }
+        this.assertStudentWindow(period);
+        await this.tutores.agregar(manager, id, docenteIds);
+        await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_TUTORES_PROPUESTOS', entidad_tipo: 'postulacion', entidad_id: id, valores_anteriores: null, valores_nuevos: { tutores_propuestos: docenteIds.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
+      });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 

@@ -20,6 +20,7 @@ import { Grupo } from '../src/grupos/entities/grupo.entity.js';
 import { GrupoIntegrante } from '../src/grupos/entities/grupo-integrante.entity.js';
 import { Invitacion } from '../src/invitaciones/entities/invitacion.entity.js';
 import { Postulacion } from '../src/postulaciones/entities/postulacion.entity.js';
+import { TutorPropuesto } from '../src/postulaciones/entities/tutor-propuesto.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -36,6 +37,7 @@ const temaHistorialRecords: TemaHistorial[] = [];
 const grupoRecords: Grupo[] = [];
 const grupoIntegranteRecords: GrupoIntegrante[] = [];
 const invitacionRecords: Invitacion[] = [];
+const tutorPropuestoRecords: TutorPropuesto[] = [];
 let transactionQueue: Promise<void> = Promise.resolve();
 
 function createRecord(value: UsuarioRecord): Usuario {
@@ -356,8 +358,8 @@ function emptyRepository<T>() {
     createQueryBuilder: () => ({
       select() { return this; }, where() { return this; }, andWhere() { return this; },
       setLock() { return this; }, orderBy() { return this; }, addOrderBy() { return this; },
-      skip() { return this; }, take() { return this; }, leftJoinAndSelect() { return this; },
-      getOne: async () => null, getManyAndCount: async () => [[], 0] as const,
+      skip() { return this; }, take() { return this; }, leftJoinAndSelect() { return this; }, innerJoinAndSelect() { return this; },
+      setParameter() { return this; }, getOne: async () => null, getMany: async () => [], getManyAndCount: async () => [[], 0] as const,
     }),
   };
 }
@@ -366,6 +368,7 @@ const grupoTestRepository = emptyRepository<Grupo>();
 const grupoIntegranteTestRepository = emptyRepository<GrupoIntegrante>();
 const invitacionTestRepository = emptyRepository<Invitacion>();
 const postulacionTestRepository = emptyRepository<Postulacion>();
+const tutorPropuestoTestRepository = emptyRepository<TutorPropuesto>();
 
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
@@ -398,6 +401,7 @@ export const usuarioTestDataSource = {
     { target: GrupoIntegrante },
     { target: Invitacion },
     { target: Postulacion },
+    { target: TutorPropuesto },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -413,6 +417,7 @@ export const usuarioTestDataSource = {
     if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
     if (entity === Invitacion) return invitacionTestRepository;
     if (entity === Postulacion) return postulacionTestRepository;
+    if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -440,6 +445,7 @@ export const usuarioTestDataSource = {
           if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
           if (entity === Invitacion) return invitacionTestRepository;
           if (entity === Postulacion) return postulacionTestRepository;
+          if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
@@ -459,6 +465,7 @@ export function clearUsuarioTestRecords(): void {
   grupoRecords.length = 0;
   grupoIntegranteRecords.length = 0;
   invitacionRecords.length = 0;
+  tutorPropuestoRecords.length = 0;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {
