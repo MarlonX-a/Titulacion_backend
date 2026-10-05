@@ -15,6 +15,7 @@ import { Grupo } from './entities/grupo.entity.js';
 import { GrupoEstado } from './enums/grupo-estado.enum.js';
 import { GrupoIntegranteEstado } from './enums/grupo-integrante-estado.enum.js';
 import { GrupoIntegranteRol } from './enums/grupo-integrante-rol.enum.js';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
 
 interface DriverError { code?: string; }
 const groupRelations = { periodo: true } as const;
@@ -22,13 +23,13 @@ const memberRelations = { estudiante: { usuario: true } } as const;
 function person(member: GrupoIntegrante): GrupoPersonaDto {
   return { id: member.estudiante.id, nombres: member.estudiante.usuario.nombres, apellidos: member.estudiante.usuario.apellidos, matricula: member.estudiante.matricula };
 }
-function groupResponse(group: Grupo, members: GrupoIntegrante[]): GrupoResponseDto {
+function groupResponse(group: Grupo, members: GrupoIntegrante[], compositionClosed: boolean): GrupoResponseDto {
   const responseMembers: GrupoIntegranteResponseDto[] = members.map((item) => ({
     id: item.id, estudiante_id: item.estudiante.id, estudiante: person(item), rol_en_grupo: item.rol_en_grupo,
     estado: item.estado, fecha_ingreso: item.fecha_ingreso, fecha_salida: item.fecha_salida, motivo_salida: item.motivo_salida,
   }));
   const representative = members.find((item) => item.rol_en_grupo === GrupoIntegranteRol.REPRESENTANTE && item.estado === GrupoIntegranteEstado.ACTIVO);
-  return { id: group.id, periodo_id: group.periodo.id, nombre: group.nombre, estado: group.estado, creado_en: group.creado_en,
+  return { id: group.id, periodo_id: group.periodo.id, nombre: group.nombre, estado: group.estado, creado_en: group.creado_en, composicion_cerrada: compositionClosed,
     representante: representative ? person(representative) : null, integrantes: responseMembers };
 }
 
@@ -41,6 +42,7 @@ export class GruposService {
     private readonly dataSource: DataSource,
     private readonly habilitados: HabilitadosService,
     private readonly auditoria: AuditoriaService,
+    private readonly postulaciones: PostulacionPersistenciaService,
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreateGrupoDto, ip: string | null): Promise<GrupoResponseDto> {
@@ -50,7 +52,9 @@ export class GruposService {
         if (period.max_integrantes_default < 2) throw new ConflictException('Este período no permite conformar grupos porque el máximo de integrantes es menor que dos.');
         const studentId = await this.studentIdForUser(manager, actor.id);
         await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
+        if (await this.postulaciones.estudianteTienePostulacionIndividualActiva(manager, periodoId, studentId)) throw new ConflictException('Cancela tu postulación individual antes de crear un grupo.');
         await this.assertNoActiveMembership(manager, periodoId, studentId);
+        this.assertApplicationWindow(period);
         const groupRepo = manager.getRepository(Grupo);
         const group = await groupRepo.save(groupRepo.create({ periodo: period, nombre: dto.nombre.trim(), estado: GrupoEstado.EN_CONFORMACION }));
         const memberRepo = manager.getRepository(GrupoIntegrante);
@@ -138,6 +142,11 @@ export class GruposService {
     if (existing) throw new ConflictException('El estudiante ya pertenece a un grupo activo en este período.');
   }
 
+  async assertNeverMemberOfGroup(manager: EntityManager, groupId: string, studentId: string): Promise<void> {
+    const prior = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: groupId }, estudiante: { id: studentId } } });
+    if (prior) throw new ConflictException('Un estudiante retirado no puede volver a incorporarse al mismo grupo.');
+  }
+
   async assertRepresentative(manager: EntityManager, groupId: string, studentId: string): Promise<void> {
     const member = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: groupId }, estudiante: { id: studentId }, estado: GrupoIntegranteEstado.ACTIVO, rol_en_grupo: GrupoIntegranteRol.REPRESENTANTE } });
     if (!member) throw new ForbiddenException('Solo el representante activo del grupo puede realizar esta operación.');
@@ -175,7 +184,8 @@ export class GruposService {
     const group = await this.groups.findOne({ where: { id, periodo: { id: periodoId } }, relations: groupRelations });
     if (!group) throw new NotFoundException('No existe ese grupo en el período indicado.');
     const members = await this.members.find({ where: { grupo: { id }, periodo: { id: periodoId } }, relations: memberRelations, order: { fecha_ingreso: 'ASC', id: 'ASC' } });
-    return groupResponse(group, members);
+    const compositionClosed = await this.postulaciones.grupoTienePostulaciones(this.groups.manager, group.id);
+    return groupResponse(group, members, compositionClosed);
   }
 
   private handleDatabaseError(error: unknown): never {

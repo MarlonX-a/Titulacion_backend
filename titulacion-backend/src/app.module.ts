@@ -13,6 +13,7 @@ import { LineasInvestigacionModule } from './lineas-investigacion/lineas-investi
 import { TemasModule } from './temas/temas.module.js';
 import { GruposModule } from './grupos/grupos.module.js';
 import { InvitacionesModule } from './invitaciones/invitaciones.module.js';
+import { PostulacionesModule } from './postulaciones/postulaciones.module.js';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { InvitacionesModule } from './invitaciones/invitaciones.module.js';
     TemasModule,
     GruposModule,
     InvitacionesModule,
+    PostulacionesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
