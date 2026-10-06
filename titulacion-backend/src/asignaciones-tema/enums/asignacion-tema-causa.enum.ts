@@ -1,0 +1,4 @@
+export enum AsignacionTemaCausa {
+  INCUMPLIMIENTO_CONDICION = 'INCUMPLIMIENTO_CONDICION',
+  OTRA = 'OTRA',
+}

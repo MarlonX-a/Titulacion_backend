@@ -25,6 +25,7 @@ import { CancelarPostulacionDto } from './dto/cancelar-postulacion.dto.js';
 import { ListPostulacionesQueryDto } from './dto/list-postulaciones-query.dto.js';
 import { PagedPostulacionesResponseDto, PostulacionResponseDto } from './dto/postulacion-response.dto.js';
 import { TutoresPropuestosService } from './tutores-propuestos.service.js';
+import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, tema: { linea: true, docente_proponente: { usuario: true } }, grupo: true, estudiante: { usuario: true }, registrada_por: true } as const;
@@ -40,6 +41,7 @@ export class PostulacionesService {
     private readonly auditoria: AuditoriaService,
     private readonly invitaciones: InvitacionPersistenciaService,
     private readonly tutores: TutoresPropuestosService,
+    private readonly asignaciones: AsignacionTemaPersistenciaService,
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreatePostulacionDto, ip: string | null): Promise<PostulacionResponseDto> {
@@ -56,7 +58,9 @@ export class PostulacionesService {
         let count: number;
         if (dto.modalidad === ModalidadPostulacion.INDIVIDUAL) {
           studentId = await this.studentId(manager, actor.id);
+          await this.lockAssignmentStudent(manager, studentId);
           await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
+          if (await this.asignaciones.tieneVigenteParaEstudiante(manager, studentId)) throw new ConflictException('El estudiante ya tiene una asignación vigente.');
           if (await manager.getRepository(GrupoIntegrante).findOne({ where: { periodo: { id: periodoId }, estudiante: { id: studentId }, estado: GrupoIntegranteEstado.ACTIVO } })) throw new ConflictException('Para postular individualmente debes estar fuera de los grupos del período.');
           participantIds = [studentId]; count = 1;
         } else {
@@ -70,7 +74,11 @@ export class PostulacionesService {
           participantIds = members.map((member) => member.estudiante.id); count = participantIds.length;
           if (count < 2) throw new ConflictException('La postulación grupal requiere al menos dos integrantes activos.');
           if (!participantIds.includes(student)) throw new ForbiddenException('No formas parte del grupo representante.');
-          for (const participantId of participantIds) await this.habilitados.getEligibleStudentForGroup(periodoId, participantId, manager);
+          for (const participantId of [...participantIds].sort()) await this.lockAssignmentStudent(manager, participantId);
+          for (const participantId of participantIds) {
+            await this.habilitados.getEligibleStudentForGroup(periodoId, participantId, manager);
+            if (await this.asignaciones.tieneVigenteParaEstudiante(manager, participantId)) throw new ConflictException('Uno de los integrantes ya tiene una asignación vigente.');
+          }
         }
         if (count < topic.min_integrantes || count > topic.max_integrantes) throw new ConflictException(`El tema admite entre ${topic.min_integrantes} y ${topic.max_integrantes} integrantes; la solicitud tiene ${count}.`);
         this.assertStudentWindow(period);
@@ -250,6 +258,10 @@ export class PostulacionesService {
     const schema = (manager.connection.options as PostgresConnectionOptions).schema ?? 'public';
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(schema)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
     return `"${schema}"`;
+  }
+
+  private async lockAssignmentStudent(manager: EntityManager, studentId: string): Promise<void> {
+    await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 7319))', [studentId]);
   }
   private async getRecord(periodoId: string, id: string): Promise<PostulacionResponseDto> {
     const item = await this.repository.findOne({ where: { id, periodo: { id: periodoId } }, relations });

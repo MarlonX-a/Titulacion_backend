@@ -132,4 +132,20 @@ export class PeriodosController {
   ): Promise<PeriodoResponseDto> {
     return this.periodos.abrirPostulacion(id, dto, actor, request.ip || null);
   }
+
+  @Post(':id/cerrar-postulacion')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cerrar el período cuando venza el plazo de postulación' })
+  @ApiOkResponse({ type: PeriodoResponseDto })
+  @ApiBadRequestResponse({ description: 'No se admiten propiedades en el cuerpo.' })
+  @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
+  @ApiConflictResponse({ description: 'El período sigue abierto o no está en POSTULACION_ABIERTA.' })
+  cerrarPostulacion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: AbrirPostulacionDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<PeriodoResponseDto> {
+    return this.periodos.cerrarPostulacion(id, dto, actor, request.ip || null);
+  }
 }

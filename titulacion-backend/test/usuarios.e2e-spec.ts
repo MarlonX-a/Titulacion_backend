@@ -1,15 +1,19 @@
 import { once } from 'node:events';
+import { randomBytes } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import { exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
+import { decodeJwt, exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
 import type { CryptoKey } from 'jose';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import type { Test as SupertestTest } from 'supertest';
 import { AppModule } from '../src/app.module.js';
+import { AuthenticationService } from '../src/auth/authentication.service.js';
 import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
 import { DatabaseModule } from '../src/database/database.module.js';
@@ -27,6 +31,7 @@ import {
   setPeriodoTestFechas,
   auditoriaTestRecords,
   habilitadosTestRecords,
+  findUsuarioTestIdByExternalId,
   DatabaseTestingModule,
 } from './database-testing.module.js';
 
@@ -34,7 +39,6 @@ describe('Usuarios (e2e)', () => {
   let app: INestApplication<App>;
   let server: Server;
   let issuer: string;
-  let jwksUri: string;
   let privateKey: CryptoKey;
   let publicJwk: JWK;
   const tokens = new Map<string, string>();
@@ -78,7 +82,6 @@ describe('Usuarios (e2e)', () => {
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
     issuer = `http://127.0.0.1:${address.port}/issuer`;
-    jwksUri = `http://127.0.0.1:${address.port}/jwks`;
     for (const subject of [
       'admin-sub',
       'student-sub',
@@ -87,6 +90,7 @@ describe('Usuarios (e2e)', () => {
       'inactive-sub',
       'not-registered',
       'bootstrap-sub',
+      'closed-condition-sub',
     ]) {
       tokens.set(`${subject}:`, await createToken(subject));
       tokens.set(`${subject}:ADMIN`, await createToken(subject, 'ADMIN'));
@@ -101,10 +105,10 @@ describe('Usuarios (e2e)', () => {
       DB_USERNAME: 'test_user',
       DB_PASSWORD: 'test_password',
       DB_NAME: 'test_database',
-      OIDC_ISSUER: issuer,
-      OIDC_AUDIENCE: 'titulacion-api-test',
-      JWKS_URI: jwksUri,
+      AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
+      OUTBOX_ENCRYPTION_KEY_PATH: '.test-outbox-key',
     });
+    writeFileSync(join(process.cwd(), '.test-outbox-key'), randomBytes(32));
     const moduleFixture = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -112,6 +116,12 @@ describe('Usuarios (e2e)', () => {
       .useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService)
       .useValue(config)
+      .overrideProvider(AuthenticationService)
+      .useValue({ verifyToken: async (token: string) => {
+        const payload = decodeJwt(token);
+        const externalSubject = typeof payload.sub === 'string' ? payload.sub : '';
+        return { subject: findUsuarioTestIdByExternalId(externalSubject) ?? externalSubject, issuer: 'http://127.0.0.1:3000', firstAccess: false };
+      } })
       .compile();
     app = moduleFixture.createNestApplication<INestApplication<App>>();
     configureApplication(app);
@@ -124,6 +134,8 @@ describe('Usuarios (e2e)', () => {
     await app?.close();
     server?.close();
     await once(server, 'close');
+    const { unlinkSync } = await import('node:fs');
+    unlinkSync(join(process.cwd(), '.test-outbox-key'));
   });
 
   function addAdmin() {
@@ -167,16 +179,15 @@ describe('Usuarios (e2e)', () => {
     addAdmin();
     const response = await authenticated('post', '/usuarios', 'admin-sub')
       .send({
-        email: '  Persona@Universidad.EDU ',
+        email: '  Persona@LIVE.ULEAM.EDU.EC ',
         nombres: '  María Elena ',
         apellidos: ' Pérez ',
         rol: UsuarioRol.ESTUDIANTE,
-        id_externo_sso: 'student-sub',
       })
       .expect(201);
 
     expect(response.body).toMatchObject({
-      email: 'persona@universidad.edu',
+      email: 'persona@live.uleam.edu.ec',
       nombres: 'María Elena',
       apellidos: 'Pérez',
       rol: UsuarioRol.ESTUDIANTE,
@@ -214,12 +225,11 @@ describe('Usuarios (e2e)', () => {
 
     await authenticated('get', '/usuarios', 'not-registered').expect(403);
     await authenticated('get', '/usuarios', 'inactive-sub').expect(403);
-    const identity = await authenticated(
+    await authenticated(
       'get',
       '/auth/me',
       'not-registered',
-    ).expect(200);
-    expect(identity.body).toEqual({ subject: 'not-registered', issuer });
+    ).expect(403);
   });
 
   it('devuelve el perfil propio y actualiza ultimo_acceso', async () => {
@@ -241,36 +251,35 @@ describe('Usuarios (e2e)', () => {
     expect(response.body).not.toHaveProperty('id_externo_sso');
   });
 
-  it('crea conflictos en email o subject duplicados', async () => {
+  it('rechaza correos duplicados y campos SSO obsoletos', async () => {
     addAdmin();
-    const makeRequest = (email: string, subject: string) =>
+    const makeRequest = (email: string) =>
       authenticated('post', '/usuarios', 'admin-sub').send({
         email,
         nombres: 'Persona',
         apellidos: 'Prueba',
         rol: UsuarioRol.DOCENTE,
-        id_externo_sso: subject,
       });
 
-    await makeRequest('nuevo@universidad.edu', 'new-sub').expect(201);
-    await makeRequest('NUEVO@UNIVERSIDAD.EDU', 'other-sub').expect(409);
-    await makeRequest('other@universidad.edu', 'new-sub').expect(409);
+    await makeRequest('nuevo@uleam.edu.ec').expect(201);
+    await makeRequest('NUEVO@ULEAM.EDU.EC').expect(409);
+    await authenticated('post', '/usuarios', 'admin-sub').send({ email: 'otro@uleam.edu.ec', nombres: 'Persona', apellidos: 'Prueba', rol: UsuarioRol.DOCENTE, id_externo_sso: 'removed' }).expect(400);
   });
 
   it('permite crear el primer ADMIN una sola vez ante solicitudes simultáneas', async () => {
     const usuarios = app.get(UsuariosService);
     const attempts = await Promise.allSettled([
       usuarios.createInitialAdmin({
-        email: 'bootstrap@universidad.edu',
+        email: 'bootstrap@uleam.edu.ec',
         nombres: 'Admin',
         apellidos: 'Inicial',
-        id_externo_sso: 'bootstrap-sub',
+        password: 'contrasena-personal-segura-01',
       }),
       usuarios.createInitialAdmin({
-        email: 'bootstrap-2@universidad.edu',
+        email: 'bootstrap-2@uleam.edu.ec',
         nombres: 'Admin',
         apellidos: 'Inicial',
-        id_externo_sso: 'bootstrap-sub-2',
+        password: 'contrasena-personal-segura-02',
       }),
     ]);
     expect(
@@ -1014,6 +1023,9 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/publicar'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post.responses['200']).toBeDefined();
+    expect(docs.body.paths['/periodos/{id}/cerrar-postulacion'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/conflictos'].get).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas/{temaId}/conflicto/resolver'].post).toBeDefined();
   });
 
   it('abre períodos dentro del plazo, publica temas y muestra el catálogo a estudiantes habilitados', async () => {
@@ -1021,6 +1033,7 @@ describe('Usuarios (e2e)', () => {
     addUsuarioTestRecord({ id_externo_sso: 'not-registered', email: 'sin-perfil@universidad.edu', nombres: 'Sin', apellidos: 'Perfil', rol: UsuarioRol.ESTUDIANTE });
     const student = await createStudentProfile();
     await createStudentProfile('other-student-sub', '0102030418', 'CAT-1002');
+    const pendingForClose = await createStudentProfile('closed-condition-sub', '0102030459', 'CAT-1005');
     const studentNotAdmitted = await createStudentProfile('bootstrap-sub', '0102030426', 'CAT-1003');
     const studentSuspended = await createStudentProfile('inactive-sub', '0102030434', 'CAT-1004');
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
@@ -1043,6 +1056,9 @@ describe('Usuarios (e2e)', () => {
       .expect(201);
     const suspendedHabilitation = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
       .send({ estudiante_id: studentSuspended.profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR })
+      .expect(201);
+    const conditionalAfterClose = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: pendingForClose.profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Resolver después del cierre' })
       .expect(201);
     const habilitationRecords = habilitadosTestRecords();
     const notAdmittedRecord = habilitationRecords.find((record) => record.id === deniedHabilitation.body.id);
@@ -1071,6 +1087,7 @@ describe('Usuarios (e2e)', () => {
     const opened = await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(200);
     expect(opened.body.estado).toBe(PeriodoEstado.POSTULACION_ABIERTA);
     await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+    await authenticated('post', `/periodos/${period.body.id}/cerrar-postulacion`, 'admin-sub').expect(409);
     const studentCatalog = await authenticated('get', `${themesPath}?num_integrantes=3`, 'student-sub').expect(200);
     expect(studentCatalog.body).toMatchObject({ total: 1, data: [{ id: tema.body.id, estado: 'PUBLICADO' }] });
     await authenticated('get', themesPath, 'other-student-sub').expect(403);
@@ -1096,7 +1113,12 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', `/periodos/${period.body.id}/habilitados/${habilitation.body.id}/resolver-ingreso`, 'admin-sub')
       .send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
     setPeriodoTestFechas(period.body.id, new Date(Date.now() - 2 * 60 * 60_000), new Date(Date.now() - 60 * 60_000));
-    await authenticated('get', themesPath, 'student-sub').expect(200).then((response) => expect(response.body.total).toBe(1));
+    await authenticated('post', `/periodos/${period.body.id}/cerrar-postulacion`, 'admin-sub').expect(200).then((response) => expect(response.body.estado).toBe(PeriodoEstado.POSTULACION_CERRADA));
+    await authenticated('post', `/periodos/${period.body.id}/cerrar-postulacion`, 'admin-sub').expect(409);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${conditionalAfterClose.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+    await authenticated('get', themesPath, 'student-sub').expect(403);
+    await authenticated('get', themesPath, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(2));
   });
 
   it('rechaza abrir fuera del plazo y rechaza publicaciones y escrituras luego del vencimiento', async () => {

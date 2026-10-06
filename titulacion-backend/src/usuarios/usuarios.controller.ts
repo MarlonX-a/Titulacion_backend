@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBearerAuth,
   ApiBadRequestResponse,
@@ -43,10 +44,19 @@ export class UsuariosController {
   @ApiBadRequestResponse({ description: 'El cuerpo contiene datos inválidos.' })
   @ApiCreatedResponse({ type: UsuarioResponseDto })
   @ApiConflictResponse({
-    description: 'Correo o identidad SSO ya registrados.',
+    description: 'El correo ya está registrado.',
   })
-  create(@Body() dto: CreateUsuarioDto): Promise<UsuarioResponseDto> {
-    return this.usuariosService.create(dto);
+  create(@Body() dto: CreateUsuarioDto, @CurrentUsuario() actor: Usuario, @Req() request: Request): Promise<UsuarioResponseDto> {
+    return this.usuariosService.create(dto, actor, request.ip ?? null);
+  }
+
+  @Post(':id/reenviar-acceso')
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Generar una nueva contraseña temporal para una cuenta pendiente de activar' })
+  @ApiCreatedResponse({ type: UsuarioResponseDto })
+  @ApiConflictResponse({ description: 'La cuenta ya estableció una contraseña personal.' })
+  reissueAccess(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUsuario() actor: Usuario, @Req() request: Request): Promise<UsuarioResponseDto> {
+    return this.usuariosService.reissueAccess(id, actor, request.ip ?? null);
   }
 
   @Get()

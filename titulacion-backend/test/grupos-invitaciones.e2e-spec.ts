@@ -5,6 +5,7 @@ import type { App } from 'supertest/types.js';
 import type { INestApplication } from '@nestjs/common';
 import { vi } from 'vitest';
 import { AppModule } from '../src/app.module.js';
+import { AuthenticationService } from '../src/auth/authentication.service.js';
 import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
 import { DatabaseModule } from '../src/database/database.module.js';
@@ -15,7 +16,6 @@ import { PostulacionesService } from '../src/postulaciones/postulaciones.service
 import { UsuarioRol } from '../src/usuarios/enums/usuario-rol.enum.js';
 import { addUsuarioTestRecord, clearUsuarioTestRecords, DatabaseTestingModule } from './database-testing.module.js';
 
-const password = 'local-test-password-long-enough';
 const roles = [
   { email: 'admin@example.test', subject: 'local-demo-admin', role: UsuarioRol.ADMIN },
   { email: 'docente@example.test', subject: 'local-demo-docente', role: UsuarioRol.DOCENTE },
@@ -53,18 +53,26 @@ describe('Grupos e invitaciones (e2e)', () => {
     retirarIntegrante: vi.fn(async () => ({ id: '00000000-0000-4000-8000-000000000001' })),
     disolver: vi.fn(async () => ({ id: '00000000-0000-4000-8000-000000000001' })),
   };
+  const tokenUsers = new Map<string, string>();
+  const authService = {
+    verifyToken: vi.fn(async (token: string) => ({ subject: tokenUsers.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })),
+  };
 
   beforeAll(async () => {
     clearUsuarioTestRecords();
-    for (const user of roles) addUsuarioTestRecord({ email: user.email, id_externo_sso: user.subject, rol: user.role, nombres: user.role, apellidos: 'Pruebas' });
+    for (const user of roles) {
+      const account = addUsuarioTestRecord({ email: user.email, id_externo_sso: user.subject, rol: user.role, nombres: user.role, apellidos: 'Pruebas' });
+      tokenUsers.set(user.subject, account.id);
+    }
     const config = new ConfigService<AppEnvironment, true>({
-      NODE_ENV: 'test', AUTH_MODE: 'local', PORT: 3000, SWAGGER_ENABLED: true,
-      DB_HOST: '127.0.0.1', DB_PORT: 5432, DB_SCHEMA: 'local_demo', DB_USERNAME: 'test_user',
-      DB_PASSWORD: 'test_password', DB_NAME: 'test_database', LOCAL_AUTH_PASSWORD: password,
+      NODE_ENV: 'test', PORT: 3000, SWAGGER_ENABLED: true,
+      DB_HOST: '127.0.0.1', DB_PORT: 5432, DB_SCHEMA: 'test', DB_USERNAME: 'test_user',
+      DB_PASSWORD: 'test_password', DB_NAME: 'test_database', AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
     });
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)
+      .overrideProvider(AuthenticationService).useValue(authService)
       .overrideProvider(GruposService).useValue(groupService)
       .overrideProvider(GrupoGestionService).useValue(groupManagementService)
       .overrideProvider(InvitacionesService).useValue(invitationService)
@@ -73,17 +81,13 @@ describe('Grupos e invitaciones (e2e)', () => {
     app = module.createNestApplication<INestApplication<App>>();
     configureApplication(app);
     await app.init();
-    tokens = {};
-    for (const user of roles) {
-      const response = await request(app.getHttpServer()).post('/auth/local/login').send({ email: user.email, password }).expect(200);
-      const tokenKey = user.email === 'estudiante2@example.test' ? 'student2' : user.role === UsuarioRol.ESTUDIANTE ? 'student' : user.role.toLowerCase();
-      tokens[tokenKey] = response.body.access_token as string;
-    }
+    tokens = { admin: 'local-demo-admin', docente: 'local-demo-docente', student: 'local-demo-estudiante', student2: 'local-demo-estudiante2' };
   });
 
   afterAll(async () => {
     await app.close();
     clearUsuarioTestRecords();
+    tokenUsers.clear();
   });
 
   it('permite crear al estudiante, valida body estricto y rechaza al docente', async () => {

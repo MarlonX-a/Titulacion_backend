@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, LessThanOrEqual, MoreThanOrEqual, QueryFailedError, Repository } from 'typeorm';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -71,6 +72,8 @@ function responseFrom(tema: Tema): TemaResponseDto {
     max_integrantes: tema.max_integrantes,
     estado: tema.estado,
     creado_en: tema.creado_en,
+    disponible: tema.estado === EstadoTema.PUBLICADO,
+    postulaciones_abiertas: 0,
   };
 }
 
@@ -161,7 +164,7 @@ export class TemasService {
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
-      return { data: records.map(responseFrom), total, page: query.page, limit: query.limit };
+      return { data: await this.enrichAvailability(periodoId, records.map(responseFrom)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -180,7 +183,7 @@ export class TemasService {
         if (!docente) throw new NotFoundException('La cuenta aún no tiene perfil de docente.');
         if (tema.docente_proponente.id !== docente.id) throw new NotFoundException('No existe el tema en el período indicado.');
       }
-      return responseFrom(tema);
+      return (await this.enrichAvailability(periodoId, [responseFrom(tema)]))[0]!;
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -330,6 +333,20 @@ export class TemasService {
     const record = await manager.getRepository(Tema).findOne({ where: { id, periodo: { id: periodoId } }, relations: temaRelations });
     if (!record) throw new NotFoundException('No existe el tema en el período indicado.');
     return record;
+  }
+
+  private async enrichAvailability(periodoId: string, responses: TemaResponseDto[]): Promise<TemaResponseDto[]> {
+    if (responses.length === 0) return responses;
+    const ids = responses.map((item) => item.id);
+    const configuredSchema = (this.dataSource.options as PostgresConnectionOptions).schema ?? 'public';
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(configuredSchema)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
+    const schema = `"${configuredSchema}"`;
+    const stats = await this.dataSource.query(
+      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND p."periodo_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO')) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."periodo_id"=$1 AND t."id"=ANY($2::uuid[])`,
+      [periodoId, ids],
+    ) as Array<{ id: string; disponible: boolean; postulaciones_abiertas: number }>;
+    const byId = new Map(stats.map((row) => [row.id, row]));
+    return responses.map((item) => ({ ...item, disponible: byId.get(item.id)?.disponible ?? false, postulaciones_abiertas: Number(byId.get(item.id)?.postulaciones_abiertas ?? 0) }));
   }
 
   private async writeHistory(manager: EntityManager, tema: Tema, actor: Usuario, previous: Record<string, unknown> | null): Promise<void> {

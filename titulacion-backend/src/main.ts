@@ -11,7 +11,11 @@ async function bootstrap() {
 
   const config = app.get(ConfigService<AppEnvironment, true>);
   const port = config.get('PORT', { infer: true });
-  if (config.get('AUTH_MODE', { infer: true }) === 'local') {
+  const origins = config.get('AUTH_ORIGINS', { infer: true });
+  if (origins.length > 0) {
+    app.enableCors({ origin: origins, credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'], methods: ['GET', 'POST', 'PATCH', 'OPTIONS'] });
+  }
+  if (config.get('NODE_ENV', { infer: true }) !== 'production') {
     await app.listen(port, '127.0.0.1');
   } else {
     await app.listen(port);

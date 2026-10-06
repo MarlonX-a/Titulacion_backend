@@ -21,6 +21,11 @@ import { GrupoIntegrante } from '../src/grupos/entities/grupo-integrante.entity.
 import { Invitacion } from '../src/invitaciones/entities/invitacion.entity.js';
 import { Postulacion } from '../src/postulaciones/entities/postulacion.entity.js';
 import { TutorPropuesto } from '../src/postulaciones/entities/tutor-propuesto.entity.js';
+import { ResolucionConflicto } from '../src/conflictos/entities/resolucion-conflicto.entity.js';
+import { ConflictoParticipante } from '../src/conflictos/entities/conflicto-participante.entity.js';
+import { AsignacionTema } from '../src/asignaciones-tema/entities/asignacion-tema.entity.js';
+import { CredencialUsuario } from '../src/auth/entities/credencial-usuario.entity.js';
+import { CorreoSalida } from '../src/auth/entities/correo-salida.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -38,6 +43,9 @@ const grupoRecords: Grupo[] = [];
 const grupoIntegranteRecords: GrupoIntegrante[] = [];
 const invitacionRecords: Invitacion[] = [];
 const tutorPropuestoRecords: TutorPropuesto[] = [];
+const credencialRecords: CredencialUsuario[] = [];
+const correoRecords: CorreoSalida[] = [];
+const assignmentTemaTestRepository = { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, findOneByOrFail: async () => { throw new Error('No existe una asignación en el repositorio de prueba.'); }, findOne: async () => null, find: async () => [], findAndCount: async () => [[], 0] as const, exist: async () => false, update: async () => ({ affected: 0 }), createQueryBuilder: () => ({ leftJoinAndSelect() { return this; }, where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, addOrderBy() { return this; }, skip() { return this; }, take() { return this; }, getManyAndCount: async () => [[], 0] as const }) };
 let transactionQueue: Promise<void> = Promise.resolve();
 
 function createRecord(value: UsuarioRecord): Usuario {
@@ -58,7 +66,7 @@ export const usuarioTestRepository = {
       records.some(
         (record) =>
           record.email === email ||
-          record.id_externo_sso === usuario.id_externo_sso,
+          (usuario.id_externo_sso !== null && record.id_externo_sso === usuario.id_externo_sso),
       )
     ) {
       const driverError = Object.assign(new Error('duplicate'), {
@@ -369,6 +377,20 @@ const grupoIntegranteTestRepository = emptyRepository<GrupoIntegrante>();
 const invitacionTestRepository = emptyRepository<Invitacion>();
 const postulacionTestRepository = emptyRepository<Postulacion>();
 const tutorPropuestoTestRepository = emptyRepository<TutorPropuesto>();
+const credencialTestRepository = {
+  create: (value: Partial<CredencialUsuario>) => ({ ...value }) as CredencialUsuario,
+  save: async (value: CredencialUsuario) => {
+    const index = credencialRecords.findIndex((item) => item.usuario_id === value.usuario_id);
+    if (index >= 0) credencialRecords[index] = value; else credencialRecords.push(value);
+    return value;
+  },
+  findOneBy: async (criteria: Partial<CredencialUsuario>) => credencialRecords.find((item) => Object.entries(criteria).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
+  update: async () => ({ affected: 1 }),
+};
+const correoTestRepository = {
+  create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,
+  save: async (value: CorreoSalida) => { const stored = { ...value, id: value.id ?? randomUUID(), creada_en: value.creada_en ?? new Date() }; correoRecords.push(stored); return stored; },
+};
 
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
@@ -387,6 +409,14 @@ async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
 export const usuarioTestDataSource = {
   options: { type: 'postgres' },
   connection: { options: { schema: 'public' } },
+  query: async (sql: string, parameters?: unknown[]) => {
+    if (sql.includes('FROM tema t') && sql.includes('postulaciones_abiertas')) {
+      const ids = parameters?.[1] as string[] | undefined;
+      return temaRecords.filter((tema) => ids?.includes(tema.id)).map((tema) => ({ id: tema.id, disponible: tema.estado === EstadoTema.PUBLICADO, postulaciones_abiertas: 0 }));
+    }
+    if (sql.includes('asignacion_tema')) return [];
+    return [];
+  },
   entityMetadatas: [
     { target: Usuario },
     { target: Estudiante },
@@ -402,6 +432,11 @@ export const usuarioTestDataSource = {
     { target: Invitacion },
     { target: Postulacion },
     { target: TutorPropuesto },
+    { target: ResolucionConflicto },
+    { target: ConflictoParticipante },
+    { target: AsignacionTema },
+    { target: CredencialUsuario },
+    { target: CorreoSalida },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -418,6 +453,10 @@ export const usuarioTestDataSource = {
     if (entity === Invitacion) return invitacionTestRepository;
     if (entity === Postulacion) return postulacionTestRepository;
     if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
+    if (entity === ResolucionConflicto || entity === ConflictoParticipante) return { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, find: async () => [] };
+    if (entity === AsignacionTema) return assignmentTemaTestRepository;
+    if (entity === CredencialUsuario) return credencialTestRepository;
+    if (entity === CorreoSalida) return correoTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -429,7 +468,9 @@ export const usuarioTestDataSource = {
             const profile = estudianteRecords.find((record) => record.id === parameters?.[0]);
             return profile ? [{ usuario_id: profile.usuario.id }] : [];
           }
-          return undefined;
+          if (sql.includes('asignacion_tema')) return [];
+          if (sql.includes('pg_advisory_xact_lock')) return [];
+          return [];
         },
         getRepository: (entity: unknown) => {
           if (entity === Usuario) return usuarioTestRepository;
@@ -446,6 +487,10 @@ export const usuarioTestDataSource = {
           if (entity === Invitacion) return invitacionTestRepository;
           if (entity === Postulacion) return postulacionTestRepository;
           if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
+          if (entity === ResolucionConflicto || entity === ConflictoParticipante) return { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, find: async () => [] };
+          if (entity === AsignacionTema) return assignmentTemaTestRepository;
+          if (entity === CredencialUsuario) return credencialTestRepository;
+          if (entity === CorreoSalida) return correoTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
@@ -466,6 +511,8 @@ export function clearUsuarioTestRecords(): void {
   grupoIntegranteRecords.length = 0;
   invitacionRecords.length = 0;
   tutorPropuestoRecords.length = 0;
+  credencialRecords.length = 0;
+  correoRecords.length = 0;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {
@@ -480,6 +527,10 @@ export function addUsuarioTestRecord(value: UsuarioRecord): Usuario {
   const record = createRecord(value);
   records.push(record);
   return record;
+}
+
+export function findUsuarioTestIdByExternalId(subject: string): string | undefined {
+  return records.find((record) => record.id_externo_sso === subject)?.id;
 }
 
 export function setPeriodoTestEstado(

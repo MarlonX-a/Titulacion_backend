@@ -228,6 +228,45 @@ export class PeriodosService {
     }
   }
 
+  async cerrarPostulacion(
+    id: string,
+    _dto: AbrirPostulacionDto,
+    actor: Usuario,
+    ip: string | null,
+  ): Promise<PeriodoResponseDto> {
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(PeriodoTitulacion);
+        const periodo = await repository.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!periodo) throw new NotFoundException('No existe el período solicitado.');
+        if (periodo.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
+          throw new ConflictException('Solo se pueden cerrar períodos con postulaciones abiertas.');
+        }
+        if (Date.now() < periodo.fecha_fin_postulacion.getTime()) {
+          throw new ConflictException('El período solo puede cerrarse después de vencer el plazo de postulación.');
+        }
+
+        periodo.estado = PeriodoEstado.POSTULACION_CERRADA;
+        const updated = await repository.save(periodo);
+        await this.auditoria.registrar(manager, {
+          actor,
+          accion: 'CERRAR_POSTULACION',
+          entidad_tipo: 'periodo_titulacion',
+          entidad_id: periodo.id,
+          valores_anteriores: { estado: PeriodoEstado.POSTULACION_ABIERTA },
+          valores_nuevos: { estado: PeriodoEstado.POSTULACION_CERRADA },
+          ip_origen: ip,
+        });
+        return responseFrom(updated);
+      });
+    } catch (error: unknown) {
+      this.handleDatabaseError(error);
+    }
+  }
+
   private handleDatabaseError(error: unknown): never {
     if (error instanceof HttpException) throw error;
     if (isUniqueViolation(error)) {

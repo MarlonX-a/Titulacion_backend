@@ -10,7 +10,7 @@ import { UsuarioRol } from '../enums/usuario-rol.enum.js';
 @Check('CHK_usuario_apellidos_no_vacios', 'length(btrim("apellidos")) > 0')
 @Check(
   'CHK_usuario_id_externo_sso_no_vacio',
-  'length(btrim("id_externo_sso")) > 0',
+  '"id_externo_sso" IS NULL OR length(btrim("id_externo_sso")) > 0',
 )
 export class Usuario {
   @PrimaryGeneratedColumn('uuid')
@@ -36,8 +36,8 @@ export class Usuario {
   })
   estado: UsuarioEstado;
 
-  @Column({ type: 'varchar', length: 100, name: 'id_externo_sso' })
-  id_externo_sso: string;
+  @Column({ type: 'varchar', length: 100, name: 'id_externo_sso', nullable: true })
+  id_externo_sso: string | null;
 
   @Column({ type: 'timestamptz', name: 'ultimo_acceso', nullable: true })
   ultimo_acceso: Date | null;

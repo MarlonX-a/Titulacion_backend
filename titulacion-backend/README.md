@@ -5,19 +5,20 @@ Las reglas del proyecto están en `AGENTS.md`.
 
 ## Estado actual
 
-Etapas implementadas: configuración por variables de entorno, validación HTTP
-global, Swagger/OpenAPI, conexión a PostgreSQL mediante TypeORM y validación
-base de autenticación JWT institucional mediante JWKS.
+El backend incluye configuración validada, Swagger/OpenAPI, módulos del proceso
+de titulación y ahora autenticación propia con contraseñas, sesiones y carga
+administrativa de estudiantes mediante Excel.
 `GET /` conserva la respuesta `Hello World!` de la plantilla inicial. Ya están
 implementadas las cuentas de usuario y los perfiles básicos de estudiante y
 docente, además de la configuración de períodos en estado `BORRADOR` y la
 habilitación de estudiantes por período con resolución de condicionados.
-Importaciones Excel y los módulos posteriores continúan para etapas posteriores.
+La autenticación institucional Microsoft/OIDC y la autenticación local de
+demostración se retiraron. Las cuentas usarán correo y contraseña propia; el
+primer acceso con clave temporal exige cambiarla.
 
-Se utiliza PostgreSQL 17 para aprovechar la instalación local existente, en
-lugar del PostgreSQL 16 indicado en el C4. La base de desarrollo es
-`titulacion_bd`; las tablas del DER se incorporarán junto con cada módulo.
-El proveedor institucional real y los módulos del proceso siguen pendientes.
+Se utiliza PostgreSQL 17. El desarrollo nuevo usa el esquema limpio
+`titulacion_dev`; el esquema anterior `local_demo` se conserva intacto y no se
+utiliza para el nuevo flujo.
 La integración de Observe permanece desactivada.
 
 Dependencias de base de datos: `@nestjs/typeorm` 12.0.2, `typeorm` 0.3.31 y
@@ -65,19 +66,21 @@ prioridad sobre la misma variable del archivo.
 | Variable          | Valores permitidos                  | Predeterminado si se omite                        |
 | ----------------- | ----------------------------------- | ------------------------------------------------- |
 | `NODE_ENV`        | `development`, `test`, `production` | `development`                                     |
-| `AUTH_MODE`       | `institutional`, `local`            | `institutional`                                   |
 | `PORT`            | Entero decimal entre `1` y `65535`  | `3000`                                            |
 | `SWAGGER_ENABLED` | Exactamente `true` o `false`        | `true` fuera de producción; `false` en producción |
 | `DB_HOST`         | Host no vacío                       | `localhost`                                       |
 | `DB_PORT`         | Entero decimal entre `1` y `65535`  | `5432`                                            |
-| `DB_SCHEMA`       | Identificador de esquema PostgreSQL | `public`                                          |
+| `DB_SCHEMA`       | Identificador de esquema PostgreSQL | `titulacion_dev`                                  |
 | `DB_USERNAME`     | Usuario PostgreSQL no vacío         | Obligatorio                                       |
 | `DB_PASSWORD`     | Contraseña no vacía                 | Obligatorio                                       |
 | `DB_NAME`         | Nombre de base de datos no vacío    | Obligatorio                                       |
-| `OIDC_ISSUER`     | Emisor JWT HTTPS                    | Obligatorio en producción; opcional en desarrollo |
-| `OIDC_AUDIENCE`   | Audiencia JWT de esta API           | Obligatorio en producción; opcional en desarrollo |
-| `JWKS_URI`        | Dirección HTTPS del JWKS            | Obligatorio en producción; opcional en desarrollo |
-| `LOCAL_AUTH_PASSWORD` | Clave de las cuentas de prueba     | Obligatoria solo con `AUTH_MODE=local`            |
+| `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH` | Rutas a claves RS256 persistentes | Generadas localmente; obligatorias en producción |
+| `AUTH_ISSUER`     | Emisor de los JWT propios            | `http://127.0.0.1:3000` en desarrollo             |
+| `AUTH_ORIGINS`    | Lista exacta de orígenes web         | Vacía; producción debe definir los orígenes        |
+| `REDIS_HOST`, `REDIS_PORT` | Redis/BullMQ para límites y trabajos | `127.0.0.1`, `6379`                        |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` | Servidor de correo | Mailpit local en puerto `1025`              |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3 | MinIO en desarrollo |
+| `OUTBOX_ENCRYPTION_KEY_PATH` | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente |
 
 Un valor vacío o inválido detiene el arranque e identifica la variable afectada,
 sin incluir su valor en el error. `PORT` se convierte a número y
@@ -85,59 +88,37 @@ sin incluir su valor en el error. `PORT` se convierte a número y
 a número. Las credenciales de base de datos son obligatorias en todos los
 entornos, incluidas las pruebas, que usan valores ficticios.
 
-La autenticación se configura con `OIDC_ISSUER`, `OIDC_AUDIENCE` y `JWKS_URI`.
-En desarrollo y pruebas pueden quedar omitidas hasta que la universidad
-proporcione los datos; si se configura una, deben definirse las tres. La
-aplicación permite HTTP únicamente para servicios en localhost durante
-desarrollo y pruebas. En producción exige URLs HTTPS y las tres variables.
-Los comentarios de `.env.example` muestran dónde añadir esos valores sin
-inventar los del proveedor.
+La autenticación usa claves RSA persistentes. Genéralas una sola vez y conserva
+`/.secrets` fuera de Git y de respaldos públicos. El `sub` JWT es el UUID interno
+de usuario; los permisos y el estado de la cuenta se consultan en PostgreSQL.
+En producción se exige HTTPS, claves persistentes, Redis, SMTP y almacenamiento
+privado configurados.
 
 `.env.example` habilita Swagger explícitamente. Para deshabilitarlo, usa
 `SWAGGER_ENABLED=false`. Para aplicar el comportamiento automático según
 `NODE_ENV`, elimina o comenta la línea `SWAGGER_ENABLED`.
 
-### Inicio de sesión local para pruebas
+### Preparar servicios de desarrollo
 
-El modo institucional es el predeterminado. Para probar las rutas protegidas
-sin el proveedor de la universidad, configura en tu `.env`:
-
-```dotenv
-AUTH_MODE=local
-DB_SCHEMA=local_demo
-LOCAL_AUTH_PASSWORD=escribe-una-clave-de-prueba-de-16-caracteres
-```
-
-La clave debe tener al menos 16 caracteres. En modo local, NestJS escucha solo
-en `127.0.0.1` y exige PostgreSQL en una dirección local. Este modo no inicia
-en producción, no admite configuración OIDC simultánea y usa el esquema
-`local_demo` para mantener aisladas las cuentas ficticias.
-
-Prepara explícitamente el esquema y las cuatro cuentas de prueba:
+El archivo `docker-compose.dev.yml` proporciona Redis, MinIO y Mailpit. Si
+Docker Desktop está instalado:
 
 ```powershell
-npm run auth:local:setup
+docker compose -f docker-compose.dev.yml up -d
+npm run auth:keys
+npm run db:prepare-auth
+npm run usuario:bootstrap-admin
 npm run start:dev
 ```
 
-En [Swagger](http://localhost:3000/docs), ejecuta `POST /auth/local/login` con
-uno de estos correos y la clave común de `LOCAL_AUTH_PASSWORD`:
+`auth:keys` crea claves privadas locales ignoradas por Git y no sobrescribe
+archivos existentes. El comando `db:prepare-auth` crea únicamente el esquema
+`titulacion_dev` y ejecuta las migraciones; no modifica `public` ni
+`local_demo`. Mailpit muestra los mensajes locales en
+[http://localhost:8025](http://localhost:8025).
 
-| Cuenta | Correo |
-| --- | --- |
-| Administrador | `admin@example.test` |
-| Docente | `docente@example.test` |
-| Estudiante | `estudiante@example.test` |
-| Segundo estudiante | `estudiante2@example.test` |
-
-Copia el `access_token` de la respuesta y pégalo en **Authorize** como Bearer
-token. Así puedes consultar el listado de usuarios como ADMIN y el perfil
-propio con las otras cuentas. Los tokens duran 15 minutos y las claves se
-regeneran al reiniciar la aplicación, por lo que debes iniciar sesión de nuevo.
-
-Para volver al modo institucional, cambia `AUTH_MODE=institutional`, usa
-`DB_SCHEMA=public` y elimina `LOCAL_AUTH_PASSWORD`. Las cuentas ficticias
-permanecerán en `local_demo`; no se copian a `public`.
+El backend escucha en `127.0.0.1` fuera de producción. No publiques estos
+servicios ni sus credenciales de desarrollo en Internet.
 
 Para ejecutar la compilación en producción desde PowerShell:
 
@@ -185,14 +166,14 @@ npm run db:verify-habilitados
 # Comprobar grupos, invitaciones, cupos y pertenencia concurrente
 npm run db:verify-grupos
 
-# Aplicar migraciones pendientes en la base de desarrollo
-npm run migration:run
+# Comprobar autenticación, esquema limpio y reversión protegida
+npm run db:verify-auth
 
-# Registrar el primer administrador cuando tengas su sub institucional
+# Crear titulacion_dev y aplicar migraciones pendientes (solo cuando se decida)
+npm run db:prepare-auth
+
+# Registrar el primer administrador; solicita su clave personal de forma oculta
 npm run usuario:bootstrap-admin
-
-# Preparar exclusivamente las cuentas locales de pruebas
-npm run auth:local:setup
 
 # Revertir únicamente la última migración aplicada, ejecutando su down()
 npm run migration:revert
@@ -200,12 +181,13 @@ npm run migration:revert
 
 Las migraciones crean `usuario`, `estudiante`, `docente`, `periodo_titulacion`,
 `lote_importacion`, `estudiante_habilitado`, `grupo`, `grupo_integrante`,
-`invitacion` y la tabla base `auditoria`.
+`invitacion`, `postulacion`, conflictos, asignaciones de tema, credenciales,
+sesiones, recuperación de contraseña, correo pendiente y preparaciones de
+importación, además de la tabla base `auditoria`.
 `db:verify-perfiles`
-genera un esquema temporal con nombre aleatorio, comprueba restricciones,
-unicidad, la concurrencia del primer ADMIN y de la vinculación de perfiles, la
-preparación idempotente de cuentas locales y la protección al revertir con
-datos; al terminar elimina únicamente ese esquema temporal. El nombre anterior
+genera un esquema temporal con nombre aleatorio y comprueba restricciones,
+unicidad, vinculación de perfiles y protección al revertir con datos; al
+terminar elimina únicamente ese esquema temporal. El nombre anterior
 `db:verify-usuarios` se conserva como alias. Para crear las tablas reales de
 desarrollo, ejecuta `migration:run` explícitamente. Si no hay diferencias de esquema,
 `migration:generate` no genera archivos y termina con código `1`; eso no indica
@@ -239,42 +221,71 @@ DTO existe únicamente en las pruebas, no en la aplicación.
 
 ## Autenticación
 
-Las rutas de la API requieren `Authorization: Bearer <token>` salvo aquellas
-marcadas como públicas. `GET /` continúa siendo público. `GET /auth/me` valida
-firma RS256, emisor, audiencia, expiración y subject mediante las claves del
-JWKS configurado, y devuelve `{ subject, issuer }`. Aún no representa una cuenta
-de usuario ni determina roles.
+`POST /auth/login` acepta correo y contraseña. La contraseña se almacena con
+Argon2id. Una clave temporal enviada por correo permite obtener un token de
+primer acceso válido diez minutos, limitado a `POST /auth/change-initial-password`.
+Las contraseñas personales admiten entre 15 y 128 caracteres; no se recortan ni
+normalizan.
 
-Cuando la autenticación está omitida en desarrollo, una ruta protegida responde
-`401` si no recibe token y `503` si recibe uno, porque todavía no existe una
-configuración institucional para verificarlo. Un token incorrecto responde
-`401`; si no es posible consultar las claves necesarias, responde `503`. Nunca
-se registran tokens ni se devuelven errores internos del proveedor.
+Los tokens de acceso RS256 duran 15 minutos. La sesión tiene un máximo absoluto
+de ocho horas y se renueva mediante un refresh token aleatorio rotado en cada
+uso, guardado en cookie `HttpOnly`, `SameSite=Strict` y protegido por origen y
+CSRF. Cambiar o recuperar la contraseña invalida las sesiones. La recuperación
+siempre devuelve un mensaje genérico para no revelar si existe la cuenta.
 
-El modo local usa `POST /auth/local/login`, disponible únicamente con
-`AUTH_MODE=local`. Sus tokens RS256 duran 15 minutos y sus claves cambian al
-reiniciar. El modo exige `DB_SCHEMA=local_demo`, utiliza las cuatro cuentas
-ficticias descritas arriba y no acepta tokens institucionales ni roles enviados
-por el cliente. En modo institucional, la ruta responde 404 y no aparece en
-Swagger.
+Rutas disponibles: `POST /auth/login`, `POST /auth/change-initial-password`,
+`POST /auth/refresh`, `POST /auth/logout`, `POST /auth/change-password`,
+`POST /auth/forgot-password`, `POST /auth/reset-password` y `GET /auth/me`.
+En Swagger, copia el `access_token` y usa **Authorize**. El refresh requiere
+cookie y origen permitido, por lo que normalmente se usa desde el frontend.
+Las claves no se registran en respuestas, auditoría ni logs.
 
 ## Usuarios
 
 Después de aplicar la migración, `POST /usuarios` permite a un ADMIN activo
-registrar una cuenta; `GET /usuarios` lista cuentas paginadas y
+registrar una cuenta permitida por dominio y encola el envío de una clave
+temporal individual. `POST /usuarios/:id/reenviar-acceso` solo está disponible
+mientras la cuenta requiera cambio inicial. `GET /usuarios` lista cuentas paginadas y
 `GET /usuarios/me` devuelve la cuenta activa vinculada al `sub` del token.
 Los roles confiables se leen desde PostgreSQL y no desde el JWT. El email se
 normaliza a minúsculas. `ultimo_acceso` registra la última solicitud autorizada
 a la API, no un evento del proveedor de inicio de sesión.
 
 Para crear el primer ADMIN ejecuta `npm run usuario:bootstrap-admin` en una
-terminal interactiva, después de aplicar la migración. El comando pregunta por
-el identificador institucional y solo permite una inicialización si todavía no
-existe una cuenta ADMIN. No lo ejecutes con un `sub` inventado: la cuenta debe
-coincidir con la identidad que enviará el proveedor institucional.
+terminal interactiva después de aplicar la migración. Solicita correo,
+nombres, apellidos y una contraseña personal con entrada oculta. Solo permite
+la inicialización si todavía no existe ningún ADMIN.
 
-Las respuestas de usuario omiten `id_externo_sso`; el campo se envía al crear
-la cuenta y se usa internamente para vincularla con el token.
+El correo de ESTUDIANTE debe terminar en `@live.uleam.edu.ec`. DOCENTE y ADMIN
+pueden usar `@uleam.edu.ec` o `@live.uleam.edu.ec`. No existe registro público.
+`id_externo_sso` se conserva nullable únicamente para los registros históricos;
+no se incluye en altas ni se utiliza durante la autenticación.
+
+## Importación de estudiantes desde Excel
+
+ADMIN elige un período en `BORRADOR`, descarga `GET
+/importaciones/estudiantes/plantilla` y carga el archivo en
+`POST /periodos/:periodoId/importaciones/estudiantes/validar`. La carga se
+valida en segundo plano; consulta su progreso y vista previa mediante
+`GET /periodos/:periodoId/importaciones/estudiantes/:id`. Solo una preparación
+sin errores puede confirmarse con `POST
+/periodos/:periodoId/importaciones/estudiantes/:id/confirmar`.
+
+La hoja debe llamarse `Estudiantes`; sus columnas, en este orden, son:
+`email`, `nombres`, `apellidos`, `cedula`, `matricula`, `carrera`, `nivel`,
+`condicion_ingreso`, `requisito_pendiente`. Se aceptan `.xlsx` de hasta 5 MiB y
+1000 filas. Cédula y matrícula deben guardarse como texto para preservar ceros.
+La confirmación crea cuentas ESTUDIANTE, perfiles y habilitaciones, genera una
+clave temporal individual y la pone en cola para correo. Las filas regulares
+quedan admitidas; las condicionadas quedan pendientes. Las reimportaciones no
+cambian claves, estados ni decisiones previas.
+
+Los mensajes de desarrollo se pueden leer en Mailpit en
+[http://localhost:8025](http://localhost:8025). Las claves temporales vencen
+en 72 horas. La persona debe iniciar sesión con `POST /auth/login` y establecer
+su contraseña desde `POST /auth/change-initial-password`; luego puede usar la
+API normalmente. El correo institucional real requiere un remitente SMTP
+autorizado, todavía pendiente.
 
 ## Perfiles de estudiantes y docentes
 
@@ -359,9 +370,8 @@ como `404` en el detalle. ADMIN puede cambiar `activa` desde
 Altas y cambios se registran en `auditoria` dentro de la misma transacción; un
 PATCH sin cambios no añade un registro de auditoría.
 
-Aplicar la nueva migración explícitamente después de comprobar que
-`DB_SCHEMA=local_demo`, con `npm run migration:run`. No se insertan líneas de
-ejemplo.
+Aplicar las migraciones en `titulacion_dev` mediante `npm run db:prepare-auth`;
+no se insertan líneas de ejemplo.
 
 ## Temas de titulación
 
@@ -408,14 +418,14 @@ publica un tema, abre el período y consulta el catálogo con un estudiante
 habilitado. Para preparar temas antes de abrir, publícalos mientras el período
 sigue en `BORRADOR`. También puedes resolver un condicionado pendiente después
 de abrir el período, antes de la fecha de inicio de titulación. La migración
-se aplica explícitamente con `npm run migration:run` después de confirmar
-`DB_SCHEMA=local_demo`; no se insertan temas de ejemplo.
+se aplica en `titulacion_dev` con `npm run db:prepare-auth`; no se insertan
+temas de ejemplo.
 
 Para probar el flujo desde Swagger, crea una cuenta con rol `ESTUDIANTE`, crea
 su perfil usando `POST /estudiantes`, crea un período con `POST /periodos` y
 registra su habilitación. Usa `admin@example.test` para las operaciones
-administrativas y `estudiante@example.test` para consultar `/me`. Aplica la
-migración explícitamente después de verificar que `DB_SCHEMA=local_demo`.
+administrativas y la cuenta importada para consultar `/me`. Aplica las
+migraciones en `titulacion_dev` con `npm run db:prepare-auth`.
 
 ## Grupos e invitaciones
 
@@ -455,14 +465,10 @@ las acciones de estudiantes solo están disponibles dentro del plazo. Cada
 retiro conserva fecha, motivo e historial. Quien salga podrá crear o integrar
 otro grupo, pero no regresar al mismo.
 
-Para probarlo, prepara las cuatro cuentas con `npm run auth:local:setup`, crea
-explícitamente los perfiles de `estudiante@example.test` y
-`estudiante2@example.test`, habilita a ambos en un período con máximo de al
-menos dos integrantes, abre la postulación y entra en Swagger con el primer
-estudiante. Crea el grupo e invita al segundo; inicia sesión como el segundo,
-consulta sus invitaciones, acepta y verifica `/grupos/me` con ambas cuentas.
-La preparación local solo crea cuentas; no genera perfiles, habilitaciones,
-grupos ni invitaciones.
+Para probarlo, importa dos estudiantes en un período en borrador, abre el plazo,
+inicia sesión con la cuenta del primer estudiante, crea el grupo e invita al
+segundo. Lee su clave temporal en Mailpit, establece la contraseña personal,
+acepta la invitación y verifica `/grupos/me` con ambas cuentas.
 
 La integridad de los estados de grupo y las salidas, transferencias y
 disoluciones se comprueban con `npm run db:verify-grupos` en un esquema
@@ -511,8 +517,8 @@ consulta el resultado desde `/me` en ambas cuentas y
 comprueba `composicion_cerrada: true` en el grupo. Si cancela la solicitud, la
 composición seguirá cerrada, aunque el mismo grupo podrá volver a postular.
 
-La migración se aplica explícitamente con `npm run migration:run` después de
-confirmar que `DB_SCHEMA=local_demo`. `npm run db:verify-postulaciones`
+La migración se aplica en `titulacion_dev` con `npm run db:prepare-auth`.
+`npm run db:verify-postulaciones`
 comprueba la migración, las restricciones, las operaciones concurrentes, la
 integración con grupos/invitaciones y la reversión protegida en un esquema
 temporal aislado; no crea postulaciones en el esquema local.
@@ -531,7 +537,67 @@ Antes de postular, el docente debe tener perfil, cuenta activa con rol `DOCENTE`
 
 Las preferencias no se pueden editar ni borrar y no constituyen asignación. Se consultan en `GET /periodos/:periodoId/postulaciones/:id/tutores-propuestos`. Si una postulación existente quedó sin propuestas, el titular o representante puede completarlas una sola vez mediante `POST /periodos/:periodoId/postulaciones/:id/tutores-propuestos`, durante el plazo y mientras siga `PENDIENTE`. La comprobación de migración, restricciones, concurrencia y reversión protegida se ejecuta con `npm run db:verify-tutores-propuestos` en un esquema aislado.
 
-La migración se aplica explícitamente con `npm run migration:run`, después de confirmar que `DB_SCHEMA=local_demo`. No crea tutores ni postulaciones de ejemplo.
+La migración se aplica en `titulacion_dev` con `npm run db:prepare-auth`. No crea tutores ni postulaciones de ejemplo.
+
+## Cierre de postulaciones y conflictos
+
+Cuando haya vencido `fecha_fin_postulacion`, ADMIN cierra el período mediante
+`POST /periodos/:id/cerrar-postulacion`. El cierre es manual y queda auditado;
+no cambia las postulaciones ni inicia la titulación. Los condicionados todavía
+pendientes pueden resolverse después del cierre y antes del inicio de
+titulación.
+
+ADMIN consulta los temas con competencia en `GET
+/periodos/:periodoId/conflictos` y sus candidaturas en `GET
+/periodos/:periodoId/temas/:temaId/conflicto`. La elegibilidad se calcula con
+los participantes y habilitaciones actuales. Para registrar la decisión de la
+comisión, usa `POST
+/periodos/:periodoId/temas/:temaId/conflicto/resolver` con criterio,
+justificación, puntajes si aplican y todas las postulaciones elegibles. El
+sistema conserva la ganadora y sus participantes hasta que ADMIN formalice la
+asignación.
+
+La migración se aplica en `titulacion_dev` con `npm run db:prepare-auth`.
+`npm run db:verify-conflictos` verifica el cierre, la
+detección con estudiantes condicionados, la resolución, auditoría y
+reversibilidad en un esquema aislado.
+
+Flujo manual: registra dos postulaciones elegibles al mismo tema, espera el
+vencimiento del período, ciérralo desde Swagger, consulta las candidaturas y
+registra la decisión de la comisión. Las rutas solo están disponibles para
+ADMIN.
+
+## Asignación definitiva de temas
+
+Con el período en `POSTULACION_CERRADA`, ADMIN asigna un tema desde la
+postulación con `POST /periodos/:periodoId/postulaciones/:id/asignar-tema` y
+un `motivo`. Si hay una sola candidatura elegible, puede asignarla
+directamente; si existe una competencia registrada, solo puede asignar a la
+ganadora y las candidaturas actuales deben estar cubiertas por esa resolución.
+La operación acepta la postulación ganadora, crea la asignación vigente, cambia
+el tema a `ASIGNADO`, rechaza las demás candidaturas a ese tema y guarda
+historial y auditoría en una transacción.
+
+ADMIN y el docente proponente consultan `GET
+/periodos/:periodoId/asignaciones-tema`; el estudiante consulta sus asignaciones
+actuales e históricas en `GET
+/periodos/:periodoId/asignaciones-tema/me`. El detalle está disponible para
+ADMIN, proponente y participantes. Las respuestas del catálogo de temas
+incluyen `disponible` y `postulaciones_abiertas`.
+
+Si ADMIN resuelve un condicionado como `NO_ADMITIDO`, el sistema anula dentro
+de la misma transacción su asignación individual o la asignación completa del
+grupo, anula la postulación aceptada y devuelve el tema a `PUBLICADO`. Se
+conservan el grupo, sus integrantes, las preferencias de tutor y la decisión de
+conflicto. Después del inicio de titulación, esta resolución tardía requiere
+que el período esté cerrado; `ADMITIDO` debe registrarse antes de esa fecha.
+
+La migración añade la tabla `asignacion_tema` y amplía las transiciones
+protegidas de postulaciones. Confirma `DB_SCHEMA=titulacion_dev`, revisa las
+migraciones pendientes con `npm run migration:show` y aplícalas con
+`npm run migration:run`. No se generan asignaciones de ejemplo.
+`npm run db:verify-asignaciones-tema` comprueba conflictos, asignación
+concurrente, auditoría y anulación por `NO_ADMITIDO` en un esquema temporal.
 
 ## Verificación
 
@@ -543,11 +609,12 @@ npm run build
 npx tsc --noEmit --incremental false
 ```
 
-Las pruebas cubren configuración, validación DTO, autenticación con JWKS local,
-permisos, altas y consultas de usuarios, perfiles, períodos e habilitaciones,
-resolución de condicionados, apertura de período, publicación y visibilidad del
-catálogo, rutas y DTO de grupos/invitaciones, permisos, auditoría, duplicados,
-filtros, paginación, Swagger y compatibilidad de `GET /`.
+Las pruebas cubren configuración, validación DTO, autenticación propia,
+primer acceso, cookies y origen/CSRF, permisos, altas y consultas de usuarios,
+perfiles, períodos e habilitaciones, resolución de condicionados, apertura de
+período, publicación y visibilidad del catálogo, rutas y DTO de
+grupos/invitaciones, permisos, auditoría, duplicados, filtros, paginación,
+Swagger, parser XLSX y compatibilidad de `GET /`.
 
 Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
 variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la

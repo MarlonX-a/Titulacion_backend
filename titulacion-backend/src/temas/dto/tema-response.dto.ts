@@ -14,4 +14,6 @@ export class TemaResponseDto {
   @ApiProperty() max_integrantes: number;
   @ApiProperty({ enum: EstadoTema }) estado: EstadoTema;
   @ApiProperty({ type: String, format: 'date-time' }) creado_en: Date;
+  @ApiProperty({ description: 'True when the topic is PUBLICADO and has no VIGENTE assignment.' }) disponible: boolean;
+  @ApiProperty({ description: 'Current PENDIENTE and EN_CONFLICTO applications.' }) postulaciones_abiertas: number;
 }

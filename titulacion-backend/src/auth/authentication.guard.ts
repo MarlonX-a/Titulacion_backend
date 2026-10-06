@@ -11,6 +11,7 @@ import type { AuthenticatedIdentity } from './authenticated-identity.js';
 import { AuthenticationService } from './authentication.service.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
 import { ALLOW_UNREGISTERED_IDENTITY } from './allow-unregistered-identity.decorator.js';
+import { ALLOW_FIRST_ACCESS } from './allow-first-access.decorator.js';
 import { REQUIRED_ROLES } from '../common/roles.decorator.js';
 import type { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuariosService } from '../usuarios/usuarios.service.js';
@@ -46,7 +47,18 @@ export class AuthenticationGuard implements CanActivate {
       throw new UnauthorizedException('Se requiere un token Bearer válido.');
     }
 
-    request.user = await this.authentication.verify(match[1]);
+    request.user = await this.authentication.verifyToken(match[1]);
+
+    if (request.user.firstAccess) {
+      const canChangeInitialPassword = this.reflector.getAllAndOverride<boolean>(
+        ALLOW_FIRST_ACCESS,
+        [context.getHandler(), context.getClass()],
+      );
+      if (!canChangeInitialPassword) {
+        throw new ForbiddenException('Debes establecer una contraseña personal antes de continuar.');
+      }
+      return true;
+    }
 
     const allowUnregisteredIdentity = this.reflector.getAllAndOverride<boolean>(
       ALLOW_UNREGISTERED_IDENTITY,
@@ -54,9 +66,7 @@ export class AuthenticationGuard implements CanActivate {
     );
     if (allowUnregisteredIdentity) return true;
 
-    const usuario = await this.usuarios.getActiveByExternalId(
-      request.user.subject,
-    );
+    const usuario = await this.usuarios.getActiveById(request.user.subject);
     const requiredRoles = this.reflector.getAllAndOverride<string[]>(
       REQUIRED_ROLES,
       [context.getHandler(), context.getClass()],
