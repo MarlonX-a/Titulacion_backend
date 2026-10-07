@@ -18,6 +18,7 @@ import { ConflictosModule } from './conflictos/conflictos.module.js';
 import { AsignacionesTemaModule } from './asignaciones-tema/asignaciones-tema.module.js';
 import { CorreoModule } from './correo/correo.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
+import { CargaTutorialModule } from './carga-tutorial/carga-tutorial.module.js';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ImportacionesModule } from './importaciones/importaciones.module.js';
     PostulacionesModule,
     ConflictosModule,
     AsignacionesTemaModule,
+    CargaTutorialModule,
     ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
   ],
   controllers: [AppController],

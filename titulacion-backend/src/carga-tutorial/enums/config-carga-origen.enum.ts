@@ -1,0 +1,5 @@
+export enum ConfigCargaOrigen {
+  DOCENTE = 'DOCENTE',
+  GLOBAL = 'GLOBAL',
+  SIN_CONFIGURACION = 'SIN_CONFIGURACION',
+}
