@@ -13,6 +13,7 @@ import { HabilitadoOrigen } from '../habilitados/enums/habilitado-origen.enum.js
 import { LoteImportacion } from '../importaciones/entities/lote-importacion.entity.js';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
@@ -23,6 +24,12 @@ import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateU
 import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
 import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
 import { CreateHabilitados20261002030000 } from './migrations/20261002030000-CreateHabilitados.js';
+import { CreateLineaInvestigacion20261002040000 } from './migrations/20261002040000-CreateLineaInvestigacion.js';
+import { CreateTemas20261002050000 } from './migrations/20261002050000-CreateTemas.js';
+import { CreateGruposInvitaciones20261002060000 } from './migrations/20261002060000-CreateGruposInvitaciones.js';
+import { GroupIntegrityLifecycle20261002070000 } from './migrations/20261002070000-GroupIntegrityLifecycle.js';
+import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
+import { CreateAsignacionesTema20261002110000 } from './migrations/20261002110000-CreateAsignacionesTema.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
 
@@ -63,7 +70,7 @@ async function verify(): Promise<void> {
     ...options,
     schema,
     entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria],
-    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000],
+    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateAsignacionesTema20261002110000],
   });
   await isolatedDataSource.initialize();
   await isolatedDataSource.runMigrations({ transaction: 'all' });
@@ -104,6 +111,7 @@ async function verify(): Promise<void> {
     isolatedDataSource,
     new EstudiantesService(students, isolatedDataSource),
     new AuditoriaService(),
+    new AsignacionTemaPersistenciaService(new AuditoriaService()),
   );
   const conditional = {
     estudiante_id: studentProfiles[0].id,
@@ -164,11 +172,17 @@ async function verify(): Promise<void> {
 
   verificationStep = 'protección de reversión';
   let protectedDown = false;
+  const migrationRunner = isolatedDataSource.createQueryRunner();
+  await migrationRunner.connect();
+  await migrationRunner.startTransaction();
   try {
-    await isolatedDataSource.undoLastMigration();
+    await new CreateHabilitados20261002030000().down(migrationRunner);
   } catch (error: unknown) {
+    await migrationRunner.rollbackTransaction();
     protectedDown = error instanceof Error && error.message.includes('existen habilitaciones, lotes o auditorías');
   }
+  if (migrationRunner.isTransactionActive) await migrationRunner.rollbackTransaction();
+  await migrationRunner.release();
   if (!protectedDown || await isolatedDataSource.getRepository(EstudianteHabilitado).count() !== 2) {
     throw new Error('La reversión no protegió los datos de habilitados.');
   }

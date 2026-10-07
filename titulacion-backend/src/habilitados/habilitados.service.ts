@@ -24,6 +24,7 @@ import { CondicionIngreso } from './enums/condicion-ingreso.enum.js';
 import { HabilitadoEstado } from './enums/habilitado-estado.enum.js';
 import { HabilitadoOrigen } from './enums/habilitado-origen.enum.js';
 import { SituacionIngreso } from './enums/situacion-ingreso.enum.js';
+import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 
 interface PostgresDriverError { code?: string; }
 
@@ -71,6 +72,7 @@ export class HabilitadosService {
     private readonly dataSource: DataSource,
     private readonly estudiantes: EstudiantesService,
     private readonly auditoria: AuditoriaService,
+    private readonly asignaciones: AsignacionTemaPersistenciaService,
   ) {}
 
   /** Comprueba y bloquea una habilitación para una operación de grupo dentro de la transacción actual. */
@@ -211,12 +213,12 @@ export class HabilitadosService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!period) throw new NotFoundException('No existe el período indicado.');
-        if (period.estado !== PeriodoEstado.BORRADOR && period.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
-          throw new ConflictException('Solo se pueden resolver condicionados en períodos BORRADOR o POSTULACION_ABIERTA.');
+        if (period.estado !== PeriodoEstado.BORRADOR && period.estado !== PeriodoEstado.POSTULACION_ABIERTA && period.estado !== PeriodoEstado.POSTULACION_CERRADA) {
+          throw new ConflictException('Solo se pueden resolver condicionados antes de iniciar la titulación.');
         }
-        if (period.estado === PeriodoEstado.POSTULACION_ABIERTA && new Date() >= period.fecha_inicio_titulacion) {
-          throw new ConflictException('El requisito debe resolverse antes del inicio de titulación.');
-        }
+        const now = new Date();
+        const lateNoAdmission = dto.situacion_ingreso === SituacionIngreso.NO_ADMITIDO && period.estado === PeriodoEstado.POSTULACION_CERRADA;
+        if (now >= period.fecha_inicio_titulacion && !lateNoAdmission) throw new ConflictException('ADMITIDO debe registrarse antes del inicio de titulación; NO_ADMITIDO tardío requiere período cerrado.');
         const repository = manager.getRepository(EstudianteHabilitado);
         const locked = await repository.findOne({
           where: { id, periodo: { id: periodoId } },
@@ -242,6 +244,9 @@ export class HabilitadosService {
         record.resuelto_por = actor;
         record.observacion_ingreso = dto.observacion_ingreso?.trim() || null;
         const updated = await repository.save(record);
+        if (updated.situacion_ingreso === SituacionIngreso.NO_ADMITIDO) {
+          await this.asignaciones.anularPorIncumplimiento(manager, periodoId, updated.estudiante.id, actor, updated.observacion_ingreso!, ip);
+        }
         await this.auditoria.registrar(manager, { actor, accion: 'RESOLVER_INGRESO', entidad_tipo: 'estudiante_habilitado', entidad_id: record.id, valores_anteriores: previous, valores_nuevos: {
           situacion_ingreso: updated.situacion_ingreso,
           fecha_resolucion_ingreso: updated.fecha_resolucion_ingreso,

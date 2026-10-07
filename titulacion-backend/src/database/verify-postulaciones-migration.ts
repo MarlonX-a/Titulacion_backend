@@ -3,6 +3,7 @@ import { HttpException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
@@ -27,6 +28,8 @@ import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entit
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
 import { CreateTutoresPropuestos20261002090000 } from './migrations/20261002090000-CreateTutoresPropuestos.js';
+import { CreateAsignacionesTema20261002110000 } from './migrations/20261002110000-CreateAsignacionesTema.js';
+import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { CreateGruposInvitaciones20261002060000 } from './migrations/20261002060000-CreateGruposInvitaciones.js';
 import { GroupIntegrityLifecycle20261002070000 } from './migrations/20261002070000-GroupIntegrityLifecycle.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
@@ -75,7 +78,7 @@ async function verify(): Promise<void> {
   await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`);
   createdSchema = true;
-  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, Grupo, GrupoIntegrante, Invitacion, Postulacion, TutorPropuesto], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000] });
+  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, Grupo, GrupoIntegrante, Invitacion, Postulacion, TutorPropuesto, AsignacionTema], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateAsignacionesTema20261002110000] });
   await isolated.initialize();
   await isolated.runMigrations({ transaction: 'all' });
 
@@ -109,7 +112,8 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
-  const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit);
+  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit);
+  const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence);
   const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit);
   const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);
   const persistence = new PostulacionPersistenciaService();
@@ -117,7 +121,7 @@ async function verify(): Promise<void> {
   const groups = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), studentRepo, isolated, habilitados, audit, persistence);
   const groupManagement = new GrupoGestionService(isolated, groups, habilitados, audit, invitePersistence, persistence);
   const invitations = new InvitacionesService(isolated.getRepository(Invitacion), studentRepo, isolated, groups, habilitados, audit, persistence);
-  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores);
+  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence);
 
   step = 'postulación antigua sin preferencias y carga única';
   await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" DISABLE TRIGGER "TRG_postulacion_requiere_tutores"`);

@@ -1,0 +1,9 @@
+export enum PreparacionImportacionEstado {
+  VALIDANDO = 'VALIDANDO',
+  LISTA = 'LISTA',
+  INVALIDA = 'INVALIDA',
+  EN_COLA = 'EN_COLA',
+  PROCESANDO = 'PROCESANDO',
+  COMPLETADA = 'COMPLETADA',
+  FALLIDA = 'FALLIDA',
+}

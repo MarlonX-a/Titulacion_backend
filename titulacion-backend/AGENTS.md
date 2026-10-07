@@ -52,8 +52,9 @@ Backend:
 - PostgreSQL
 - ORM definido por el proyecto
 - JWT
-- autenticación institucional OIDC / LDAP
-- JWKS para validación de tokens
+- autenticación propia por correo y contraseña, con JWT RS256
+- renovación segura de sesiones
+- Microsoft/OIDC institucional no está disponible para este proyecto
 - BullMQ
 - Redis
 - almacenamiento S3 / MinIO
@@ -218,6 +219,23 @@ Roles válidos:
 - ADMIN
 
 ADMIN es un rol dentro de usuario.
+
+La autenticación vigente usa correo y contraseña propios del sistema. No hay
+registro público ni login demo compartido. Los estudiantes solo pueden usar
+`@live.uleam.edu.ec`; DOCENTE y ADMIN pueden usar `@uleam.edu.ec` o
+`@live.uleam.edu.ec`. Las contraseñas se almacenan con Argon2id. Las claves
+temporales permiten únicamente establecer una contraseña personal y no se
+registran en auditoría, API o logs. Los tokens RS256 duran 15 minutos; las
+sesiones tienen un máximo absoluto de ocho horas y refresh tokens rotativos
+protegidos con cookie HttpOnly, origen y CSRF. Un cambio de contraseña revoca
+las sesiones vigentes.
+
+Las cuentas se crean por ADMIN o por importación confirmada de Excel. La
+importación solo se admite con un período BORRADOR; validar genera vista previa
+y confirmar vuelve a comprobar los datos dentro de la transacción que crea
+usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso.
+El esquema nuevo de desarrollo es `titulacion_dev`; preservar el esquema
+histórico `local_demo` sin cambios.
 
 ---
 
@@ -613,11 +631,9 @@ process()
 
 # 14. Autenticación y autorización
 
-El diseño contempla autenticación institucional mediante OIDC / LDAP.
-
-La API trabaja con JWT y validación mediante JWKS.
-
-No implementar un sistema paralelo de usuarios/password local salvo que sea solicitado explícitamente.
+La decisión aprobada reemplaza el diseño inicial OIDC/JWKS: se utiliza
+correo/contraseña propia con JWT RS256 y claves persistentes. No reintroducir
+proveedor externo ni modo local de demostración sin nueva autorización.
 
 Aplicar autorización por roles:
 
@@ -899,14 +915,16 @@ Ejemplos:
 DATABASE_URL
 REDIS_HOST
 REDIS_PORT
-OIDC_ISSUER
-OIDC_CLIENT_ID
-JWKS_URI
+JWT_PRIVATE_KEY_PATH
+JWT_PUBLIC_KEY_PATH
+AUTH_ISSUER
+AUTH_ORIGINS
 S3_ENDPOINT
 S3_BUCKET
 S3_ACCESS_KEY
 S3_SECRET_KEY
 SMTP_HOST
+OUTBOX_ENCRYPTION_KEY_PATH
 
 Mantener un `.env.example` sin secretos reales.
 

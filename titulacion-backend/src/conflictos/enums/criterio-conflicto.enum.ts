@@ -1,0 +1,6 @@
+export enum CriterioConflicto {
+  ORDEN_LLEGADA = 'ORDEN_LLEGADA',
+  PROMEDIO = 'PROMEDIO',
+  SORTEO = 'SORTEO',
+  DECISION_COMISION = 'DECISION_COMISION',
+}

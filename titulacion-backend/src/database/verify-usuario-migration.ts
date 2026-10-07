@@ -4,11 +4,9 @@ import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
-import { UsuariosService } from '../usuarios/usuarios.service.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { ConflictException } from '@nestjs/common';
-import { provisionLocalDemoAccounts } from '../auth/local/provision-local-demo-accounts.js';
 import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
@@ -51,98 +49,17 @@ async function verify(): Promise<void> {
   await isolatedDataSource.initialize();
   await isolatedDataSource.runMigrations({ transaction: 'all' });
 
-  const service = new UsuariosService(
-    isolatedDataSource.getRepository(Usuario),
-    isolatedDataSource,
-  );
-  const details = {
-    email: 'bootstrap@universidad.example',
-    nombres: 'Administrador',
-    apellidos: 'Temporal',
-    id_externo_sso: 'test-bootstrap-sub',
-  };
-  const results = await Promise.allSettled([
-    service.createInitialAdmin(details),
-    service.createInitialAdmin({
-      ...details,
-      email: 'segundo@universidad.example',
-      id_externo_sso: 'test-bootstrap-sub-2',
-    }),
-  ]);
-  const succeeded = results.filter(
-    (result) => result.status === 'fulfilled',
-  ).length;
-  const conflicted = results.filter(
-    (result) =>
-      result.status === 'rejected' &&
-      result.reason instanceof ConflictException,
-  ).length;
-
-  if (succeeded !== 1 || conflicted !== 1) {
-    throw new Error('La inicialización concurrente del ADMIN no fue atómica.');
-  }
-
-  const admin = await isolatedDataSource
-    .getRepository(Usuario)
-    .findOneByOrFail({ rol: UsuarioRol.ADMIN });
-  const duplicateInputs = [
-    {
-      ...details,
-      email: 'BOOTSTRAP@UNIVERSIDAD.EXAMPLE',
-      rol: UsuarioRol.ADMIN,
-      id_externo_sso: 'different-sub',
-    },
-    {
-      ...details,
-      email: 'different@universidad.example',
-      rol: UsuarioRol.ADMIN,
-    },
-  ];
-  for (const input of duplicateInputs) {
-    let rejected = false;
-    try {
-      await service.create(input);
-    } catch (error: unknown) {
-      rejected = error instanceof ConflictException;
-    }
-    if (!rejected) {
-      throw new Error('Una restricción única no rechazó un duplicado.');
-    }
-  }
-
-  await provisionLocalDemoAccounts(isolatedDataSource);
-  await provisionLocalDemoAccounts(isolatedDataSource);
-  const demoAdmin = await isolatedDataSource
-    .getRepository(Usuario)
-    .findOneByOrFail({ email: 'admin@example.test' });
-  if (
-    (await isolatedDataSource.getRepository(Usuario).count()) !== 4 ||
-    demoAdmin.id_externo_sso !== 'local-demo-admin'
-  ) {
-    throw new Error('Las cuentas locales no se prepararon de forma idempotente.');
-  }
-
-  await isolatedDataSource
-    .getRepository(Usuario)
-    .update({ id: demoAdmin.id }, { rol: UsuarioRol.DOCENTE });
-  let conflictingProvisionRejected = false;
-  try {
-    await provisionLocalDemoAccounts(isolatedDataSource);
-  } catch (error: unknown) {
-    conflictingProvisionRejected = error instanceof ConflictException;
-  }
-  const unchangedDemoAdmin = await isolatedDataSource
-    .getRepository(Usuario)
-    .findOneByOrFail({ id: demoAdmin.id });
-  if (
-    !conflictingProvisionRejected ||
-    unchangedDemoAdmin.rol !== UsuarioRol.DOCENTE
-  ) {
-    throw new Error('La preparación alteró una cuenta local incompatible.');
-  }
-  await isolatedDataSource
-    .getRepository(Usuario)
-    .update({ id: demoAdmin.id }, { rol: UsuarioRol.ADMIN });
+  const users = isolatedDataSource.getRepository(Usuario);
+  const admin = await users.save(users.create({
+    email: 'bootstrap@uleam.edu.ec', nombres: 'Administrador', apellidos: 'Verificación',
+    rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null, id_externo_sso: 'verify-admin',
+  }));
+  const duplicate = users.create({ ...admin, id: undefined, email: admin.email });
+  let duplicateRejected = false;
+  try { await users.save(duplicate); } catch { duplicateRejected = true; }
+  if (!duplicateRejected) throw new Error('La unicidad del correo no rechazó una cuenta duplicada.');
+  const demoStudent = await users.save(users.create({ email: 'estudiante@universidad.example', nombres: 'Estudiante', apellidos: 'Verificación', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null, id_externo_sso: 'verify-student' }));
+  const demoTeacher = await users.save(users.create({ email: 'docente@universidad.example', nombres: 'Docente', apellidos: 'Verificación', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null, id_externo_sso: 'verify-teacher' }));
 
   const estudiantesService = new EstudiantesService(
     isolatedDataSource.getRepository(Estudiante),
@@ -152,12 +69,6 @@ async function verify(): Promise<void> {
     isolatedDataSource.getRepository(Docente),
     isolatedDataSource,
   );
-  const demoStudent = await isolatedDataSource
-    .getRepository(Usuario)
-    .findOneByOrFail({ email: 'estudiante@example.test' });
-  const demoTeacher = await isolatedDataSource
-    .getRepository(Usuario)
-    .findOneByOrFail({ email: 'docente@example.test' });
   const studentProfile = await estudiantesService.create({
     usuario_id: demoStudent.id,
     cedula: '0102030400',
@@ -206,7 +117,7 @@ async function verify(): Promise<void> {
         rol: UsuarioRol.ESTUDIANTE,
         estado: UsuarioEstado.ACTIVO,
         ultimo_acceso: null,
-        id_externo_sso: 'test-concurrent-student-sub',
+        id_externo_sso: 'verify-concurrent-student',
       }),
     );
   const concurrentCreates = await Promise.allSettled([

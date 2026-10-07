@@ -14,6 +14,10 @@ import { TemasModule } from './temas/temas.module.js';
 import { GruposModule } from './grupos/grupos.module.js';
 import { InvitacionesModule } from './invitaciones/invitaciones.module.js';
 import { PostulacionesModule } from './postulaciones/postulaciones.module.js';
+import { ConflictosModule } from './conflictos/conflictos.module.js';
+import { AsignacionesTemaModule } from './asignaciones-tema/asignaciones-tema.module.js';
+import { CorreoModule } from './correo/correo.module.js';
+import { ImportacionesModule } from './importaciones/importaciones.module.js';
 
 @Module({
   imports: [
@@ -33,6 +37,9 @@ import { PostulacionesModule } from './postulaciones/postulaciones.module.js';
     GruposModule,
     InvitacionesModule,
     PostulacionesModule,
+    ConflictosModule,
+    AsignacionesTemaModule,
+    ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
   ],
   controllers: [AppController],
   providers: [AppService],

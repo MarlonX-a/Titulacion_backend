@@ -7,12 +7,14 @@ import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entit
 import { EstudianteHabilitado } from './entities/estudiante-habilitado.entity.js';
 import { HabilitadosController } from './habilitados.controller.js';
 import { HabilitadosService } from './habilitados.service.js';
+import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacion-tema-persistencia.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([EstudianteHabilitado, PeriodoTitulacion, Auditoria]),
     EstudiantesModule,
     AuditoriaModule,
+    AsignacionTemaPersistenciaModule,
   ],
   controllers: [HabilitadosController],
   providers: [HabilitadosService],

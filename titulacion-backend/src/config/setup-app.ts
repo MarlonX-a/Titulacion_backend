@@ -29,12 +29,10 @@ export function configureApplication(app: INestApplication): void {
       .build();
 
     const document = SwaggerModule.createDocument(app, options);
-    if (config.get('AUTH_MODE', { infer: true }) !== 'local') {
-      delete document.paths['/auth/local/login'];
-    }
     SwaggerModule.setup('docs', app, document, {
       jsonDocumentUrl: '/docs-json',
       raw: ['json'],
+      swaggerOptions: { withCredentials: true },
     });
   }
 }
