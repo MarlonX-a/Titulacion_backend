@@ -16,6 +16,8 @@ export class AuthRateLimiterService implements OnModuleDestroy {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
+      connectTimeout: 5_000,
+      retryStrategy: (attempt: number) => Math.min(500 * 2 ** Math.min(attempt - 1, 6), 30_000),
     });
     this.redis.on('error', () => undefined);
   }
