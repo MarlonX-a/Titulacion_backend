@@ -3,7 +3,6 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import type { Job } from 'bullmq';
-import nodemailer from 'nodemailer';
 import { verify } from 'argon2';
 import { IsNull } from 'typeorm';
 import { DataSource } from 'typeorm';
@@ -12,6 +11,11 @@ import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
 import { SolicitudRecuperacion } from '../auth/entities/solicitud-recuperacion.entity.js';
 import { readEncryptionKey, tokenDigest } from '../auth/credentials.js';
+import { EntregaCorreoEstado } from '../notificaciones/enums/entrega-correo-estado.enum.js';
+import { SmtpTransportService } from './smtp-transport.service.js';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+
+interface ClaimedDelivery { notificacion_id: string; usuario_id: string; email: string; titulo: string; mensaje: string; }
 
 @Injectable()
 @Processor('correo')
@@ -21,6 +25,7 @@ export class CorreoWorker extends WorkerHost {
   constructor(
     private readonly dataSource: DataSource,
     config: ConfigService<AppEnvironment, true>,
+    private readonly smtp: SmtpTransportService,
   ) {
     super();
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
@@ -28,6 +33,7 @@ export class CorreoWorker extends WorkerHost {
   }
 
   async process(job: Job<{ id: string }>): Promise<void> {
+    if (job.name === 'enviar-notificacion') return this.sendNotification(job.data.id);
     const repo = this.dataSource.getRepository(CorreoSalida);
     const message = await repo.findOne({ where: { id: job.data.id }, relations: { usuario: true } });
     if (!message || message.enviado_en || message.expira_en <= new Date()) return;
@@ -38,19 +44,9 @@ export class CorreoWorker extends WorkerHost {
       await repo.save(message);
       return;
     }
-    const host = process.env.SMTP_HOST;
-    const sender = process.env.SMTP_FROM;
-    if (!host || !sender) throw new ServiceUnavailableException('El envío de correo aún no está configurado.');
     const secret = this.decrypt(message);
-    const transport = nodemailer.createTransport({
-      host,
-      port: Number(process.env.SMTP_PORT ?? 1025),
-      secure: process.env.NODE_ENV === 'production' && Number(process.env.SMTP_PORT) === 465,
-      ...(process.env.SMTP_USERNAME ? { auth: { user: process.env.SMTP_USERNAME, pass: process.env.SMTP_PASSWORD ?? '' } } : {}),
-    });
     try {
-      await transport.sendMail({
-        from: sender,
+      await this.smtp.send({
         to: message.usuario.email,
         subject: message.tipo === 'ACCESO' ? 'Acceso al Sistema de Titulación' : 'Recuperación de contraseña',
         text: message.tipo === 'ACCESO'
@@ -66,9 +62,46 @@ export class CorreoWorker extends WorkerHost {
       message.intentos += 1;
       await repo.save(message).catch(() => undefined);
       throw error;
-    } finally {
-      transport.close();
     }
+  }
+
+  private async sendNotification(id: string): Promise<void> {
+    const s = this.schema();
+    const result: unknown = await this.dataSource.query(`
+      UPDATE ${s}."entrega_correo_notificacion" e SET "estado"='PROCESANDO', "intentos"=e."intentos"+1,
+        "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes', "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"=NULL
+      FROM ${s}."notificacion" n JOIN ${s}."usuario" u ON u."id"=n."usuario_id"
+      WHERE e."id"=$1 AND e."notificacion_id"=n."id" AND n."canal"='EMAIL' AND u."estado"='ACTIVO'
+        AND (e."estado"='PENDIENTE' OR (e."estado"='PROCESANDO' AND e."reserva_hasta" <= CURRENT_TIMESTAMP))
+      RETURNING n."id" AS notificacion_id, n."usuario_id", u."email", n."titulo", n."mensaje", e."intentos"`, [id]);
+    const rows = this.queryRows<ClaimedDelivery>(result);
+    if (!rows.length) {
+      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" e SET "estado"='OMITIDO', "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE e."id"=$1 AND e."estado" IN ('PENDIENTE','PROCESANDO') AND NOT EXISTS (SELECT 1 FROM ${s}."notificacion" n JOIN ${s}."usuario" u ON u."id"=n."usuario_id" WHERE n."id"=e."notificacion_id" AND u."estado"='ACTIVO')`, [id]);
+      return;
+    }
+    const delivery = rows[0]!;
+    try {
+      await this.smtp.send({ to: delivery.email, subject: delivery.titulo, text: `${delivery.mensaje}\n\nConsulta los detalles ingresando al Sistema de Titulación.` });
+      await this.dataSource.transaction(async (manager) => {
+        await manager.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='ENVIADO', "enviada_en"=CURRENT_TIMESTAMP, "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "estado"='PROCESANDO'`, [id]);
+        await manager.query(`UPDATE ${s}."notificacion" SET "fecha_envio"=CURRENT_TIMESTAMP WHERE "id"=$1`, [delivery.notificacion_id]);
+      });
+    } catch {
+      const state = Number((delivery as ClaimedDelivery & { intentos: number }).intentos) >= 5 ? EntregaCorreoEstado.FALLIDO : EntregaCorreoEstado.PENDIENTE;
+      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"=$2, "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"='No fue posible entregar el correo.' WHERE "id"=$1 AND "estado"='PROCESANDO'`, [id, state]);
+      throw new ServiceUnavailableException('No fue posible entregar el correo de notificación.');
+    }
+  }
+
+  private schema(): string {
+    const schema = (this.dataSource.options as PostgresConnectionOptions).schema ?? 'public';
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(schema)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
+    return `"${schema}"`;
+  }
+
+  private queryRows<T>(result: unknown): T[] {
+    if (!Array.isArray(result)) return [];
+    return (Array.isArray(result[0]) ? result[0] : result) as T[];
   }
 
   private async isCurrent(message: CorreoSalida): Promise<boolean> {

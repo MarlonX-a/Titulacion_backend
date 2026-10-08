@@ -19,6 +19,7 @@ import { DocumentoPatFormato } from './enums/documento-pat-formato.enum.js';
 import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { RevisionPatResponseDto } from '../revisiones-pat/dto/revision-pat-response.dto.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 
 interface AssignmentContext {
   periodo_id: string; periodo_estado: string; asignacion_estado: string;
@@ -35,6 +36,7 @@ export class DocumentosPatService {
     private readonly storage: AlmacenamientoService,
     private readonly cleanup: ArchivoLimpiezaService,
     private readonly audit: AuditoriaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async cargar(periodoId: string, asignacionId: string, dto: CargarDocumentoPatDto, file: Express.Multer.File | undefined, actor: Usuario, ip: string | null): Promise<DocumentoPatResponseDto> {
@@ -85,6 +87,7 @@ export class DocumentosPatService {
           cargado_por: actor,
           fecha_carga: new Date(),
         }));
+        await this.notificaciones.registrarEventoPat(manager, { tipo: 'PAT_ENTREGADO', entidadTipo: 'documento_pat', entidadId: created.id, documentoId: created.id, asignacionId, actorId: actor.id });
         await this.audit.registrar(manager, {
           actor, accion: 'CARGAR_DOCUMENTO_PAT', entidad_tipo: 'documento_pat', entidad_id: created.id,
           valores_anteriores: null,

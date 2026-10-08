@@ -1,0 +1,7 @@
+export enum EntregaCorreoEstado {
+  PENDIENTE = 'PENDIENTE',
+  PROCESANDO = 'PROCESANDO',
+  ENVIADO = 'ENVIADO',
+  FALLIDO = 'FALLIDO',
+  OMITIDO = 'OMITIDO',
+}

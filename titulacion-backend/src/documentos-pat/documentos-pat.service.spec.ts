@@ -10,6 +10,7 @@ import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { PlantillaPat } from '../plantillas-pat/entities/plantilla-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 
 describe('DocumentosPatService', () => {
   function setup(options: { owner?: string; activeTemplate?: boolean; group?: boolean; currentTutor?: boolean; latestReview?: RevisionPatResultado | null } = {}) {
@@ -56,19 +57,21 @@ describe('DocumentosPatService', () => {
     const cleanup = { registrar: vi.fn().mockResolvedValue(undefined), solicitar: vi.fn().mockResolvedValue(undefined) } as unknown as ArchivoLimpiezaService;
     const audit = { registrar: vi.fn().mockResolvedValue(undefined) } as unknown as AuditoriaService;
     const actor = { id: 'user-id', rol: UsuarioRol.ESTUDIANTE } as Usuario;
-    const service = new DocumentosPatService(docRepository as unknown as Repository<DocumentoPat>, dataSource, storage, cleanup, audit);
-    return { service, actor, storage, cleanup, audit, manager, docRepository, pendingRepo, setLatestReview: (value: RevisionPatResultado | null) => { latestReview = value; } };
+    const notifications = { registrarEventoPat: vi.fn().mockResolvedValue(undefined) } as unknown as NotificacionesPersistenciaService;
+    const service = new DocumentosPatService(docRepository as unknown as Repository<DocumentoPat>, dataSource, storage, cleanup, audit, notifications);
+    return { service, actor, storage, cleanup, audit, manager, docRepository, pendingRepo, notifications, setLatestReview: (value: RevisionPatResultado | null) => { latestReview = value; } };
   }
 
   const pdf = { originalname: 'entrega.pdf', mimetype: 'application/pdf', size: 14, buffer: Buffer.from('%PDF-1.7\n%%EOF') } as Express.Multer.File;
 
   it('guarda una versión con hash, auditoría y consumo atómico de la intención de carga', async () => {
-    const { service, actor, storage, cleanup, audit, docRepository, pendingRepo, setLatestReview } = setup();
+    const { service, actor, storage, cleanup, audit, docRepository, pendingRepo, notifications, setLatestReview } = setup();
     const result = await service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, '127.0.0.1');
     expect(result).toMatchObject({ id: 'doc-id', version: 1, formato: DocumentoPatFormato.PDF, revision: 'PENDIENTE' });
     expect(result.hash_sha256).toBeDefined();
     expect(storage.saveAtPrivateKey).toHaveBeenCalledWith('documentos-pat/file.pdf', pdf.buffer, 'application/pdf');
     expect(audit.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'CARGAR_DOCUMENTO_PAT', entidad_tipo: 'documento_pat' }));
+    expect(notifications.registrarEventoPat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ tipo: 'PAT_ENTREGADO', actorId: actor.id, entidadTipo: 'documento_pat' }));
     expect(pendingRepo.delete).toHaveBeenCalledWith({ ruta_almacenamiento: 'documentos-pat/file.pdf' });
     expect(cleanup.solicitar).not.toHaveBeenCalled();
     expect(docRepository.save).toHaveBeenCalledWith(expect.objectContaining({ version: 1 }));

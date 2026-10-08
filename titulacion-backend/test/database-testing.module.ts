@@ -32,6 +32,8 @@ import { PlantillaPat } from '../src/plantillas-pat/entities/plantilla-pat.entit
 import { DocumentoPat } from '../src/documentos-pat/entities/documento-pat.entity.js';
 import { ArchivoPendiente } from '../src/almacenamiento/entities/archivo-pendiente.entity.js';
 import { RevisionPat } from '../src/revisiones-pat/entities/revision-pat.entity.js';
+import { Notificacion } from '../src/notificaciones/entities/notificacion.entity.js';
+import { EntregaCorreoNotificacion } from '../src/notificaciones/entities/entrega-correo-notificacion.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -51,6 +53,7 @@ const invitacionRecords: Invitacion[] = [];
 const tutorPropuestoRecords: TutorPropuesto[] = [];
 const credencialRecords: CredencialUsuario[] = [];
 const correoRecords: CorreoSalida[] = [];
+const notificacionRecords: Notificacion[] = [];
 const assignmentTemaTestRepository = { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, findOneByOrFail: async () => { throw new Error('No existe una asignación en el repositorio de prueba.'); }, findOne: async () => null, find: async () => [], findAndCount: async () => [[], 0] as const, exist: async () => false, update: async () => ({ affected: 0 }), createQueryBuilder: () => ({ leftJoinAndSelect() { return this; }, where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, addOrderBy() { return this; }, skip() { return this; }, take() { return this; }, getManyAndCount: async () => [[], 0] as const }) };
 let transactionQueue: Promise<void> = Promise.resolve();
 
@@ -397,6 +400,26 @@ const correoTestRepository = {
   create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,
   save: async (value: CorreoSalida) => { const stored = { ...value, id: value.id ?? randomUUID(), creada_en: value.creada_en ?? new Date() }; correoRecords.push(stored); return stored; },
 };
+const notificacionTestRepository = {
+  create: (value: Partial<Notificacion>) => ({ ...value }) as Notificacion,
+  save: async (value: Notificacion) => { const stored = { ...value, id: value.id ?? randomUUID() }; notificacionRecords.push(stored); return stored; },
+  findAndCount: async (options: { where: Partial<Notificacion>; skip: number; take: number }) => {
+    const matched = notificacionRecords.filter((row) => Object.entries(options.where).every(([key, value]) => row[key as keyof Notificacion] === value));
+    matched.sort((a, b) => b.fecha_creacion.getTime() - a.fecha_creacion.getTime() || a.id.localeCompare(b.id));
+    return [matched.slice(options.skip, options.skip + options.take), matched.length] as const;
+  },
+  count: async (options: { where: Partial<Notificacion> }) => notificacionRecords.filter((row) => Object.entries(options.where).every(([key, value]) => row[key as keyof Notificacion] === value)).length,
+  findOneBy: async (where: Partial<Notificacion>) => notificacionRecords.find((row) => Object.entries(where).every(([key, value]) => row[key as keyof Notificacion] === value)) ?? null,
+  update: async (where: Partial<Notificacion>, values: Partial<Notificacion>) => {
+    const item = notificacionRecords.find((row) => Object.entries(where).every(([key, value]) => row[key as keyof Notificacion] === value));
+    if (item) Object.assign(item, values);
+    return { affected: item ? 1 : 0 };
+  },
+};
+const deliveryNotificationTestRepository = {
+  create: (value: unknown) => value, save: async (value: unknown) => value, find: async () => [], findAndCount: async () => [[], 0] as const,
+  createQueryBuilder: () => ({ innerJoinAndSelect() { return this; }, select() { return this; }, orderBy() { return this; }, addOrderBy() { return this; }, skip() { return this; }, take() { return this; }, andWhere() { return this; }, getManyAndCount: async () => [[], 0] as const }),
+};
 const configCargaTutorialTestRepository = emptyRepository<ConfigCargaTutorial>();
 const asignacionTutorTestRepository = emptyRepository<AsignacionTutor>();
 const plantillaPatTestRepository = emptyRepository<PlantillaPat>();
@@ -454,6 +477,8 @@ export const usuarioTestDataSource = {
     { target: DocumentoPat },
     { target: ArchivoPendiente },
     { target: RevisionPat },
+    { target: Notificacion },
+    { target: EntregaCorreoNotificacion },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -480,6 +505,8 @@ export const usuarioTestDataSource = {
     if (entity === DocumentoPat) return documentoPatTestRepository;
     if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
     if (entity === RevisionPat) return { create: (value: unknown) => value, save: async (value: unknown) => value, exist: async () => false, findOne: async () => null };
+    if (entity === Notificacion) return notificacionTestRepository;
+    if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -519,6 +546,8 @@ export const usuarioTestDataSource = {
           if (entity === PlantillaPat) return plantillaPatTestRepository;
           if (entity === DocumentoPat) return documentoPatTestRepository;
           if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
+          if (entity === Notificacion) return notificacionTestRepository;
+          if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
@@ -541,6 +570,7 @@ export function clearUsuarioTestRecords(): void {
   tutorPropuestoRecords.length = 0;
   credencialRecords.length = 0;
   correoRecords.length = 0;
+  notificacionRecords.length = 0;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {

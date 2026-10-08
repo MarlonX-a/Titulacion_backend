@@ -18,6 +18,10 @@ import { CreatePlantillasPat20261009100000 } from './migrations/20261009100000-C
 import { CreateDocumentosPat20261010100000 } from './migrations/20261010100000-CreateDocumentosPat.js';
 import { AlignDocumentosPatLockOrder20261011100000 } from './migrations/20261011100000-AlignDocumentosPatLockOrder.js';
 import { CreateRevisionesPat20261012100000 } from './migrations/20261012100000-CreateRevisionesPat.js';
+import { CreateNotificaciones20261013100000 } from './migrations/20261013100000-CreateNotificaciones.js';
+import { EnforceNotificationEmailDelivery20261014100000 } from './migrations/20261014100000-EnforceNotificationEmailDelivery.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { Notificacion } from '../notificaciones/entities/notificacion.entity.js';
 import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { RevisionesPatService } from '../revisiones-pat/revisiones-pat.service.js';
@@ -212,9 +216,23 @@ async function verify(): Promise<void> {
   try { await revisionMigration.up(revisionRunner); await revisionRunner.commitTransaction(); }
   catch (error: unknown) { if (revisionRunner.isTransactionActive) await revisionRunner.rollbackTransaction(); throw error; }
   finally { await revisionRunner.release(); }
-  const documentsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, { signPrivateDownload: async () => '' } as unknown as AlmacenamientoService, {} as never, new AuditoriaService());
-  const reviewsService = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, new AuditoriaService());
+  const notificationMigration = new CreateNotificaciones20261013100000();
+  const notificationRunner = isolated.createQueryRunner(); await notificationRunner.connect(); await notificationRunner.startTransaction();
+  try { await notificationMigration.up(notificationRunner); await notificationRunner.commitTransaction(); }
+  catch (error: unknown) { if (notificationRunner.isTransactionActive) await notificationRunner.rollbackTransaction(); throw error; }
+  finally { await notificationRunner.release(); }
+  const notificationIntegrityMigration = new EnforceNotificationEmailDelivery20261014100000();
+  const notificationIntegrityRunner = isolated.createQueryRunner(); await notificationIntegrityRunner.connect(); await notificationIntegrityRunner.startTransaction();
+  try { await notificationIntegrityMigration.up(notificationIntegrityRunner); await notificationIntegrityRunner.commitTransaction(); }
+  catch (error: unknown) { if (notificationIntegrityRunner.isTransactionActive) await notificationIntegrityRunner.rollbackTransaction(); throw error; }
+  finally { await notificationIntegrityRunner.release(); }
+  const notificationPersistence = new NotificacionesPersistenciaService(isolated!);
+  const documentsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, { signPrivateDownload: async () => '' } as unknown as AlmacenamientoService, {} as never, new AuditoriaService(), notificationPersistence);
+  const reviewsService = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, new AuditoriaService(), notificationPersistence);
   const historicalApproval = await reviewsService.crear(period.id, directAssignment.id, firstDocument.id, { resultado: RevisionPatResultado.APROBADO }, adminUser, null);
+  const studentNotifications = await isolated.query(`SELECT "canal"::text AS canal FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "tipo"='PAT_REVISADO' AND "entidad_tipo"='revision_pat' AND "entidad_id"=$2 ORDER BY "canal"`, [students[2]!.usuario.id, historicalApproval.id]) as Array<{ canal: string }>;
+  const reviewerNotifications = await isolated.query(`SELECT count(*)::int AS total FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "entidad_tipo"='revision_pat' AND "entidad_id"=$2`, [adminUser.id, historicalApproval.id]) as Array<{ total: number }>;
+  if (studentNotifications.map((row) => row.canal).join(',') !== 'EMAIL,EN_APP' || Number(reviewerNotifications[0]?.total ?? 0) !== 0) throw new Error('La revisión PAT no notificó al titular por ambos canales o incluyó al ADMIN que la registró.');
   const latestStillPending = await isolated.query(`SELECT r."resultado"::text AS resultado FROM ${schemaSql()}."documento_pat" d LEFT JOIN ${schemaSql()}."revision_pat" r ON r."documento_pat_id"=d."id" WHERE d."asignacion_tema_id"=$1 ORDER BY d."version" DESC LIMIT 1`, [directAssignment.id]) as Array<{ resultado: string | null }>;
   if (historicalApproval.resultado !== RevisionPatResultado.APROBADO || latestStillPending[0]?.resultado !== null) throw new Error('Revisar una versión histórica alteró la situación de la última versión.');
   const pendingCorrectionRejected = await addDocument(3, 'documentos-pat/pending-review-rejected.pdf').then(() => false, (error: unknown) => code(error) === '23514');
@@ -251,9 +269,10 @@ async function verify(): Promise<void> {
   const rollbackDocument = await addDocument(1, 'documentos-pat/revision-audit-rollback.pdf', template.id, groupAssignment.id);
   const groupHistoryStillPending = await isolated.getRepository(DocumentoPat).countBy({ asignacion_tema_id: groupAssignment.id });
   if (groupHistoryStillPending !== 1) throw new Error('No se preparó una versión independiente para comprobar rollback de auditoría.');
-  const failedAuditReviews = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, { registrar: async () => { throw new Error('fallo de auditoría provocado'); } } as unknown as AuditoriaService);
+  const failedAuditReviews = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, { registrar: async () => { throw new Error('fallo de auditoría provocado'); } } as unknown as AuditoriaService, notificationPersistence);
+  const notificationsBeforeRollback = await isolated.getRepository(Notificacion).countBy({ entidad_tipo: 'revision_pat' });
   const auditRollback = await failedAuditReviews.crear(period.id, groupAssignment.id, rollbackDocument.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Prueba de rollback.' }, adminUser, null).then(() => false, () => true);
-  if (!auditRollback || await isolated.getRepository(RevisionPat).countBy({ documento_pat_id: rollbackDocument.id }) !== 0) throw new Error('La revisión quedó guardada aunque falló su auditoría.');
+  if (!auditRollback || await isolated.getRepository(RevisionPat).countBy({ documento_pat_id: rollbackDocument.id }) !== 0 || await isolated.getRepository(Notificacion).countBy({ entidad_tipo: 'revision_pat' }) !== notificationsBeforeRollback) throw new Error('La revisión o sus notificaciones quedaron guardadas aunque falló su auditoría.');
   await reviewsService.crear(period.id, groupAssignment.id, rollbackDocument.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Prueba de auditoría recuperada.' }, adminUser, null);
   const documentImmutable = await isolated.query(`UPDATE ${schemaSql()}."documento_pat" SET "version"=3 WHERE "id"=$1`, [firstDocument.id]).then(() => false, (error: unknown) => code(error) === '23514');
   const documentDeleteBlocked = await isolated.query(`DELETE FROM ${schemaSql()}."documento_pat" WHERE "id"=$1`, [firstDocument.id]).then(() => false, (error: unknown) => code(error) === '23514');
@@ -297,13 +316,18 @@ async function verify(): Promise<void> {
     const published = await plantillaService.publicar(period.id, { version: 'S3-INTEGRADA' }, { originalname: 'plantilla-integrada.pdf', mimetype: 'application/pdf', size: pdfBuffer.length, buffer: pdfBuffer } as Express.Multer.File, adminUser, null);
     const templateObject = await isolated.getRepository(PlantillaPat).findOneByOrFail({ id: published.id });
     objectKeys.push(templateObject.ruta_almacenamiento);
-    const docsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, storage, cleanup as never, new AuditoriaService());
+    const docsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, storage, cleanup as never, new AuditoriaService(), notificationPersistence);
     const patBuffer = Buffer.from('%PDF-1.7\nversión PAT integrada\n%%EOF');
     const patFile = { originalname: 'entrega-integrada.pdf', mimetype: 'application/pdf', size: patBuffer.length, buffer: patBuffer } as Express.Multer.File;
     step = 'integración S3: primera entrega PAT grupal';
     const first = await docsService.cargar(period.id, groupAssignment.id, { plantilla_id: published.id }, patFile, students[3]!.usuario, null);
+    const uploadNotifications = await isolated.query(`SELECT "canal"::text AS canal FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "tipo"='PAT_ENTREGADO' AND "entidad_id"=$2 ORDER BY "canal"`, [adminUser.id, first.id]) as Array<{ canal: string }>;
+    if (uploadNotifications.map((row) => row.canal).join(',') !== 'EMAIL,EN_APP') throw new Error('La entrega PAT no generó los avisos administrativos en ambos canales.');
     step = 'integración: registrar observación';
-    await reviewsService.crear(period.id, groupAssignment.id, first.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Entrega de prueba para corregir.' }, adminUser, null);
+    const groupReview = await reviewsService.crear(period.id, groupAssignment.id, first.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Entrega de prueba para corregir.' }, adminUser, null);
+    const groupNotifications = await isolated.query(`SELECT "usuario_id", "canal"::text AS canal FROM ${schemaSql()}."notificacion" WHERE "tipo"='PAT_REVISADO' AND "entidad_id"=$1 ORDER BY "usuario_id","canal"`, [groupReview.id]) as Array<{ usuario_id: string; canal: string }>;
+    const expectedGroupRecipients = new Set([students[3]!.usuario.id, students[4]!.usuario.id]);
+    if (groupNotifications.length !== 4 || groupNotifications.some((row) => !expectedGroupRecipients.has(row.usuario_id)) || [...expectedGroupRecipients].some((recipient) => groupNotifications.filter((row) => row.usuario_id === recipient).length !== 2)) throw new Error('La revisión grupal no notificó a cada integrante activo una vez por canal.');
     step = 'integración S3: corrección posterior a observación';
     const second = await docsService.cargar(period.id, groupAssignment.id, { plantilla_id: published.id }, patFile, students[3]!.usuario, null);
     if (second.version !== first.version + 1) throw new Error('La carga PAT integrada no generó versiones consecutivas.');
