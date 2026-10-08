@@ -27,6 +27,11 @@ import { AsignacionTema } from '../src/asignaciones-tema/entities/asignacion-tem
 import { CredencialUsuario } from '../src/auth/entities/credencial-usuario.entity.js';
 import { CorreoSalida } from '../src/auth/entities/correo-salida.entity.js';
 import { ConfigCargaTutorial } from '../src/carga-tutorial/entities/config-carga-tutorial.entity.js';
+import { AsignacionTutor } from '../src/asignaciones-tutor/entities/asignacion-tutor.entity.js';
+import { PlantillaPat } from '../src/plantillas-pat/entities/plantilla-pat.entity.js';
+import { DocumentoPat } from '../src/documentos-pat/entities/documento-pat.entity.js';
+import { ArchivoPendiente } from '../src/almacenamiento/entities/archivo-pendiente.entity.js';
+import { RevisionPat } from '../src/revisiones-pat/entities/revision-pat.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -393,6 +398,10 @@ const correoTestRepository = {
   save: async (value: CorreoSalida) => { const stored = { ...value, id: value.id ?? randomUUID(), creada_en: value.creada_en ?? new Date() }; correoRecords.push(stored); return stored; },
 };
 const configCargaTutorialTestRepository = emptyRepository<ConfigCargaTutorial>();
+const asignacionTutorTestRepository = emptyRepository<AsignacionTutor>();
+const plantillaPatTestRepository = emptyRepository<PlantillaPat>();
+const documentoPatTestRepository = emptyRepository<DocumentoPat>();
+const archivoPendienteTestRepository = emptyRepository<ArchivoPendiente>();
 
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
@@ -440,6 +449,11 @@ export const usuarioTestDataSource = {
     { target: CredencialUsuario },
     { target: CorreoSalida },
     { target: ConfigCargaTutorial },
+    { target: AsignacionTutor },
+    { target: PlantillaPat },
+    { target: DocumentoPat },
+    { target: ArchivoPendiente },
+    { target: RevisionPat },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -461,6 +475,11 @@ export const usuarioTestDataSource = {
     if (entity === CredencialUsuario) return credencialTestRepository;
     if (entity === CorreoSalida) return correoTestRepository;
     if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
+    if (entity === AsignacionTutor) return asignacionTutorTestRepository;
+    if (entity === PlantillaPat) return plantillaPatTestRepository;
+    if (entity === DocumentoPat) return documentoPatTestRepository;
+    if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
+    if (entity === RevisionPat) return { create: (value: unknown) => value, save: async (value: unknown) => value, exist: async () => false, findOne: async () => null };
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -496,6 +515,10 @@ export const usuarioTestDataSource = {
           if (entity === CredencialUsuario) return credencialTestRepository;
           if (entity === CorreoSalida) return correoTestRepository;
           if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
+          if (entity === AsignacionTutor) return asignacionTutorTestRepository;
+          if (entity === PlantillaPat) return plantillaPatTestRepository;
+          if (entity === DocumentoPat) return documentoPatTestRepository;
+          if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),

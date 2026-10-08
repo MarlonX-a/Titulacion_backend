@@ -4,6 +4,7 @@ import { QueryFailedError } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
@@ -112,7 +113,7 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
-  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit);
+  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit));
   const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence);
   const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit);
   const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);

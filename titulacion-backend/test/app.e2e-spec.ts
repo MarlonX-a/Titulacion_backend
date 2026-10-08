@@ -39,6 +39,16 @@ describe('AppController (e2e)', () => {
       .expect(401);
   });
 
+  it('documenta las plantillas PAT y protege su administración', async () => {
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.paths['/periodos/{periodoId}/plantillas-pat']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/plantillas-pat/vigente']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/plantillas-pat/vigente/descarga']).toBeDefined();
+    await request(app.getHttpServer())
+      .get('/periodos/00000000-0000-4000-8000-000000000001/plantillas-pat/vigente')
+      .expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

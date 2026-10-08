@@ -14,6 +14,7 @@ import { LoteImportacion } from '../importaciones/entities/lote-importacion.enti
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
@@ -106,12 +107,13 @@ async function verify(): Promise<void> {
     fecha_inicio_titulacion: new Date('2026-12-01T13:00:00Z'),
     estado: PeriodoEstado.BORRADOR, max_integrantes_default: 5,
   }));
+  const audit = new AuditoriaService();
   const service = new HabilitadosService(
     isolatedDataSource.getRepository(EstudianteHabilitado),
     isolatedDataSource,
     new EstudiantesService(students, isolatedDataSource),
-    new AuditoriaService(),
-    new AsignacionTemaPersistenciaService(new AuditoriaService()),
+    audit,
+    new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit)),
   );
   const conditional = {
     estudiante_id: studentProfiles[0].id,

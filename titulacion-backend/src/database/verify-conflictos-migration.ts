@@ -1,9 +1,29 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { HttpException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { QueryFailedError } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
+import { AsignacionesTutorService } from '../asignaciones-tutor/asignaciones-tutor.service.js';
+import { AsignacionTutor } from '../asignaciones-tutor/entities/asignacion-tutor.entity.js';
+import { AsignacionTutorTipo } from '../asignaciones-tutor/enums/asignacion-tutor-tipo.enum.js';
+import { AsignacionTutorEstado } from '../asignaciones-tutor/enums/asignacion-tutor-estado.enum.js';
+import { CargaTutorialPersistenciaService } from '../carga-tutorial/carga-tutorial-persistencia.service.js';
+import { ConfigCargaTutorial } from '../carga-tutorial/entities/config-carga-tutorial.entity.js';
+import { CreateCargaTutorial20261007100000 } from './migrations/20261007100000-CreateCargaTutorial.js';
+import { CreateAsignacionesTutor20261008100000 } from './migrations/20261008100000-CreateAsignacionesTutor.js';
+import { CreatePlantillasPat20261009100000 } from './migrations/20261009100000-CreatePlantillasPat.js';
+import { CreateDocumentosPat20261010100000 } from './migrations/20261010100000-CreateDocumentosPat.js';
+import { AlignDocumentosPatLockOrder20261011100000 } from './migrations/20261011100000-AlignDocumentosPatLockOrder.js';
+import { CreateRevisionesPat20261012100000 } from './migrations/20261012100000-CreateRevisionesPat.js';
+import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
+import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
+import { RevisionesPatService } from '../revisiones-pat/revisiones-pat.service.js';
+import { PlantillaPat } from '../plantillas-pat/entities/plantilla-pat.entity.js';
+import { DocumentoPat } from '../documentos-pat/entities/documento-pat.entity.js';
+import { DocumentoPatFormato } from '../documentos-pat/enums/documento-pat-formato.enum.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { AsignacionesTemaService } from '../asignaciones-tema/asignaciones-tema.service.js';
 import { AsignacionTemaEstado } from '../asignaciones-tema/enums/asignacion-tema-estado.enum.js';
@@ -51,12 +71,19 @@ import { StrengthenAsignacionTemaIntegrity20261002120000 } from './migrations/20
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.js';
+import { ArchivoPendiente } from '../almacenamiento/entities/archivo-pendiente.entity.js';
+import { PlantillasPatService } from '../plantillas-pat/plantillas-pat.service.js';
+import { DocumentosPatService } from '../documentos-pat/documentos-pat.service.js';
+import type { AppEnvironment } from '../config/environment.js';
 
 const schema = `test_conflictos_${randomBytes(8).toString('hex')}`;
 let admin: DatabaseDataSource | undefined;
 let isolated: DatabaseDataSource | undefined;
 let createdSchema = false;
 let step = 'conexión y migraciones';
+let storage: AlmacenamientoService | undefined;
+const objectKeys: string[] = [];
 const schemaSql = () => { if (!/^test_conflictos_[a-f0-9]{16}$/.test(schema)) throw new Error('El esquema temporal no es válido.'); return `"${schema}"`; };
 const code = (error: unknown) => error instanceof QueryFailedError ? (error.driverError as { code?: string }).code : undefined;
 
@@ -64,7 +91,7 @@ async function verify(): Promise<void> {
   const options = createDatabaseOptions(loadEnvironment());
   admin = new DatabaseDataSource({ ...options, schema: 'public', entities: [], migrations: [] }); await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`); createdSchema = true;
-  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000];
+  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000];
   isolated = new DatabaseDataSource({ ...options, schema, migrations }); await isolated.initialize(); await isolated.runMigrations({ transaction: 'all' });
 
   step = 'preparación de postulaciones concurrentes';
@@ -138,7 +165,8 @@ async function verify(): Promise<void> {
   if (!wrongWinner) throw new Error('La referencia de ganadora ajena no produjo una violación FK 23503 independiente.');
 
   step = 'asignación definitiva concurrente';
-  const assignmentPersistence = new AsignacionTemaPersistenciaService(new AuditoriaService());
+  const assignmentAudit = new AuditoriaService();
+  const assignmentPersistence = new AsignacionTemaPersistenciaService(assignmentAudit, new AsignacionTutorPersistenciaService(assignmentAudit));
   const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence);
   const assignmentsService = new AsignacionesTemaService(isolated.getRepository(AsignacionTema), isolated.getRepository(Estudiante), isolated, habilitadosService, audit, assignmentPersistence);
   const assignDto = { motivo: 'La comisión confirmó la evaluación y seleccionó la candidatura ganadora.' };
@@ -156,6 +184,139 @@ async function verify(): Promise<void> {
   const groupAssignmentResponse = await assignmentsService.assign(period.id, groupApplication.id, assignDto, adminUser, null);
   const groupAssignment = await isolated.getRepository(AsignacionTema).findOneByOrFail({ postulacion_id: groupApplication.id });
   if (directAssignment.estado !== 'VIGENTE' || groupAssignment.estado !== 'VIGENTE' || directAssignmentResponse.postulacion_id !== directApplication.id || groupAssignmentResponse.grupo_id !== group.id) throw new Error('No se asignó la candidatura individual única o la candidatura grupal.');
+
+  step = 'versionado de documentos PAT, integridad de plantilla y asignación';
+  const template = await isolated.getRepository(PlantillaPat).save(isolated.getRepository(PlantillaPat).create({
+    periodo_id: period.id, periodo: period, version: '1', nombre_archivo: 'plantilla.pdf', ruta_almacenamiento: 'plantillas-pat/verify.pdf',
+    mime_type: 'application/pdf', tamano_bytes: '12', hash_sha256: 'a'.repeat(64), fecha_vigencia_inicio: '2026-10-08', fecha_vigencia_fin: null,
+    publicada_por_id: adminUser.id, publicada_por: adminUser, activa: true,
+  }));
+  const addDocument = async (version: number, key: string, plantillaId = template.id, assignmentId = directAssignment.id) => isolated!.transaction(async (manager) => {
+    await manager.query(`INSERT INTO ${schemaSql()}."archivo_limpieza_pendiente" ("ruta_almacenamiento") VALUES ($1)`, [key]);
+    const document = await manager.getRepository(DocumentoPat).save(manager.getRepository(DocumentoPat).create({
+      asignacion_tema_id: assignmentId, asignacion_tema: { id: assignmentId } as AsignacionTema,
+      plantilla_id: plantillaId, plantilla: { id: plantillaId } as PlantillaPat,
+      version, nombre_archivo: `entrega-${version}.pdf`, ruta_almacenamiento: key,
+      formato: DocumentoPatFormato.PDF, tamano_bytes: '12', hash_sha256: 'b'.repeat(64),
+      cargado_por_id: students[2]!.usuario.id, cargado_por: students[2]!.usuario,
+    }));
+    await manager.query(`DELETE FROM ${schemaSql()}."archivo_limpieza_pendiente" WHERE "ruta_almacenamiento"=$1`, [key]);
+    return document;
+  });
+  const firstDocument = await addDocument(1, 'documentos-pat/verify-1.pdf');
+  await addDocument(2, 'documentos-pat/verify-2.pdf');
+  if (await isolated.getRepository(DocumentoPat).countBy({ asignacion_tema_id: directAssignment.id }) !== 2 || firstDocument.hash_sha256 !== 'b'.repeat(64)) throw new Error('No se conservaron las dos versiones PAT y su hash.');
+  step = 'migración de revisiones sobre versiones PAT históricas';
+  const revisionMigration = new CreateRevisionesPat20261012100000();
+  const revisionRunner = isolated.createQueryRunner(); await revisionRunner.connect(); await revisionRunner.startTransaction();
+  try { await revisionMigration.up(revisionRunner); await revisionRunner.commitTransaction(); }
+  catch (error: unknown) { if (revisionRunner.isTransactionActive) await revisionRunner.rollbackTransaction(); throw error; }
+  finally { await revisionRunner.release(); }
+  const documentsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, { signPrivateDownload: async () => '' } as unknown as AlmacenamientoService, {} as never, new AuditoriaService());
+  const reviewsService = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, new AuditoriaService());
+  const historicalApproval = await reviewsService.crear(period.id, directAssignment.id, firstDocument.id, { resultado: RevisionPatResultado.APROBADO }, adminUser, null);
+  const latestStillPending = await isolated.query(`SELECT r."resultado"::text AS resultado FROM ${schemaSql()}."documento_pat" d LEFT JOIN ${schemaSql()}."revision_pat" r ON r."documento_pat_id"=d."id" WHERE d."asignacion_tema_id"=$1 ORDER BY d."version" DESC LIMIT 1`, [directAssignment.id]) as Array<{ resultado: string | null }>;
+  if (historicalApproval.resultado !== RevisionPatResultado.APROBADO || latestStillPending[0]?.resultado !== null) throw new Error('Revisar una versión histórica alteró la situación de la última versión.');
+  const pendingCorrectionRejected = await addDocument(3, 'documentos-pat/pending-review-rejected.pdf').then(() => false, (error: unknown) => code(error) === '23514');
+  if (!pendingCorrectionRejected) throw new Error('PostgreSQL permitió una corrección mientras la última versión seguía pendiente.');
+  const latestDocument = await isolated.getRepository(DocumentoPat).findOneByOrFail({ asignacion_tema_id: directAssignment.id, version: 2 });
+  await reviewsService.crear(period.id, directAssignment.id, latestDocument.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Completar la metodología.' }, adminUser, null);
+  const duplicateDocVersion = await addDocument(2, 'documentos-pat/verify-duplicate.pdf').then(() => false, (error: unknown) => code(error) === '23505');
+  if (!duplicateDocVersion) throw new Error('La base de datos no protegió la unicidad de versión por asignación.');
+  const duplicateReview = await reviewsService.crear(period.id, directAssignment.id, latestDocument.id, { resultado: RevisionPatResultado.RECHAZADO, observaciones: 'Segunda revisión.' }, adminUser, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  if (!duplicateReview) throw new Error('Se permitió revisar dos veces el mismo documento PAT.');
+  const blankObservationsRejected = await isolated.query(`INSERT INTO ${schemaSql()}."revision_pat" ("documento_pat_id","revisor_id","resultado","observaciones") VALUES ($1,$2,'RECHAZADO','   ')`, [latestDocument.id, adminUser.id]).then(() => false, (error: unknown) => code(error) === '23514');
+  if (!blankObservationsRejected) throw new Error('PostgreSQL permitió observar o rechazar sin observaciones válidas.');
+  const correctedDocument = await addDocument(3, 'documentos-pat/verify-correction.pdf');
+  if (correctedDocument.version !== 3) throw new Error('No se permitió una corrección posterior a OBSERVADO.');
+  await reviewsService.crear(period.id, directAssignment.id, correctedDocument.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Aclarar el resultado esperado.' }, adminUser, null);
+  step = 'numeración única bajo entregas concurrentes';
+  const simultaneousVersions = await Promise.allSettled([
+    addDocument(4, 'documentos-pat/verify-race-a.pdf'),
+    addDocument(4, 'documentos-pat/verify-race-b.pdf'),
+  ]);
+  if (simultaneousVersions.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('Dos cargas concurrentes guardaron el mismo número de versión PAT.');
+  const latestCorrection = await isolated.getRepository(DocumentoPat).findOneByOrFail({ asignacion_tema_id: directAssignment.id, version: 4 });
+  const concurrentReviews = await Promise.allSettled([
+    reviewsService.crear(period.id, directAssignment.id, latestCorrection.id, { resultado: RevisionPatResultado.APROBADO }, adminUser, null),
+    reviewsService.crear(period.id, directAssignment.id, latestCorrection.id, { resultado: RevisionPatResultado.APROBADO }, adminUser, null),
+  ]);
+  if (concurrentReviews.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('Dos revisiones concurrentes fueron guardadas para una misma versión.');
+  const correctionAfterApprovalRejected = await addDocument(5, 'documentos-pat/approved-review-rejected.pdf').then(() => false, (error: unknown) => code(error) === '23514');
+  if (!correctionAfterApprovalRejected) throw new Error('PostgreSQL permitió una nueva carga después de aprobar la última versión.');
+  const immutableReview = await isolated.query(`UPDATE ${schemaSql()}."revision_pat" SET "observaciones"='alterada' WHERE "documento_pat_id"=$1`, [latestCorrection.id]).then(() => false, (error: unknown) => code(error) === '23514');
+  const reviewDeleteBlocked = await isolated.query(`DELETE FROM ${schemaSql()}."revision_pat" WHERE "documento_pat_id"=$1`, [latestCorrection.id]).then(() => false, (error: unknown) => code(error) === '23514');
+  if (!immutableReview || !reviewDeleteBlocked) throw new Error('PostgreSQL permitió alterar o eliminar una revisión histórica.');
+  step = 'rollback de revisión ante fallo de auditoría';
+  const rollbackDocument = await addDocument(1, 'documentos-pat/revision-audit-rollback.pdf', template.id, groupAssignment.id);
+  const groupHistoryStillPending = await isolated.getRepository(DocumentoPat).countBy({ asignacion_tema_id: groupAssignment.id });
+  if (groupHistoryStillPending !== 1) throw new Error('No se preparó una versión independiente para comprobar rollback de auditoría.');
+  const failedAuditReviews = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, { registrar: async () => { throw new Error('fallo de auditoría provocado'); } } as unknown as AuditoriaService);
+  const auditRollback = await failedAuditReviews.crear(period.id, groupAssignment.id, rollbackDocument.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Prueba de rollback.' }, adminUser, null).then(() => false, () => true);
+  if (!auditRollback || await isolated.getRepository(RevisionPat).countBy({ documento_pat_id: rollbackDocument.id }) !== 0) throw new Error('La revisión quedó guardada aunque falló su auditoría.');
+  await reviewsService.crear(period.id, groupAssignment.id, rollbackDocument.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Prueba de auditoría recuperada.' }, adminUser, null);
+  const documentImmutable = await isolated.query(`UPDATE ${schemaSql()}."documento_pat" SET "version"=3 WHERE "id"=$1`, [firstDocument.id]).then(() => false, (error: unknown) => code(error) === '23514');
+  const documentDeleteBlocked = await isolated.query(`DELETE FROM ${schemaSql()}."documento_pat" WHERE "id"=$1`, [firstDocument.id]).then(() => false, (error: unknown) => code(error) === '23514');
+  if (!documentImmutable || !documentDeleteBlocked) throw new Error('PostgreSQL permitió alterar o eliminar un documento PAT histórico.');
+  step = 'rechazo de plantilla de otro período';
+  const unrelatedPeriod = await isolated.getRepository(PeriodoTitulacion).save(isolated.getRepository(PeriodoTitulacion).create({ codigo: 'CF-DOC-OTHER', nombre: 'Período distinto', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 60_000), fecha_inicio_titulacion: new Date(now.getTime() + 600_000), estado: PeriodoEstado.POSTULACION_CERRADA, max_integrantes_default: 3 }));
+  const unrelatedTemplate = await isolated.getRepository(PlantillaPat).save(isolated.getRepository(PlantillaPat).create({
+    periodo_id: unrelatedPeriod.id, periodo: unrelatedPeriod, version: '1', nombre_archivo: 'otra.pdf', ruta_almacenamiento: 'plantillas-pat/other.pdf',
+    mime_type: 'application/pdf', tamano_bytes: '12', hash_sha256: 'c'.repeat(64), fecha_vigencia_inicio: '2026-10-08', fecha_vigencia_fin: null,
+    publicada_por_id: adminUser.id, publicada_por: adminUser, activa: true,
+  }));
+  const crossPeriodTemplate = await addDocument(4, 'documentos-pat/cross-period.pdf', unrelatedTemplate.id).then(() => false, (error: unknown) => code(error) === '23514');
+  if (!crossPeriodTemplate) throw new Error('Se permitió vincular un documento PAT con una plantilla de otro período.');
+
+  step = 'migración reversible del período asociado a intención de archivo';
+  const pendingPath = 'plantillas-pat/verify.pdf';
+  await isolated.query(`INSERT INTO ${schemaSql()}."archivo_limpieza_pendiente" ("periodo_id","ruta_almacenamiento") VALUES ($1,$2)`, [period.id, pendingPath]);
+  const alignmentMigration = new AlignDocumentosPatLockOrder20261011100000();
+  const alignmentRunner = isolated.createQueryRunner(); await alignmentRunner.connect(); await alignmentRunner.startTransaction();
+  try { await alignmentMigration.down(alignmentRunner); await alignmentMigration.up(alignmentRunner); await alignmentRunner.commitTransaction(); }
+  catch (error: unknown) { if (alignmentRunner.isTransactionActive) await alignmentRunner.rollbackTransaction(); throw error; }
+  finally { await alignmentRunner.release(); }
+  const recoveredIntent = await isolated.query(`SELECT "periodo_id" FROM ${schemaSql()}."archivo_limpieza_pendiente" WHERE "ruta_almacenamiento"=$1`, [pendingPath]) as Array<{ periodo_id: string | null }>;
+  if (recoveredIntent[0]?.periodo_id !== period.id) throw new Error('La reversión/reaplicación de la intención no reconstruyó su período desde la plantilla histórica.');
+  await isolated.query(`DELETE FROM ${schemaSql()}."archivo_limpieza_pendiente" WHERE "ruta_almacenamiento"=$1`, [pendingPath]);
+
+  const environment = loadEnvironment();
+  if (environment.S3_ENDPOINT) {
+    step = 'integración S3/SSE-S3: publicación, dos versiones y descarga SHA-256';
+    storage = new AlmacenamientoService(new ConfigService<AppEnvironment, true>(environment as AppEnvironment));
+    const cleanup = {
+      registrar: async (periodId: string, key: string) => isolated!.getRepository(ArchivoPendiente).save(isolated!.getRepository(ArchivoPendiente).create({ periodo_id: periodId, ruta_almacenamiento: key, estado: 'SUBIENDO' })),
+      solicitar: async (_manager: undefined, key: string) => isolated!.getRepository(ArchivoPendiente).update({ ruta_almacenamiento: key }, { estado: 'LIMPIEZA' }),
+    };
+    const plantillaService = new PlantillasPatService(
+      isolated.getRepository(PlantillaPat), isolated.getRepository(PeriodoTitulacion), isolated.getRepository(Estudiante), isolated.getRepository(EstudianteHabilitado),
+      isolated, storage, new AuditoriaService(), cleanup as never,
+    );
+    const pdfBuffer = Buffer.from('%PDF-1.7\nprueba integrada de plantilla\n%%EOF');
+    step = 'integración S3: publicación de plantilla';
+    const published = await plantillaService.publicar(period.id, { version: 'S3-INTEGRADA' }, { originalname: 'plantilla-integrada.pdf', mimetype: 'application/pdf', size: pdfBuffer.length, buffer: pdfBuffer } as Express.Multer.File, adminUser, null);
+    const templateObject = await isolated.getRepository(PlantillaPat).findOneByOrFail({ id: published.id });
+    objectKeys.push(templateObject.ruta_almacenamiento);
+    const docsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, storage, cleanup as never, new AuditoriaService());
+    const patBuffer = Buffer.from('%PDF-1.7\nversión PAT integrada\n%%EOF');
+    const patFile = { originalname: 'entrega-integrada.pdf', mimetype: 'application/pdf', size: patBuffer.length, buffer: patBuffer } as Express.Multer.File;
+    step = 'integración S3: primera entrega PAT grupal';
+    const first = await docsService.cargar(period.id, groupAssignment.id, { plantilla_id: published.id }, patFile, students[3]!.usuario, null);
+    step = 'integración: registrar observación';
+    await reviewsService.crear(period.id, groupAssignment.id, first.id, { resultado: RevisionPatResultado.OBSERVADO, observaciones: 'Entrega de prueba para corregir.' }, adminUser, null);
+    step = 'integración S3: corrección posterior a observación';
+    const second = await docsService.cargar(period.id, groupAssignment.id, { plantilla_id: published.id }, patFile, students[3]!.usuario, null);
+    if (second.version !== first.version + 1) throw new Error('La carga PAT integrada no generó versiones consecutivas.');
+    for (const item of [first, second]) {
+      const row = await isolated.getRepository(DocumentoPat).findOneByOrFail({ id: item.id });
+      objectKeys.push(row.ruta_almacenamiento);
+      const download = await docsService.descargarPorId(period.id, groupAssignment.id, item.id, students[3]!.usuario);
+      const response = await fetch(download.url);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const downloadedHash = createHash('sha256').update(bytes).digest('hex');
+      if (!response.ok || downloadedHash !== item.hash_sha256) throw new Error(`La descarga PAT ${item.version} no conservó el SHA-256.`);
+    }
+  }
   step = 'consulta administrativa de asignaciones';
   const adminAssignments = await assignmentsService.list(period.id, { page: 1, limit: 20 }, adminUser, true);
   step = 'consulta docente de asignaciones';
@@ -165,6 +326,38 @@ async function verify(): Promise<void> {
   step = 'consulta de detalle de asignación por integrante';
   const groupDetail = await assignmentsService.getById(period.id, groupAssignment.id, students[4]!.usuario, false);
   if (adminAssignments.total !== 3 || teacherAssignments.total !== 3 || groupStudentAssignments.total !== 1 || groupDetail.participantes.length !== 2 || 'email' in groupDetail.participantes[0]!) throw new Error('Las consultas de asignación no respetan paginación, acceso por recurso o privacidad.');
+
+  step = 'carga tutorial, asignación concurrente y reemplazo';
+  const newTeacherUser = await users.save(users.create({ email: 'docente-reemplazo@conflictos.verify', nombres: 'Docente', apellidos: 'Reemplazo', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'conflictos-docente-reemplazo', ultimo_acceso: null }));
+  const replacementTeacher = await isolated.getRepository(Docente).save(isolated.getRepository(Docente).create({ usuario: newTeacherUser, cedula: '0102030467', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true }));
+  await isolated.getRepository(PeriodoTitulacion).update(period.id, { estado: PeriodoEstado.POSTULACION_CERRADA });
+  const loadRepo = isolated.getRepository(ConfigCargaTutorial);
+  await loadRepo.save(loadRepo.create({ periodo_id: period.id, periodo: period, docente_id: null, docente: null, max_trabajos: 1, bloquear_al_superar: true }));
+  await loadRepo.save(loadRepo.create({ periodo_id: period.id, periodo: period, docente_id: replacementTeacher.id, docente: replacementTeacher, max_trabajos: 1, bloquear_al_superar: true }));
+  const tutorAudit = new AuditoriaService();
+  const tutorService = new AsignacionesTutorService(
+    isolated.getRepository(AsignacionTutor), isolated.getRepository(AsignacionTema), isolated.getRepository(PeriodoTitulacion),
+    isolated.getRepository(Docente), isolated.getRepository(Estudiante), isolated.getRepository(GrupoIntegrante),
+    isolated.getRepository(TutorPropuesto), isolated, tutorAudit, new CargaTutorialPersistenciaService(),
+  );
+  const tutorDto = { docente_id: teacher.id };
+  const concurrentTutorAssignments = await Promise.allSettled([
+    tutorService.asignar(period.id, assignment.id, tutorDto, adminUser, null),
+    tutorService.asignar(period.id, directAssignment.id, tutorDto, adminUser, null),
+  ]);
+  const tutorSuccesses = concurrentTutorAssignments.filter((result) => result.status === 'fulfilled');
+  if (tutorSuccesses.length !== 1) throw new Error('El bloqueo de carga permitió más de una asignación al último cupo tutorial.');
+  const currentTutorWorkId = tutorSuccesses[0]!.status === 'fulfilled' ? tutorSuccesses[0]!.value.asignacion.asignacion_tema_id : '';
+  const currentTutor = await isolated.getRepository(AsignacionTutor).findOneByOrFail({ asignacion_tema_id: currentTutorWorkId });
+  const replaced = await tutorService.reemplazar(period.id, currentTutor.id, { docente_id: replacementTeacher.id, motivo: 'Reemplazo verificado en esquema temporal.' }, adminUser, null);
+  const oldTutor = await isolated.getRepository(AsignacionTutor).findOneByOrFail({ id: currentTutor.id });
+  const newTutor = await isolated.getRepository(AsignacionTutor).findOneByOrFail({ id: replaced.asignacion.id });
+  if (oldTutor.estado !== 'REEMPLAZADA' || oldTutor.motivo_cambio !== 'Reemplazo verificado en esquema temporal.' || newTutor.estado !== 'VIGENTE') throw new Error('El reemplazo no conservó el tutor anterior y el nuevo registro vigente.');
+  const tutorAuditCount = await isolated.getRepository(Auditoria).countBy({ accion: 'ASIGNAR_TUTOR' }) + await isolated.getRepository(Auditoria).countBy({ accion: 'REEMPLAZAR_TUTOR' });
+  if (tutorAuditCount !== 2) throw new Error('La asignación y reemplazo de tutor no registraron auditoría atómica.');
+  const secondTutorRejected = await isolated.getRepository(AsignacionTutor).insert({ asignacion_tema_id: currentTutorWorkId, docente_id: replacementTeacher.id, tutor_propuesto_id: null, tipo: AsignacionTutorTipo.ASIGNADO_DIRECTO, estado: AsignacionTutorEstado.VIGENTE, asignada_por_id: adminUser.id }).then(() => false, (error: unknown) => code(error) === '23505' || code(error) === '23514');
+  const activeTutorsForWork = await isolated.getRepository(AsignacionTutor).countBy({ asignacion_tema_id: currentTutorWorkId, estado: AsignacionTutorEstado.VIGENTE });
+  if (!secondTutorRejected || activeTutorsForWork !== 1) throw new Error('PostgreSQL permitió dos tutores vigentes para el mismo trabajo.');
 
   step = 'protección de solapamiento entre grupo e individuo';
   const otherPeriod = await isolated.getRepository(PeriodoTitulacion).save(isolated.getRepository(PeriodoTitulacion).create({ codigo: 'CF-CROSS', nombre: 'Verificación de solapamiento', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 300_000), fecha_inicio_titulacion: new Date(now.getTime() + 600_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 3 }));
@@ -217,14 +410,27 @@ async function verify(): Promise<void> {
     await strengthenRunner.release();
   }
 
+  step = 'reversión protegida de documentos PAT';
+  const documentMigration = new CreateDocumentosPat20261010100000();
+  const documentRunner = isolated.createQueryRunner(); await documentRunner.connect(); await documentRunner.startTransaction();
+  const documentsProtected = await documentMigration.down(documentRunner).then(() => false, async (error: unknown) => { if (documentRunner.isTransactionActive) await documentRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('documentos PAT'); });
+  if (documentRunner.isTransactionActive) await documentRunner.rollbackTransaction(); await documentRunner.release();
+  if (!documentsProtected) throw new Error('La reversión permitió eliminar documentos PAT o intenciones de carga.');
+
+  step = 'reversión protegida de revisiones PAT';
+  const revisionDownRunner = isolated.createQueryRunner(); await revisionDownRunner.connect(); await revisionDownRunner.startTransaction();
+  const revisionsProtected = await revisionMigration.down(revisionDownRunner).then(() => false, async (error: unknown) => { if (revisionDownRunner.isTransactionActive) await revisionDownRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('revisiones PAT'); });
+  if (revisionDownRunner.isTransactionActive) await revisionDownRunner.rollbackTransaction(); await revisionDownRunner.release();
+  if (!revisionsProtected) throw new Error('La reversión permitió eliminar revisiones PAT históricas.');
+
   step = 'reversión protegida';
   const migration = new CreateConflictos20261002100000(); const runner = isolated.createQueryRunner(); await runner.connect(); await runner.startTransaction();
   const protectedDown = await migration.down(runner).then(() => false, async (error: unknown) => { await runner.rollbackTransaction(); return error instanceof Error && error.message.includes('hay resoluciones'); });
   if (runner.isTransactionActive) await runner.rollbackTransaction(); await runner.release();
   if (!protectedDown) throw new Error('La reversión permitió eliminar el historial de conflictos.');
-  console.log('Verificación de conflictos y asignaciones correcta: cierre, detección, ganadora, concurrencia, auditoría y anulación por NO_ADMITIDO.');
+  console.log('Verificación temporal correcta: conflictos, asignaciones de tema y tutor, cargas y versionado PAT con integridad histórica.');
 }
 
 try { await verify(); }
 catch (error: unknown) { const cause = error instanceof HttpException ? (error as HttpException & { cause?: unknown }).cause : undefined; const detail = error instanceof HttpException ? `${error.getStatus()} ${error.message}${cause instanceof Error ? ` Detalle técnico: ${cause.message}` : ''}` : error instanceof Error ? error.message : 'error no especificado'; console.error(`Falló la verificación de conflictos durante: ${step}. ${detail}`); process.exitCode = 1; }
-finally { if (isolated?.isInitialized) await isolated.destroy().catch(() => undefined); if (admin?.isInitialized && createdSchema) await admin.query(`DROP SCHEMA IF EXISTS ${schemaSql()} CASCADE`).catch(() => undefined); if (admin?.isInitialized) await admin.destroy().catch(() => undefined); }
+finally { if (storage) { for (const key of objectKeys) await storage.removePrivate(key).catch(() => undefined); await storage.onModuleDestroy(); } if (isolated?.isInitialized) await isolated.destroy().catch(() => undefined); if (admin?.isInitialized && createdSchema) await admin.query(`DROP SCHEMA IF EXISTS ${schemaSql()} CASCADE`).catch(() => undefined); if (admin?.isInitialized) await admin.destroy().catch(() => undefined); }

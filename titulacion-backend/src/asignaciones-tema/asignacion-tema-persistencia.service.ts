@@ -11,10 +11,14 @@ import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
 import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
+import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
 
 @Injectable()
 export class AsignacionTemaPersistenciaService {
-  constructor(private readonly auditoria: AuditoriaService) {}
+  constructor(
+    private readonly auditoria: AuditoriaService,
+    private readonly asignacionesTutor: AsignacionTutorPersistenciaService,
+  ) {}
 
   async tieneVigenteParaEstudiante(manager: EntityManager, estudianteId: string): Promise<boolean> {
     const schema = this.schema(manager);
@@ -56,6 +60,14 @@ export class AsignacionTemaPersistenciaService {
       assignment.anulada_por = actor;
       assignment.fecha_anulacion = now;
       await assignmentRepo.save(assignment);
+      await this.asignacionesTutor.anularPorAsignacionTema(
+        manager,
+        periodoId,
+        assignment.id,
+        observacion,
+        actor,
+        ip,
+      );
 
       application.estado = EstadoPostulacion.ANULADA;
       application.observacion = observacion;

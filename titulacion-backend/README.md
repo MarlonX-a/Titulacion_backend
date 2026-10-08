@@ -79,7 +79,7 @@ prioridad sobre la misma variable del archivo.
 | `AUTH_ORIGINS`                                               | Lista exacta de orígenes web                                   | Vacía; producción debe definir los orígenes       |
 | `REDIS_HOST`, `REDIS_PORT`                                   | Redis/BullMQ para límites y trabajos                           | `127.0.0.1`, `6379`                               |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
-| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | MinIO en desarrollo                               |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | SeaweedFS en `127.0.0.1:8333`                     |
 | `OUTBOX_ENCRYPTION_KEY_PATH`                                 | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente                               |
 
 Un valor vacío o inválido detiene el arranque e identifica la variable afectada,
@@ -101,7 +101,18 @@ privado configurados.
 ### Preparar servicios de desarrollo
 
 El archivo `docker-compose.dev.yml` proporciona Redis, almacenamiento S3 local
-(AIStor de MinIO) y Mailpit. Si
+(SeaweedFS con cifrado SSE-S3) y Mailpit. AIStor permanece disponible bajo el
+perfil opcional `aistor`, conservando su volumen. Antes de iniciar los servicios,
+genera la clave persistente de SeaweedFS; el comando no reemplaza una clave ya
+existente:
+
+```powershell
+npm run storage:prepare-dev
+```
+
+La clave se guarda en `.secrets/seaweedfs.env`, ignorado por Git. No la elimines
+ni la regeneres mientras existan archivos cifrados en el volumen.
+Si
 Docker Desktop está instalado:
 
 ```powershell
@@ -115,7 +126,7 @@ npm run start:dev
 `auth:keys` crea claves privadas locales ignoradas por Git y no sobrescribe
 archivos existentes. El comando `db:prepare-auth` crea únicamente el esquema
 `titulacion_dev` y ejecuta las migraciones; no modifica `public` ni
-`local_demo`. En desarrollo el backend crea el bucket privado de MinIO al
+`local_demo`. En desarrollo el backend crea el bucket privado de SeaweedFS al
 recibir la primera importación. Mailpit muestra los mensajes locales en
 [http://localhost:8025](http://localhost:8025).
 
@@ -630,6 +641,98 @@ verificador `npm run db:verify-carga-tutorial` prueba prioridad, restricciones,
 unicidad concurrente, auditoría atómica y reversión en un esquema temporal; no
 crea configuraciones en `titulacion_dev`.
 
+## Asignación definitiva y reemplazo de tutores
+
+Con el período en `POSTULACION_CERRADA` o `EN_CURSO`, ADMIN puede asignar un
+tutor propuesto o un docente habilitado para tutoría mediante
+`POST /periodos/{periodoId}/asignaciones-tema/{id}/asignar-tutor`. Para cambiarlo,
+usa `POST /periodos/{periodoId}/asignaciones-tutor/{id}/reemplazar` e indica el
+nuevo docente y el motivo. Cada trabajo cuenta como una tutoría y requiere una
+configuración de carga aplicable. El modo advertir permite guardar e informa el
+exceso; el modo bloquear rechaza la operación. Las asignaciones anteriores se
+conservan en el historial.
+
+DOCENTE consulta su carga en `GET
+/periodos/{periodoId}/carga-tutorial/me`; ADMIN puede consultar cualquier perfil
+docente. El listado y las consultas propias de asignaciones incluyen registros
+vigentes, reemplazados y anulados.
+
+La migración se comprueba en un esquema temporal mediante
+`npm run db:verify-asignaciones-tutor`.
+
+## Plantillas PAT por período
+
+ADMIN publica una versión con `POST
+/periodos/{periodoId}/plantillas-pat`, enviando los campos `version` y `archivo`
+como `multipart/form-data`. Se admiten PDF y DOCX de hasta 10 MiB. La publicación
+activa la versión nueva y conserva las anteriores; el período debe existir y no
+estar archivado. La versión exacta no se puede repetir dentro del período.
+
+ADMIN consulta el historial con `GET /periodos/{periodoId}/plantillas-pat` y
+descarga cualquier versión mediante `GET
+/periodos/{periodoId}/plantillas-pat/{id}/descarga`. ADMIN y estudiantes
+habilitados pueden consultar `GET
+/periodos/{periodoId}/plantillas-pat/vigente` y solicitar su descarga en `GET
+/periodos/{periodoId}/plantillas-pat/vigente/descarga`. La descarga entrega una
+URL privada temporal, válida por cinco minutos. El estudiante no necesita una
+asignación de tema para obtenerla.
+
+Después de confirmar `DB_SCHEMA=titulacion_dev`, revisa y aplica explícitamente
+las migraciones pendientes con `npm run migration:show` y `npm run migration:run`.
+`npm run db:verify-plantillas-pat` comprueba unicidad, publicaciones
+concurrentes, protección del período archivado y reversión protegida en un
+esquema temporal. La aplicación no publica plantillas de ejemplo.
+
+## Carga y versionado del PAT
+
+El titular de un trabajo individual o el representante actual de un grupo puede
+entregar una versión con `POST
+/periodos/{periodoId}/asignaciones-tema/{asignacionId}/documentos-pat`, enviando
+`plantilla_id` y `archivo` como `multipart/form-data`. La asignación de tema debe
+seguir vigente, el período estar en `POSTULACION_CERRADA` o `EN_CURSO`, y la
+plantilla seleccionada debe continuar activa. Se admiten PDF y DOCX válidos de
+hasta 10 MiB. Cada carga recibe una versión consecutiva y SHA-256; los archivos
+anteriores se conservan y no pueden alterarse ni eliminarse.
+
+ADMIN, los integrantes del trabajo y su tutor vigente pueden consultar el
+historial en `GET .../documentos-pat`, la última versión en `GET
+.../ultima`, y descargar la última o una versión histórica mediante las rutas
+`/descarga`. Las URL firmadas duran cinco minutos. Cada versión inicia como
+`PENDIENTE` y ADMIN puede revisarla una sola vez en `POST
+.../documentos-pat/{documentoId}/revision` con resultado `APROBADO`, `OBSERVADO`
+o `RECHAZADO`. Observar o rechazar exige observaciones; quienes tengan acceso
+al trabajo pueden leer la revisión con `GET
+.../documentos-pat/{documentoId}/revision`. Los metadatos incluyen `revision` y
+`detalle_revision`.
+
+Después de la primera entrega, solo se admite una nueva versión cuando la última
+fue `OBSERVADO` o `RECHAZADO`. Una versión pendiente o aprobada bloquea otra
+carga. ADMIN puede revisar versiones antiguas aún no revisadas; ese resultado
+no cambia la situación de la versión más reciente. Revisiones, observaciones y
+versiones anteriores se conservan como historial.
+
+Las revisiones nuevas requieren período `POSTULACION_CERRADA` o `EN_CURSO` y
+asignación de tema vigente. Las consultas históricas continúan disponibles
+después del archivo o anulación, aunque no se aceptan revisiones nuevas.
+
+El flujo de prueba es: entregar un PAT, consultarlo como ADMIN, registrar una
+observación, leerla con la cuenta estudiante, cargar una corrección y aprobar
+esa versión. La revisión no cambia automáticamente el estado del tema, período
+ni asignación.
+
+La migración se ejecuta explícitamente tras confirmar
+`DB_SCHEMA=titulacion_dev`. `npm run db:verify-documentos-pat` verifica la
+migración y sus restricciones en un esquema temporal; no carga documentos de
+ejemplo. El barrido de archivos fallidos conserva solicitudes en PostgreSQL y
+reintenta aunque Redis no esté disponible, verificando que el objeto no esté
+referenciado antes de eliminarlo.
+
+La migración de revisiones se aplica explícitamente con `npm run migration:run`
+tras confirmar `DB_SCHEMA=titulacion_dev`. `npm run db:verify-revisiones-pat`
+comprueba las versiones históricas, reglas de corrección, revisiones únicas e
+inmutables, concurrencia, auditoría atómica y reversión protegida en un esquema
+temporal aislado.
+
 ## Verificación
 
 ```powershell
@@ -663,3 +766,6 @@ y publicación, atomicidad de auditoría y reversión protegida se comprueban co
 Grupos, pertenencia única concurrente, cupo máximo, activación, auditoría y
 reversión protegida se comprueban con `npm run db:verify-grupos` en un esquema
 temporal aislado.
+Asignaciones de tutores, carga concurrente y reemplazos se comprueban con
+`npm run db:verify-asignaciones-tutor`; plantillas PAT, versiones únicas y
+publicaciones concurrentes se comprueban con `npm run db:verify-plantillas-pat`.

@@ -3,6 +3,7 @@ import { HttpException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
@@ -95,7 +96,7 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const students = isolated.getRepository(Estudiante);
-  const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit));
+  const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit)));
   const postulacionPersistence = new PostulacionPersistenciaService();
   const groupService = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), students, isolated, habilitadoService, audit, postulacionPersistence);
   const inviteService = new InvitacionesService(isolated.getRepository(Invitacion), students, isolated, groupService, habilitadoService, audit, postulacionPersistence);
