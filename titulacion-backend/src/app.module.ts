@@ -19,6 +19,9 @@ import { AsignacionesTemaModule } from './asignaciones-tema/asignaciones-tema.mo
 import { CorreoModule } from './correo/correo.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { CargaTutorialModule } from './carga-tutorial/carga-tutorial.module.js';
+import { AsignacionesTutorModule } from './asignaciones-tutor/asignaciones-tutor.module.js';
+import { PlantillasPatModule } from './plantillas-pat/plantillas-pat.module.js';
+import { DocumentosPatModule } from './documentos-pat/documentos-pat.module.js';
 
 @Module({
   imports: [
@@ -41,6 +44,9 @@ import { CargaTutorialModule } from './carga-tutorial/carga-tutorial.module.js';
     ConflictosModule,
     AsignacionesTemaModule,
     CargaTutorialModule,
+    AsignacionesTutorModule,
+    PlantillasPatModule,
+    DocumentosPatModule,
     ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
   ],
   controllers: [AppController],

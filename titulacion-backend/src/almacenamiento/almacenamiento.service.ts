@@ -6,6 +6,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   Injectable,
   OnModuleDestroy,
@@ -48,6 +49,44 @@ export class AlmacenamientoService implements OnModuleDestroy {
         'El almacenamiento privado no está configurado.',
       );
     const key = `importaciones/${randomUUID()}.xlsx`;
+    return this.putPrivate(key, buffer, contentType, 'No se pudo guardar el archivo de importación.');
+  }
+
+  async savePatPrivate(buffer: Buffer, contentType: string, extension: 'pdf' | 'docx'): Promise<string> {
+    return this.putPrivate(`plantillas-pat/${randomUUID()}.${extension}`, buffer, contentType, 'No se pudo guardar la plantilla PAT.');
+  }
+
+  createPrivateKey(prefix: 'plantillas-pat' | 'documentos-pat', extension: 'pdf' | 'docx'): string {
+    return `${prefix}/${randomUUID()}.${extension}`;
+  }
+
+  async saveAtPrivateKey(key: string, buffer: Buffer, contentType: string): Promise<void> {
+    if (!key.startsWith('plantillas-pat/') && !key.startsWith('documentos-pat/')) {
+      throw new ServiceUnavailableException('La ruta privada del archivo no es válida.');
+    }
+    await this.putPrivate(key, buffer, contentType, 'No se pudo guardar el archivo privado.');
+  }
+
+  async signPrivateDownload(key: string, fileName: string, contentType: string): Promise<string> {
+    if (!this.bucket || (!key.startsWith('plantillas-pat/') && !key.startsWith('documentos-pat/'))) {
+      throw new ServiceUnavailableException('El archivo privado no está disponible.');
+    }
+    try {
+      return await getSignedUrl(this.client, new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseContentType: contentType,
+        ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      }), { expiresIn: 300 });
+    } catch (error: unknown) {
+      throw new ServiceUnavailableException('No se pudo preparar la descarga privada.', { cause: error });
+    }
+  }
+
+  private async putPrivate(key: string, buffer: Buffer, contentType: string, failureMessage: string): Promise<string> {
+    if (!this.bucket) {
+      throw new ServiceUnavailableException('El almacenamiento privado no está configurado.');
+    }
     try {
       await this.ensureBucket();
       await this.client.send(
@@ -61,10 +100,7 @@ export class AlmacenamientoService implements OnModuleDestroy {
       );
       return key;
     } catch (error: unknown) {
-      throw new ServiceUnavailableException(
-        'No se pudo guardar el archivo de importación.',
-        { cause: error },
-      );
+      throw new ServiceUnavailableException(failureMessage, { cause: error });
     }
   }
 
@@ -88,7 +124,7 @@ export class AlmacenamientoService implements OnModuleDestroy {
   }
 
   async removePrivate(key: string): Promise<void> {
-    if (!this.bucket || !key.startsWith('importaciones/')) return;
+    if (!this.bucket || (!key.startsWith('importaciones/') && !key.startsWith('plantillas-pat/') && !key.startsWith('documentos-pat/'))) return;
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
     );

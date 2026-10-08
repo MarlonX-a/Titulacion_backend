@@ -57,7 +57,7 @@ Backend:
 - Microsoft/OIDC institucional no está disponible para este proyecto
 - BullMQ
 - Redis
-- almacenamiento S3 / MinIO
+- almacenamiento S3 compatible / SeaweedFS local
 - Docker
 
 No introducir nuevas tecnologías principales sin una razón técnica clara y sin respetar las decisiones existentes del proyecto.
@@ -657,8 +657,8 @@ Un docente solo debe acceder a la información permitida de sus temas y tutoría
 
 PAT y plantillas deben utilizar almacenamiento de objetos:
 
-- S3; o
-- MinIO.
+- S3 compatible; o
+- SeaweedFS local durante desarrollo.
 
 No guardar archivos binarios directamente en PostgreSQL salvo decisión explícita posterior.
 
@@ -672,6 +672,7 @@ Validar:
 Los documentos PAT deben registrar hash SHA-256.
 
 Las descargas deben utilizar URLs prefirmadas con vigencia limitada cuando corresponda.
+En desarrollo, SeaweedFS es el proveedor local aprobado; AIStor queda como alternativa opcional. La clave SSE-S3 se conserva fuera de Git y no se rota si existen objetos cifrados.
 
 ---
 
