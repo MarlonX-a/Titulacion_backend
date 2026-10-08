@@ -12,6 +12,7 @@ import { CrearRevisionPatDto } from './dto/crear-revision-pat.dto.js';
 import { RevisionPatResponseDto } from './dto/revision-pat-response.dto.js';
 import { RevisionPat } from './entities/revision-pat.entity.js';
 import { RevisionPatResultado } from './enums/revision-pat-resultado.enum.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 
 interface RevisionRow extends RevisionPat { revisor_nombres: string; revisor_apellidos: string }
 interface DriverError { code?: string }
@@ -23,6 +24,7 @@ export class RevisionesPatService {
     private readonly dataSource: DataSource,
     private readonly documentos: DocumentosPatService,
     private readonly audit: AuditoriaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async crear(periodoId: string, asignacionId: string, documentoId: string, dto: CrearRevisionPatDto, actor: Usuario, ip: string | null): Promise<RevisionPatResponseDto> {
@@ -52,6 +54,7 @@ export class RevisionesPatService {
         const repo = manager.getRepository(RevisionPat);
         if (await repo.exist({ where: { documento_pat_id: documentoId } })) throw new ConflictException('Esta versión PAT ya tiene una revisión registrada.');
         const item = await repo.save(repo.create({ documento_pat_id: documentoId, documento_pat: { id: documentoId } as DocumentoPat, revisor_id: actor.id, revisor: actor, resultado: dto.resultado, observaciones, fecha_revision: new Date() }));
+        await this.notificaciones.registrarEventoPat(manager, { tipo: 'PAT_REVISADO', entidadTipo: 'revision_pat', entidadId: item.id, documentoId, asignacionId, actorId: actor.id, resultado: item.resultado });
         await this.audit.registrar(manager, {
           actor, accion: 'REVISAR_DOCUMENTO_PAT', entidad_tipo: 'revision_pat', entidad_id: item.id,
           valores_anteriores: null,

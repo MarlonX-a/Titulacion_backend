@@ -23,6 +23,7 @@ import { AsignacionesTutorModule } from './asignaciones-tutor/asignaciones-tutor
 import { PlantillasPatModule } from './plantillas-pat/plantillas-pat.module.js';
 import { DocumentosPatModule } from './documentos-pat/documentos-pat.module.js';
 import { RevisionesPatModule } from './revisiones-pat/revisiones-pat.module.js';
+import { NotificacionesModule } from './notificaciones/notificaciones.module.js';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { RevisionesPatModule } from './revisiones-pat/revisiones-pat.module.js';
     PlantillasPatModule,
     DocumentosPatModule,
     RevisionesPatModule,
+    NotificacionesModule,
     ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
   ],
   controllers: [AppController],

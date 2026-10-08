@@ -733,6 +733,34 @@ comprueba las versiones históricas, reglas de corrección, revisiones únicas e
 inmutables, concurrencia, auditoría atómica y reversión protegida en un esquema
 temporal aislado.
 
+## Notificaciones PAT
+
+Al cargar un PAT, el sistema avisa dentro de la aplicación y por correo a los
+ADMIN activos y al tutor vigente. Al registrar una revisión, avisa al titular
+individual o a cada integrante activo del grupo y al tutor vigente. El actor
+que realiza la acción no recibe su propio aviso. El correo indica el tema, la
+versión y el resultado; las observaciones se consultan con una sesión activa en
+la ruta protegida de revisión.
+
+La bandeja personal se consulta en `GET /notificaciones`; admite paginación y
+filtros `leida` y `tipo`. `GET /notificaciones/no-leidas/contador` devuelve el
+contador y `POST /notificaciones/{id}/leer` marca un aviso propio como leído.
+ADMIN puede revisar entregas de correo en `GET /admin/notificaciones-email` y
+reintentar una entrega fallida en `POST /admin/notificaciones-email/{id}/reintentar`.
+En desarrollo, abre Mailpit para comprobar el correo. SMTP funciona en segundo
+plano: una operación PAT confirmada no depende de que Redis o el servidor de
+correo estén disponibles. La persistencia y los trabajos evitan duplicados
+internos; SMTP puede repetir un correo si acepta el mensaje y la conexión falla
+antes de que el worker confirme el resultado.
+
+La migración se aplica explícitamente con `npm run migration:run` tras confirmar
+`DB_SCHEMA=titulacion_dev`. `npm run db:verify-notificaciones` comprueba las
+restricciones de bandeja, inmutabilidad, concurrencia, recuperación de reservas
+y reversión protegida en un esquema temporal. Si SMTP apunta a Mailpit local,
+ejecuta el worker con un destinatario de prueba y comprueba el mensaje. El
+flujo de notificaciones PAT se comprueba con
+`npm run db:verify-revisiones-pat` cuando el almacenamiento local está activo.
+
 ## Verificación
 
 ```powershell

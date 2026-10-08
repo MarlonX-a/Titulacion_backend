@@ -77,5 +77,6 @@ describe('Revisiones PAT (e2e)', () => {
   it('expone las rutas de revisión en Swagger', async () => {
     const response = await request(app.getHttpServer()).get('/docs-json').expect(200);
     expect(response.body.paths).toHaveProperty('/periodos/{periodoId}/asignaciones-tema/{asignacionId}/documentos-pat/{documentoId}/revision');
+    expect(response.body.paths).toHaveProperty('/notificaciones');
   });
 });
