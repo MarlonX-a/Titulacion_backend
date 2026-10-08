@@ -31,6 +31,7 @@ import { AsignacionTutor } from '../src/asignaciones-tutor/entities/asignacion-t
 import { PlantillaPat } from '../src/plantillas-pat/entities/plantilla-pat.entity.js';
 import { DocumentoPat } from '../src/documentos-pat/entities/documento-pat.entity.js';
 import { ArchivoPendiente } from '../src/almacenamiento/entities/archivo-pendiente.entity.js';
+import { RevisionPat } from '../src/revisiones-pat/entities/revision-pat.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -452,6 +453,7 @@ export const usuarioTestDataSource = {
     { target: PlantillaPat },
     { target: DocumentoPat },
     { target: ArchivoPendiente },
+    { target: RevisionPat },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -477,6 +479,7 @@ export const usuarioTestDataSource = {
     if (entity === PlantillaPat) return plantillaPatTestRepository;
     if (entity === DocumentoPat) return documentoPatTestRepository;
     if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
+    if (entity === RevisionPat) return { create: (value: unknown) => value, save: async (value: unknown) => value, exist: async () => false, findOne: async () => null };
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>

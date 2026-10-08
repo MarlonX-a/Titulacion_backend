@@ -1,5 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { DocumentoPatFormato } from '../enums/documento-pat-formato.enum.js';
+import { RevisionPatResultado } from '../../revisiones-pat/enums/revision-pat-resultado.enum.js';
+import { RevisionPatResponseDto } from '../../revisiones-pat/dto/revision-pat-response.dto.js';
 
 export class DocumentoPatResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;
@@ -11,7 +13,8 @@ export class DocumentoPatResponseDto {
   @ApiProperty({ example: 204800 }) tamano_bytes: number;
   @ApiProperty({ example: 'a'.repeat(64) }) hash_sha256: string;
   @ApiProperty({ format: 'date-time' }) fecha_carga: Date;
-  @ApiProperty({ enum: ['PENDIENTE'] }) revision: 'PENDIENTE';
+  @ApiProperty({ enum: ['PENDIENTE', ...Object.values(RevisionPatResultado)] }) revision: 'PENDIENTE' | RevisionPatResultado;
+  @ApiProperty({ type: () => RevisionPatResponseDto, nullable: true }) detalle_revision: RevisionPatResponseDto | null;
   @ApiProperty({ type: Object }) plantilla: { id: string; version: string; nombre_archivo: string };
   @ApiProperty({ type: Object }) cargador: { id: string; nombres: string; apellidos: string };
 }

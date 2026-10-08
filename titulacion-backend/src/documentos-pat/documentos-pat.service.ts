@@ -16,13 +16,16 @@ import { CargarDocumentoPatDto } from './dto/cargar-documento-pat.dto.js';
 import { DocumentoPatDownloadDto, DocumentoPatResponseDto, PagedDocumentoPatResponseDto } from './dto/documento-pat-response.dto.js';
 import { DocumentoPat } from './entities/documento-pat.entity.js';
 import { DocumentoPatFormato } from './enums/documento-pat-formato.enum.js';
+import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
+import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
+import { RevisionPatResponseDto } from '../revisiones-pat/dto/revision-pat-response.dto.js';
 
 interface AssignmentContext {
   periodo_id: string; periodo_estado: string; asignacion_estado: string;
   estudiante_id: string | null; grupo_id: string | null; tema_id: string;
 }
 interface DriverError { code?: string }
-const relations = { plantilla: true, cargado_por: true } as const;
+const relations = { plantilla: true, cargado_por: true, revision: { revisor: true } } as const;
 
 @Injectable()
 export class DocumentosPatService {
@@ -41,6 +44,7 @@ export class DocumentosPatService {
     const initial = await this.context(this.dataSource, periodoId, asignacionId);
     await this.authorizeUpload(this.dataSource, initial, actor);
     await this.activeTemplate(this.dataSource, periodoId, dto.plantilla_id);
+    await this.assertCorrectionAllowed(this.dataSource, asignacionId);
 
     const key = this.storage.createPrivateKey('documentos-pat', validated.extension);
     try { await this.cleanup.registrar(periodoId, key); } catch (error: unknown) { this.handleError(error); }
@@ -59,6 +63,7 @@ export class DocumentosPatService {
         await this.authorizeUpload(manager, context, actor);
         const template = await this.activeTemplate(manager, periodoId, dto.plantilla_id, true);
         if (!template) throw new ConflictException('La plantilla indicada ya no es la vigente del período.');
+        await this.assertCorrectionAllowed(manager, asignacionId);
         const latest = await manager.query(
           `SELECT COALESCE(MAX("version"),0)::int AS version FROM ${this.schema()}."documento_pat" WHERE "asignacion_tema_id"=$1`, [asignacionId],
         ) as Array<{ version: number }>;
@@ -166,6 +171,25 @@ export class DocumentosPatService {
     throw new NotFoundException('No existe el trabajo indicado.');
   }
 
+  async autorizarLectura(periodoId: string, assignmentId: string, actor: Usuario): Promise<void> {
+    await this.authorizeRead(periodoId, assignmentId, actor);
+  }
+
+  private async assertCorrectionAllowed(source: DataSource | import('typeorm').EntityManager, assignmentId: string): Promise<void> {
+    let rows: Array<{ revision: RevisionPatResultado | null }>;
+    try {
+      rows = await source.query(
+        `SELECT r."resultado"::text AS revision FROM ${this.schema()}."documento_pat" d LEFT JOIN ${this.schema()}."revision_pat" r ON r."documento_pat_id"=d."id" WHERE d."asignacion_tema_id"=$1 ORDER BY d."version" DESC LIMIT 1`,
+        [assignmentId],
+      ) as Array<{ revision: RevisionPatResultado | null }>;
+    } catch (error: unknown) { this.handleError(error); }
+    if (rows[0] && ![RevisionPatResultado.OBSERVADO, RevisionPatResultado.RECHAZADO].includes(rows[0].revision as RevisionPatResultado)) {
+      throw new ConflictException(rows[0].revision === null
+        ? 'La última versión del PAT todavía está pendiente de revisión.'
+        : 'La última versión del PAT ya fue aprobada y no admite otra entrega.');
+    }
+  }
+
   private async authorizeUpload(source: DataSource | import('typeorm').EntityManager, context: AssignmentContext, actor: Usuario): Promise<void> {
     if (actor.rol !== UsuarioRol.ESTUDIANTE) throw new ForbiddenException('Solo ESTUDIANTE puede cargar documentos PAT.');
     const student = await this.studentId(source, actor.id);
@@ -177,7 +201,7 @@ export class DocumentosPatService {
     if (context.grupo_id) {
       let rows: unknown[];
       try { rows = await source.query(
-          `SELECT 1 FROM ${this.schema()}."grupo_integrante" gi JOIN ${this.schema()}."estudiante" e ON e."id"=gi."estudiante_id" WHERE gi."grupo_id"=$1 AND gi."estudiante_id"=$2 AND gi."estado"='ACTIVO' AND gi."rol"='REPRESENTANTE' AND e."usuario_id"=$3 LIMIT 1`,
+          `SELECT 1 FROM ${this.schema()}."grupo_integrante" gi JOIN ${this.schema()}."estudiante" e ON e."id"=gi."estudiante_id" WHERE gi."grupo_id"=$1 AND gi."estudiante_id"=$2 AND gi."estado"='ACTIVO' AND gi."rol_en_grupo"='REPRESENTANTE' AND e."usuario_id"=$3 LIMIT 1`,
           [context.grupo_id, student, actor.id],
         ) as unknown[]; }
       catch (error: unknown) { this.handleError(error); }
@@ -241,9 +265,18 @@ export class DocumentosPatService {
       id: item.id, asignacion_tema_id: item.asignacion_tema_id, plantilla_id: item.plantilla_id,
       version: item.version, nombre_archivo: item.nombre_archivo, formato: item.formato,
       tamano_bytes: Number(item.tamano_bytes), hash_sha256: item.hash_sha256, fecha_carga: item.fecha_carga,
-      revision: 'PENDIENTE',
+      revision: item.revision?.resultado ?? 'PENDIENTE',
+      detalle_revision: item.revision ? this.toRevisionResponse(item.revision) : null,
       plantilla: { id: item.plantilla?.id ?? item.plantilla_id, version: item.plantilla?.version ?? '', nombre_archivo: item.plantilla?.nombre_archivo ?? '' },
       cargador: { id: item.cargado_por?.id ?? item.cargado_por_id, nombres: item.cargado_por?.nombres ?? '', apellidos: item.cargado_por?.apellidos ?? '' },
+    };
+  }
+
+  private toRevisionResponse(revision: RevisionPat): RevisionPatResponseDto {
+    return {
+      id: revision.id, documento_pat_id: revision.documento_pat_id, revisor_id: revision.revisor_id,
+      resultado: revision.resultado, observaciones: revision.observaciones, fecha_revision: revision.fecha_revision,
+      revisor: { id: revision.revisor?.id ?? revision.revisor_id, nombres: revision.revisor?.nombres ?? '', apellidos: revision.revisor?.apellidos ?? '' },
     };
   }
 
@@ -261,6 +294,6 @@ export class DocumentosPatService {
       if (['23503', '23514'].includes(driver.code ?? '')) throw new ConflictException('La carga no cumple las reglas vigentes del PAT.');
       if (['40001', '40P01'].includes(driver.code ?? '')) throw new ConflictException('Otra operación simultánea modificó este trabajo; vuelve a intentarlo.');
     }
-    throw new ServiceUnavailableException('No fue posible completar la operación de documentos PAT.');
+    throw new ServiceUnavailableException('No fue posible completar la operación de documentos PAT.', { cause: error });
   }
 }

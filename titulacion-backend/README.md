@@ -697,8 +697,28 @@ anteriores se conservan y no pueden alterarse ni eliminarse.
 ADMIN, los integrantes del trabajo y su tutor vigente pueden consultar el
 historial en `GET .../documentos-pat`, la última versión en `GET
 .../ultima`, y descargar la última o una versión histórica mediante las rutas
-`/descarga`. Las URL firmadas duran cinco minutos. La revisión formal aún no está
-implementada; por ahora cada entrega informa `revision: PENDIENTE`.
+`/descarga`. Las URL firmadas duran cinco minutos. Cada versión inicia como
+`PENDIENTE` y ADMIN puede revisarla una sola vez en `POST
+.../documentos-pat/{documentoId}/revision` con resultado `APROBADO`, `OBSERVADO`
+o `RECHAZADO`. Observar o rechazar exige observaciones; quienes tengan acceso
+al trabajo pueden leer la revisión con `GET
+.../documentos-pat/{documentoId}/revision`. Los metadatos incluyen `revision` y
+`detalle_revision`.
+
+Después de la primera entrega, solo se admite una nueva versión cuando la última
+fue `OBSERVADO` o `RECHAZADO`. Una versión pendiente o aprobada bloquea otra
+carga. ADMIN puede revisar versiones antiguas aún no revisadas; ese resultado
+no cambia la situación de la versión más reciente. Revisiones, observaciones y
+versiones anteriores se conservan como historial.
+
+Las revisiones nuevas requieren período `POSTULACION_CERRADA` o `EN_CURSO` y
+asignación de tema vigente. Las consultas históricas continúan disponibles
+después del archivo o anulación, aunque no se aceptan revisiones nuevas.
+
+El flujo de prueba es: entregar un PAT, consultarlo como ADMIN, registrar una
+observación, leerla con la cuenta estudiante, cargar una corrección y aprobar
+esa versión. La revisión no cambia automáticamente el estado del tema, período
+ni asignación.
 
 La migración se ejecuta explícitamente tras confirmar
 `DB_SCHEMA=titulacion_dev`. `npm run db:verify-documentos-pat` verifica la
@@ -706,6 +726,12 @@ migración y sus restricciones en un esquema temporal; no carga documentos de
 ejemplo. El barrido de archivos fallidos conserva solicitudes en PostgreSQL y
 reintenta aunque Redis no esté disponible, verificando que el objeto no esté
 referenciado antes de eliminarlo.
+
+La migración de revisiones se aplica explícitamente con `npm run migration:run`
+tras confirmar `DB_SCHEMA=titulacion_dev`. `npm run db:verify-revisiones-pat`
+comprueba las versiones históricas, reglas de corrección, revisiones únicas e
+inmutables, concurrencia, auditoría atómica y reversión protegida en un esquema
+temporal aislado.
 
 ## Verificación
 

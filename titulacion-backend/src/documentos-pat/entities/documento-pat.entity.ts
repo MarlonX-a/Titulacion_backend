@@ -1,8 +1,9 @@
-import { Check, Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, Index, JoinColumn, ManyToOne, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { AsignacionTema } from '../../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { PlantillaPat } from '../../plantillas-pat/entities/plantilla-pat.entity.js';
 import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 import { DocumentoPatFormato } from '../enums/documento-pat-formato.enum.js';
+import type { RevisionPat } from '../../revisiones-pat/entities/revision-pat.entity.js';
 
 @Entity({ name: 'documento_pat' })
 @Index('UQ_documento_pat_asignacion_version', ['asignacion_tema_id', 'version'], { unique: true })
@@ -29,5 +30,6 @@ export class DocumentoPat {
   @Column({ type: 'uuid', name: 'cargado_por_id' }) cargado_por_id: string;
   @ManyToOne(() => Usuario, { nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'cargado_por_id', foreignKeyConstraintName: 'FK_documento_pat_cargador' }) cargado_por: Usuario;
+  @OneToOne('RevisionPat', (revision: RevisionPat) => revision.documento_pat) revision: RevisionPat | null;
   @Column({ type: 'timestamptz', name: 'fecha_carga', default: () => 'CURRENT_TIMESTAMP' }) fecha_carga: Date;
 }

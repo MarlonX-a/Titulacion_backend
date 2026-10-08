@@ -35,6 +35,7 @@
     "db:verify-asignaciones-tutor": "npm run build && node dist/database/verify-asignaciones-tutor.js",
     "db:verify-plantillas-pat": "npm run build && node dist/database/verify-plantillas-pat-migration.js",
     "db:verify-documentos-pat": "npm run build && node dist/database/verify-documentos-pat-migration.js",
+    "db:verify-revisiones-pat": "npm run build && node dist/database/verify-conflictos-migration.js",
     "migration:create": "typeorm migration:create",
     "migration:generate": "npm run build && typeorm migration:generate -d dist/database/data-source.js",
     "migration:show": "npm run build && typeorm migration:show -d dist/database/data-source.js",
