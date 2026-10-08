@@ -30,6 +30,15 @@ describe('AppController (e2e)', () => {
       .expect('Hello World!');
   });
 
+  it('documenta el módulo de carga tutorial y protege sus operaciones', async () => {
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.paths['/periodos/{periodoId}/config-carga-tutorial']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/config-carga-tutorial/efectiva/me']).toBeDefined();
+    await request(app.getHttpServer())
+      .get('/periodos/00000000-0000-4000-8000-000000000001/config-carga-tutorial')
+      .expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

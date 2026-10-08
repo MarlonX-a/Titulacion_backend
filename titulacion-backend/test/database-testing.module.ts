@@ -26,6 +26,7 @@ import { ConflictoParticipante } from '../src/conflictos/entities/conflicto-part
 import { AsignacionTema } from '../src/asignaciones-tema/entities/asignacion-tema.entity.js';
 import { CredencialUsuario } from '../src/auth/entities/credencial-usuario.entity.js';
 import { CorreoSalida } from '../src/auth/entities/correo-salida.entity.js';
+import { ConfigCargaTutorial } from '../src/carga-tutorial/entities/config-carga-tutorial.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -391,6 +392,7 @@ const correoTestRepository = {
   create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,
   save: async (value: CorreoSalida) => { const stored = { ...value, id: value.id ?? randomUUID(), creada_en: value.creada_en ?? new Date() }; correoRecords.push(stored); return stored; },
 };
+const configCargaTutorialTestRepository = emptyRepository<ConfigCargaTutorial>();
 
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
@@ -437,6 +439,7 @@ export const usuarioTestDataSource = {
     { target: AsignacionTema },
     { target: CredencialUsuario },
     { target: CorreoSalida },
+    { target: ConfigCargaTutorial },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -457,6 +460,7 @@ export const usuarioTestDataSource = {
     if (entity === AsignacionTema) return assignmentTemaTestRepository;
     if (entity === CredencialUsuario) return credencialTestRepository;
     if (entity === CorreoSalida) return correoTestRepository;
+    if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
@@ -491,6 +495,7 @@ export const usuarioTestDataSource = {
           if (entity === AsignacionTema) return assignmentTemaTestRepository;
           if (entity === CredencialUsuario) return credencialTestRepository;
           if (entity === CorreoSalida) return correoTestRepository;
+          if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),

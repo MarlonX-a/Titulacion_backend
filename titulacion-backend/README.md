@@ -63,24 +63,24 @@ Después de cambiar variables de entorno, reinicia el proceso.
 El backend lee `.env`. Una variable definida en el entorno de ejecución tiene
 prioridad sobre la misma variable del archivo.
 
-| Variable          | Valores permitidos                  | Predeterminado si se omite                        |
-| ----------------- | ----------------------------------- | ------------------------------------------------- |
-| `NODE_ENV`        | `development`, `test`, `production` | `development`                                     |
-| `PORT`            | Entero decimal entre `1` y `65535`  | `3000`                                            |
-| `SWAGGER_ENABLED` | Exactamente `true` o `false`        | `true` fuera de producción; `false` en producción |
-| `DB_HOST`         | Host no vacío                       | `localhost`                                       |
-| `DB_PORT`         | Entero decimal entre `1` y `65535`  | `5432`                                            |
-| `DB_SCHEMA`       | Identificador de esquema PostgreSQL | `titulacion_dev`                                  |
-| `DB_USERNAME`     | Usuario PostgreSQL no vacío         | Obligatorio                                       |
-| `DB_PASSWORD`     | Contraseña no vacía                 | Obligatorio                                       |
-| `DB_NAME`         | Nombre de base de datos no vacío    | Obligatorio                                       |
-| `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH` | Rutas a claves RS256 persistentes | Generadas localmente; obligatorias en producción |
-| `AUTH_ISSUER`     | Emisor de los JWT propios            | `http://127.0.0.1:3000` en desarrollo             |
-| `AUTH_ORIGINS`    | Lista exacta de orígenes web         | Vacía; producción debe definir los orígenes        |
-| `REDIS_HOST`, `REDIS_PORT` | Redis/BullMQ para límites y trabajos | `127.0.0.1`, `6379`                        |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` | Servidor de correo | Mailpit local en puerto `1025`              |
-| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3 | MinIO en desarrollo |
-| `OUTBOX_ENCRYPTION_KEY_PATH` | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente |
+| Variable                                                     | Valores permitidos                                             | Predeterminado si se omite                        |
+| ------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------- |
+| `NODE_ENV`                                                   | `development`, `test`, `production`                            | `development`                                     |
+| `PORT`                                                       | Entero decimal entre `1` y `65535`                             | `3000`                                            |
+| `SWAGGER_ENABLED`                                            | Exactamente `true` o `false`                                   | `true` fuera de producción; `false` en producción |
+| `DB_HOST`                                                    | Host no vacío                                                  | `localhost`                                       |
+| `DB_PORT`                                                    | Entero decimal entre `1` y `65535`                             | `5432`                                            |
+| `DB_SCHEMA`                                                  | Identificador de esquema PostgreSQL                            | `titulacion_dev`                                  |
+| `DB_USERNAME`                                                | Usuario PostgreSQL no vacío                                    | Obligatorio                                       |
+| `DB_PASSWORD`                                                | Contraseña no vacía                                            | Obligatorio                                       |
+| `DB_NAME`                                                    | Nombre de base de datos no vacío                               | Obligatorio                                       |
+| `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH`                | Rutas a claves RS256 persistentes                              | Generadas localmente; obligatorias en producción  |
+| `AUTH_ISSUER`                                                | Emisor de los JWT propios                                      | `http://127.0.0.1:3000` en desarrollo             |
+| `AUTH_ORIGINS`                                               | Lista exacta de orígenes web                                   | Vacía; producción debe definir los orígenes       |
+| `REDIS_HOST`, `REDIS_PORT`                                   | Redis/BullMQ para límites y trabajos                           | `127.0.0.1`, `6379`                               |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | MinIO en desarrollo                               |
+| `OUTBOX_ENCRYPTION_KEY_PATH`                                 | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente                               |
 
 Un valor vacío o inválido detiene el arranque e identifica la variable afectada,
 sin incluir su valor en el error. `PORT` se convierte a número y
@@ -100,7 +100,8 @@ privado configurados.
 
 ### Preparar servicios de desarrollo
 
-El archivo `docker-compose.dev.yml` proporciona Redis, MinIO y Mailpit. Si
+El archivo `docker-compose.dev.yml` proporciona Redis, almacenamiento S3 local
+(AIStor de MinIO) y Mailpit. Si
 Docker Desktop está instalado:
 
 ```powershell
@@ -114,7 +115,8 @@ npm run start:dev
 `auth:keys` crea claves privadas locales ignoradas por Git y no sobrescribe
 archivos existentes. El comando `db:prepare-auth` crea únicamente el esquema
 `titulacion_dev` y ejecuta las migraciones; no modifica `public` ni
-`local_demo`. Mailpit muestra los mensajes locales en
+`local_demo`. En desarrollo el backend crea el bucket privado de MinIO al
+recibir la primera importación. Mailpit muestra los mensajes locales en
 [http://localhost:8025](http://localhost:8025).
 
 El backend escucha en `127.0.0.1` fuera de producción. No publiques estos
@@ -168,6 +170,9 @@ npm run db:verify-grupos
 
 # Comprobar autenticación, esquema limpio y reversión protegida
 npm run db:verify-auth
+
+# Comprobar límites tutoriales, prioridad, concurrencia y auditoría
+npm run db:verify-carga-tutorial
 
 # Crear titulacion_dev y aplicar migraciones pendientes (solo cuando se decida)
 npm run db:prepare-auth
@@ -531,7 +536,10 @@ Antes de postular, el docente debe tener perfil, cuenta activa con rol `DOCENTE`
 {
   "tema_id": "UUID-del-tema-publicado",
   "modalidad": "INDIVIDUAL",
-  "tutores_propuestos": ["UUID-del-docente-preferido", "UUID-del-segundo-docente"]
+  "tutores_propuestos": [
+    "UUID-del-docente-preferido",
+    "UUID-del-segundo-docente"
+  ]
 }
 ```
 
@@ -598,6 +606,29 @@ migraciones pendientes con `npm run migration:show` y aplícalas con
 `npm run migration:run`. No se generan asignaciones de ejemplo.
 `npm run db:verify-asignaciones-tema` comprueba conflictos, asignación
 concurrente, auditoría y anulación por `NO_ADMITIDO` en un esquema temporal.
+
+## Configuración de carga tutorial
+
+ADMIN configura el máximo de trabajos por docente para cada período con
+`POST /periodos/{periodoId}/config-carga-tutorial`. Enviar `docente_id: null`
+(o no enviarlo) crea el límite global; indicar el UUID de un perfil docente
+crea un límite específico. El máximo y `bloquear_al_superar` son decisiones
+administrativas, sin valores predeterminados académicos. El perfil específico
+prevalece sobre el global en ambos campos. La consulta efectiva está disponible
+para ADMIN por docente y para DOCENTE sobre su propio perfil; si no hay límite
+aplicable, devuelve `SIN_CONFIGURACION` y `configuracion: null`.
+
+ADMIN puede listar y editar configuraciones mientras el período no esté
+ARCHIVADO. No se eliminan físicamente; toda alta y cambio efectivo queda
+auditado. Todavía no se cuentan tutorías ni se asignan tutores: esa lógica se
+incorporará con las asignaciones definitivas y requerirá una configuración
+aplicable.
+
+Después de confirmar `DB_SCHEMA=titulacion_dev`, revisa y aplica la migración
+explícitamente con `npm run migration:show` y `npm run migration:run`. El
+verificador `npm run db:verify-carga-tutorial` prueba prioridad, restricciones,
+unicidad concurrente, auditoría atómica y reversión en un esquema temporal; no
+crea configuraciones en `titulacion_dev`.
 
 ## Verificación
 

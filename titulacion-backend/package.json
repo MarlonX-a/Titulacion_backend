@@ -30,6 +30,7 @@
     "db:verify-conflictos": "npm run build && node dist/database/verify-conflictos-migration.js",
     "db:verify-asignaciones-tema": "npm run build && node dist/database/verify-asignaciones-tema.js",
     "db:verify-auth": "npm run build && node dist/database/verify-auth-migration.js",
+    "db:verify-carga-tutorial": "npm run build && node dist/database/verify-carga-tutorial-migration.js",
     "migration:create": "typeorm migration:create",
     "migration:generate": "npm run build && typeorm migration:generate -d dist/database/data-source.js",
     "migration:show": "npm run build && typeorm migration:show -d dist/database/data-source.js",
