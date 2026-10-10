@@ -38,6 +38,7 @@ import { CreatePeriodoDto } from './dto/create-periodo.dto.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodosService } from './periodos.service.js';
+import { InicioTitulacionService } from './inicio-titulacion.service.js';
 
 @ApiTags('Períodos de titulación')
 @ApiBearerAuth('bearer')
@@ -48,7 +49,10 @@ import { PeriodosService } from './periodos.service.js';
 @Controller('periodos')
 @Roles(UsuarioRol.ADMIN)
 export class PeriodosController {
-  constructor(private readonly periodos: PeriodosService) {}
+  constructor(
+    private readonly periodos: PeriodosService,
+    private readonly inicioTitulacion: InicioTitulacionService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Crear un período en estado BORRADOR' })
@@ -147,5 +151,22 @@ export class PeriodosController {
     @Req() request: Request,
   ): Promise<PeriodoResponseDto> {
     return this.periodos.cerrarPostulacion(id, dto, actor, request.ip || null);
+  }
+
+  @Post(':id/iniciar-titulacion')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Iniciar formalmente la titulación tras resolver los condicionados' })
+  @ApiOkResponse({ type: PeriodoResponseDto })
+  @ApiBadRequestResponse({ description: 'El identificador es inválido o el cuerpo tiene propiedades no permitidas.' })
+  @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
+  @ApiConflictResponse({ description: 'El estado, la fecha o los condicionados pendientes impiden iniciar.' })
+  iniciarTitulacion(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: AbrirPostulacionDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<PeriodoResponseDto> {
+    void dto;
+    return this.inicioTitulacion.iniciar(id, actor, request.ip || null);
   }
 }

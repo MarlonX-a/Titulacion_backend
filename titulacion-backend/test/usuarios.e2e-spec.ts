@@ -32,6 +32,7 @@ import {
   setPeriodoTestFechas,
   auditoriaTestRecords,
   habilitadosTestRecords,
+  setPeriodoTestInicioTitulacion,
   findUsuarioTestIdByExternalId,
   DatabaseTestingModule,
 } from './database-testing.module.js';
@@ -1027,6 +1028,7 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/cerrar-postulacion'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{id}/iniciar-titulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/conflictos'].get).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{temaId}/conflicto/resolver'].post).toBeDefined();
   });
@@ -1150,5 +1152,70 @@ describe('Usuarios (e2e)', () => {
       linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Fuera de plazo', descripcion: 'No debe crearse', min_integrantes: 1, max_integrantes: 2,
     }).expect(409);
     await authenticated('post', `/periodos/${period.body.id}/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
+  });
+
+  it('inicia la titulación solo desde POSTULACION_CERRADA, en fecha y sin condicionados pendientes', async () => {
+    const admin = addAdmin();
+    const period = await createPeriod('INICIO-TITULACION');
+    const first = await createStudentProfile('student-sub', '0102030400', 'START-1');
+    const second = await createStudentProfile('other-student-sub', '0102030418', 'START-2');
+    const firstPending = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: first.profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito A' })
+      .expect(201);
+    const secondPending = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: second.profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito B' })
+      .expect(201);
+
+    const rows = habilitadosTestRecords();
+    const firstRow = rows.find((row) => row.id === firstPending.body.id);
+    const secondRow = rows.find((row) => row.id === secondPending.body.id);
+    if (!firstRow || !secondRow) throw new Error('No se crearon los condicionados de prueba.');
+    firstRow.estado = HabilitadoEstado.SUSPENDIDO;
+    second.account.estado = UsuarioEstado.INACTIVO;
+
+    admin.estado = UsuarioEstado.INACTIVO;
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(403);
+    admin.estado = UsuarioEstado.ACTIVO;
+
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() + 60_000));
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub')
+      .send({ estado: PeriodoEstado.EN_CURSO }).expect(400);
+    await authenticated('post', '/periodos/no-es-uuid/iniciar-titulacion', 'admin-sub').expect(400);
+    addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Prueba', rol: UsuarioRol.DOCENTE });
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'docente-sub').expect(403);
+
+    setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() - 1_000));
+    const blocked = await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
+    expect(blocked.body.message).toContain('2 estudiantes condicionados pendientes');
+
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${firstPending.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No cumple el requisito' }).expect(200);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${secondPending.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No cumple el requisito' }).expect(200);
+
+    const started = await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(200);
+    expect(started.body.estado).toBe(PeriodoEstado.EN_CURSO);
+    expect(auditoriaTestRecords().map((entry) => entry.accion)).toContain('INICIAR_TITULACION');
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
+  });
+
+  it('permite iniciar cuando todos los condicionados fueron admitidos antes de la fecha', async () => {
+    addAdmin();
+    const period = await createPeriod('INICIO-ADMITIDOS');
+    const student = await createStudentProfile('student-sub', '0102030400', 'START-3');
+    const start = new Date(Date.now() + 60_000);
+    setPeriodoTestInicioTitulacion(period.body.id, start);
+    const pending = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: student.profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Validar matrícula' })
+      .expect(201);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados/${pending.body.id}/resolver-ingreso`, 'admin-sub')
+      .send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+    setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() - 1_000));
+    await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub')
+      .expect(200).then((response) => expect(response.body.estado).toBe(PeriodoEstado.EN_CURSO));
   });
 });
