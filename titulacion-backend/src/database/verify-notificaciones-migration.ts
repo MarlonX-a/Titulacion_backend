@@ -5,6 +5,7 @@ import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
 import { CreateNotificaciones20261013100000 } from './migrations/20261013100000-CreateNotificaciones.js';
 import { EnforceNotificationEmailDelivery20261014100000 } from './migrations/20261014100000-EnforceNotificationEmailDelivery.js';
+import { ExtendProcessNotifications20261015100000 } from './migrations/20261015100000-ExtendProcessNotifications.js';
 import { ConfigService } from '@nestjs/config';
 import type { AppEnvironment } from '../config/environment.js';
 import { CorreoWorker } from '../correo/correo.worker.js';
@@ -37,6 +38,11 @@ async function verify(): Promise<void> {
   try { await integrityMigration.up(integrityRunner); await integrityRunner.commitTransaction(); }
   catch (error: unknown) { if (integrityRunner.isTransactionActive) await integrityRunner.rollbackTransaction(); throw error; }
   finally { await integrityRunner.release(); }
+  const processMigration = new ExtendProcessNotifications20261015100000();
+  const processRunner = isolated.createQueryRunner(); await processRunner.connect(); await processRunner.startTransaction();
+  try { await processMigration.up(processRunner); await processRunner.commitTransaction(); }
+  catch (error: unknown) { if (processRunner.isTransactionActive) await processRunner.rollbackTransaction(); throw error; }
+  finally { await processRunner.release(); }
 
   const appId = randomUUID(); const emailId = randomUUID();
   await isolated.query(`INSERT INTO ${quoted()}."notificacion" ("id","usuario_id","tipo","titulo","mensaje","entidad_tipo","entidad_id","canal","fecha_envio") VALUES ($1,$2,'PAT_ENTREGADO','Nueva entrega','Aviso de prueba','documento_pat',$3,'EN_APP',CURRENT_TIMESTAMP)`, [appId, userId, randomUUID()]);
@@ -52,9 +58,9 @@ async function verify(): Promise<void> {
   const rollback = isolated.createQueryRunner(); await rollback.connect(); await rollback.startTransaction();
   try {
     await rollback.query(`INSERT INTO ${quoted()}."notificacion" ("id","usuario_id","tipo","titulo","mensaje","entidad_tipo","entidad_id","canal") VALUES ($1,$2,'PAT_REVISADO','Revisión','Rollback','revision_pat',$3,'EMAIL')`, [failedDelivery, userId, randomUUID()]);
-    await rollback.query(`INSERT INTO ${quoted()}."entrega_correo_notificacion" ("notificacion_id","estado") VALUES ($1,'PROCESANDO')`, [failedDelivery]);
+    await rollback.query(`INSERT INTO ${quoted()}."entrega_correo_notificacion" ("notificacion_id","estado") VALUES ($1,'PENDIENTE')`, [failedDelivery]);
     await rollback.rollbackTransaction();
-  } catch { if (rollback.isTransactionActive) await rollback.rollbackTransaction(); }
+  } catch (error: unknown) { if (rollback.isTransactionActive) await rollback.rollbackTransaction(); throw error; }
   finally { await rollback.release(); }
   const rolledBack = await isolated.query(`SELECT 1 FROM ${quoted()}."notificacion" WHERE "id"=$1`, [failedDelivery]) as unknown[];
   if (rolledBack.length) throw new Error('Una solicitud fallida dejó una notificación confirmada parcialmente.');
@@ -70,8 +76,8 @@ async function verify(): Promise<void> {
   const invalidLease = await isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PROCESANDO' WHERE "id"=$1`, [deliveryId]).then(() => false, (error: unknown) => code(error) === '23514');
   if (!invalidLease) throw new Error('La base permitió estado PROCESANDO sin reserva.');
   const claims = await Promise.all([
-    isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PROCESANDO', "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE "id"=$1 AND "estado"='PENDIENTE' RETURNING "id"`, [deliveryId]),
-    isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PROCESANDO', "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE "id"=$1 AND "estado"='PENDIENTE' RETURNING "id"`, [deliveryId]),
+    isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PROCESANDO', "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes', "reserva_token"=$2 WHERE "id"=$1 AND "generacion_reintento"=0 AND "estado"='PENDIENTE' RETURNING "id"`, [deliveryId, randomUUID()]),
+    isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PROCESANDO', "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes', "reserva_token"=$2 WHERE "id"=$1 AND "generacion_reintento"=0 AND "estado"='PENDIENTE' RETURNING "id"`, [deliveryId, randomUUID()]),
   ]);
   const claimedCounts = claims.map((result) => Array.isArray(result) && Array.isArray(result[0]) ? result[0].length : Array.isArray(result) ? result.length : 0);
   if (claimedCounts.reduce((total, count) => total + count, 0) !== 1) {
@@ -79,14 +85,15 @@ async function verify(): Promise<void> {
     throw new Error(`Dos workers reclamaron simultáneamente la misma entrega de correo (filas=${claimedCounts.join(',')}; estado=${state[0]?.estado}; intentos=${state[0]?.intentos}).`);
   }
   await isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "reserva_hasta"=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE "id"=$1`, [deliveryId]);
-  const reclaimedResult: unknown = await isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PENDIENTE', "reserva_hasta"=NULL WHERE "id"=$1 AND "estado"='PROCESANDO' AND "reserva_hasta" <= CURRENT_TIMESTAMP RETURNING "id"`, [deliveryId]);
+  const reclaimedResult: unknown = await isolated.query(`UPDATE ${quoted()}."entrega_correo_notificacion" SET "estado"='PENDIENTE', "generacion_reintento"="generacion_reintento"+1, "reserva_hasta"=NULL, "reserva_token"=NULL WHERE "id"=$1 AND "estado"='PROCESANDO' AND "reserva_hasta" <= CURRENT_TIMESTAMP RETURNING "id", "generacion_reintento"`, [deliveryId]);
   const reclaimed = Array.isArray(reclaimedResult) && Array.isArray(reclaimedResult[0]) ? reclaimedResult[0] : reclaimedResult;
   if (!Array.isArray(reclaimed) || reclaimed.length === 0) throw new Error('No se recuperó una reserva de correo vencida.');
+  const generation = Number((reclaimed[0] as { generacion_reintento: number }).generacion_reintento);
   const environment = loadEnvironment();
   if (['127.0.0.1', 'localhost', '[::1]'].includes(environment.SMTP_HOST ?? '') && environment.SMTP_PORT === 1025) {
     const config = new ConfigService<AppEnvironment, true>(environment);
     const worker = new CorreoWorker(isolated, config, new SmtpTransportService(config));
-    await worker.process({ name: 'enviar-notificacion', data: { id: deliveryId } } as never);
+    await worker.process({ name: 'enviar-notificacion', data: { id: deliveryId, generation } } as never);
     const sent = await isolated.query(`SELECT e."estado"::text AS estado, n."fecha_envio" FROM ${quoted()}."entrega_correo_notificacion" e JOIN ${quoted()}."notificacion" n ON n."id"=e."notificacion_id" WHERE e."id"=$1`, [deliveryId]) as Array<{ estado: string; fecha_envio: Date | null }>;
     if (sent[0]?.estado !== 'ENVIADO' || !sent[0]?.fecha_envio) throw new Error('El worker no confirmó el correo aceptado por Mailpit.');
     const mailpit = await fetch('http://127.0.0.1:8025/api/v1/messages?limit=50').then((response) => response.ok ? response.json() as Promise<{ messages?: unknown[] }> : null).catch(() => null);
@@ -94,7 +101,7 @@ async function verify(): Promise<void> {
     if (!received) throw new Error('Mailpit no mostró el mensaje de prueba de notificaciones.');
   }
   const runnerDown = isolated.createQueryRunner(); await runnerDown.connect(); await runnerDown.startTransaction();
-  const protectedDown = await integrityMigration.down(runnerDown).then(async () => migration.down(runnerDown)).then(() => false, async (error: unknown) => { await runnerDown.rollbackTransaction(); return error instanceof Error && error.message.includes('notificaciones'); });
+  const protectedDown = await processMigration.down(runnerDown).then(async () => integrityMigration.down(runnerDown)).then(async () => migration.down(runnerDown)).then(() => false, async (error: unknown) => { await runnerDown.rollbackTransaction(); return error instanceof Error && error.message.includes('notificaciones'); });
   if (runnerDown.isTransactionActive) await runnerDown.rollbackTransaction(); await runnerDown.release();
   if (!protectedDown) throw new Error('La reversión permitió eliminar registros de notificación.');
   console.log('Verificación correcta: notificaciones únicas e inmutables, canal de aplicación, estado de entrega y reversión protegida.');

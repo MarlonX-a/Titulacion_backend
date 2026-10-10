@@ -1,4 +1,4 @@
-import { createDecipheriv } from 'node:crypto';
+import { createDecipheriv, randomUUID } from 'node:crypto';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
@@ -15,7 +15,8 @@ import { EntregaCorreoEstado } from '../notificaciones/enums/entrega-correo-esta
 import { SmtpTransportService } from './smtp-transport.service.js';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 
-interface ClaimedDelivery { notificacion_id: string; usuario_id: string; email: string; titulo: string; mensaje: string; }
+interface NotificationJob { id: string; generation?: number }
+interface ClaimedDelivery { notificacion_id: string; usuario_id: string; email: string; titulo: string; mensaje: string; intentos: number; reserva_token: string }
 
 @Injectable()
 @Processor('correo')
@@ -32,8 +33,8 @@ export class CorreoWorker extends WorkerHost {
     this.encryptionKey = keyPath ? Buffer.from(readEncryptionKey(keyPath), 'base64') : Buffer.alloc(32);
   }
 
-  async process(job: Job<{ id: string }>): Promise<void> {
-    if (job.name === 'enviar-notificacion') return this.sendNotification(job.data.id);
+  async process(job: Job<NotificationJob>): Promise<void> {
+    if (job.name === 'enviar-notificacion') return this.sendNotification(job.data.id, job.data.generation ?? 0);
     const repo = this.dataSource.getRepository(CorreoSalida);
     const message = await repo.findOne({ where: { id: job.data.id }, relations: { usuario: true } });
     if (!message || message.enviado_en || message.expira_en <= new Date()) return;
@@ -65,30 +66,35 @@ export class CorreoWorker extends WorkerHost {
     }
   }
 
-  private async sendNotification(id: string): Promise<void> {
+  private async sendNotification(id: string, generation: number): Promise<void> {
     const s = this.schema();
+    const reservationToken = randomUUID();
     const result: unknown = await this.dataSource.query(`
       UPDATE ${s}."entrega_correo_notificacion" e SET "estado"='PROCESANDO', "intentos"=e."intentos"+1,
-        "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes', "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"=NULL
+        "reserva_hasta"=CURRENT_TIMESTAMP + INTERVAL '2 minutes', "reserva_token"=$3, "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"=NULL
       FROM ${s}."notificacion" n JOIN ${s}."usuario" u ON u."id"=n."usuario_id"
-      WHERE e."id"=$1 AND e."notificacion_id"=n."id" AND n."canal"='EMAIL' AND u."estado"='ACTIVO'
-        AND (e."estado"='PENDIENTE' OR (e."estado"='PROCESANDO' AND e."reserva_hasta" <= CURRENT_TIMESTAMP))
-      RETURNING n."id" AS notificacion_id, n."usuario_id", u."email", n."titulo", n."mensaje", e."intentos"`, [id]);
-    const rows = this.queryRows<ClaimedDelivery>(result);
-    if (!rows.length) {
-      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" e SET "estado"='OMITIDO', "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE e."id"=$1 AND e."estado" IN ('PENDIENTE','PROCESANDO') AND NOT EXISTS (SELECT 1 FROM ${s}."notificacion" n JOIN ${s}."usuario" u ON u."id"=n."usuario_id" WHERE n."id"=e."notificacion_id" AND u."estado"='ACTIVO')`, [id]);
+      WHERE e."id"=$1 AND e."generacion_reintento"=$2 AND e."notificacion_id"=n."id" AND n."canal"='EMAIL' AND u."estado"='ACTIVO'
+        AND e."estado"='PENDIENTE' AND e."intentos"<5
+      RETURNING n."id" AS notificacion_id, n."usuario_id", u."email", n."titulo", n."mensaje", e."intentos", e."reserva_token"`, [id, generation, reservationToken]);
+    const delivery = this.queryRows<ClaimedDelivery>(result)[0];
+    if (!delivery) {
+      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" e SET "estado"='OMITIDO', "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE e."id"=$1 AND e."generacion_reintento"=$2 AND e."estado"='PENDIENTE' AND NOT EXISTS (SELECT 1 FROM ${s}."notificacion" n JOIN ${s}."usuario" u ON u."id"=n."usuario_id" WHERE n."id"=e."notificacion_id" AND u."estado"='ACTIVO')`, [id, generation]);
       return;
     }
-    const delivery = rows[0]!;
+    const account = await this.dataSource.query(`SELECT 1 FROM ${s}."usuario" WHERE "id"=$1 AND "estado"='ACTIVO'`, [delivery.usuario_id]) as unknown[];
+    if (!account.length) {
+      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='OMITIDO', "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "estado"='PROCESANDO' AND "reserva_token"=$2`, [id, reservationToken]);
+      return;
+    }
     try {
       await this.smtp.send({ to: delivery.email, subject: delivery.titulo, text: `${delivery.mensaje}\n\nConsulta los detalles ingresando al Sistema de Titulación.` });
       await this.dataSource.transaction(async (manager) => {
-        await manager.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='ENVIADO', "enviada_en"=CURRENT_TIMESTAMP, "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "estado"='PROCESANDO'`, [id]);
-        await manager.query(`UPDATE ${s}."notificacion" SET "fecha_envio"=CURRENT_TIMESTAMP WHERE "id"=$1`, [delivery.notificacion_id]);
+        const result: unknown = await manager.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='ENVIADO', "enviada_en"=CURRENT_TIMESTAMP, "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "estado"='PROCESANDO' AND "reserva_token"=$2 RETURNING "notificacion_id"`, [id, reservationToken]);
+        if (this.queryRows<{ notificacion_id: string }>(result).length) await manager.query(`UPDATE ${s}."notificacion" SET "fecha_envio"=CURRENT_TIMESTAMP WHERE "id"=$1`, [delivery.notificacion_id]);
       });
     } catch {
-      const state = Number((delivery as ClaimedDelivery & { intentos: number }).intentos) >= 5 ? EntregaCorreoEstado.FALLIDO : EntregaCorreoEstado.PENDIENTE;
-      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"=$2, "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"='No fue posible entregar el correo.' WHERE "id"=$1 AND "estado"='PROCESANDO'`, [id, state]);
+      const state = delivery.intentos >= 5 ? EntregaCorreoEstado.FALLIDO : EntregaCorreoEstado.PENDIENTE;
+      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"=$3, "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"='No fue posible entregar el correo.' WHERE "id"=$1 AND "estado"='PROCESANDO' AND "reserva_token"=$2`, [id, reservationToken, state]);
       throw new ServiceUnavailableException('No fue posible entregar el correo de notificación.');
     }
   }

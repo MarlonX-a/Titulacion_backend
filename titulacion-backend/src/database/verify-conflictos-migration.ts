@@ -20,8 +20,12 @@ import { AlignDocumentosPatLockOrder20261011100000 } from './migrations/20261011
 import { CreateRevisionesPat20261012100000 } from './migrations/20261012100000-CreateRevisionesPat.js';
 import { CreateNotificaciones20261013100000 } from './migrations/20261013100000-CreateNotificaciones.js';
 import { EnforceNotificationEmailDelivery20261014100000 } from './migrations/20261014100000-EnforceNotificationEmailDelivery.js';
+import { ExtendProcessNotifications20261015100000 } from './migrations/20261015100000-ExtendProcessNotifications.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { Notificacion } from '../notificaciones/entities/notificacion.entity.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
+import { Invitacion } from '../invitaciones/entities/invitacion.entity.js';
+import { InvitacionEstado } from '../invitaciones/enums/invitacion-estado.enum.js';
 import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { RevisionesPatService } from '../revisiones-pat/revisiones-pat.service.js';
@@ -95,7 +99,7 @@ async function verify(): Promise<void> {
   const options = createDatabaseOptions(loadEnvironment());
   admin = new DatabaseDataSource({ ...options, schema: 'public', entities: [], migrations: [] }); await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`); createdSchema = true;
-  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000];
+  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000, CreateNotificaciones20261013100000, EnforceNotificationEmailDelivery20261014100000, ExtendProcessNotifications20261015100000];
   isolated = new DatabaseDataSource({ ...options, schema, migrations }); await isolated.initialize(); await isolated.runMigrations({ transaction: 'all' });
 
   step = 'preparación de postulaciones concurrentes';
@@ -170,17 +174,36 @@ async function verify(): Promise<void> {
 
   step = 'asignación definitiva concurrente';
   const assignmentAudit = new AuditoriaService();
-  const assignmentPersistence = new AsignacionTemaPersistenciaService(assignmentAudit, new AsignacionTutorPersistenciaService(assignmentAudit));
-  const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence);
-  const assignmentsService = new AsignacionesTemaService(isolated.getRepository(AsignacionTema), isolated.getRepository(Estudiante), isolated, habilitadosService, audit, assignmentPersistence);
+  const notificationPersistence = new NotificacionesPersistenciaService(isolated);
+  step = 'destinatarios y privacidad de invitaciones';
+  const invitationForNotices = await isolated.getRepository(Invitacion).save(isolated.getRepository(Invitacion).create({
+    grupo: group, periodo: period, estudiante_emisor: students[3]!, estudiante_destino: students[4]!, estado: InvitacionEstado.PENDIENTE,
+    fecha_envio: now, expira_en: new Date(period.fecha_fin_postulacion.getTime() + 60_000), fecha_respuesta: null,
+  }));
+  await isolated.transaction((manager) => notificationPersistence.invitacion(manager, invitationForNotices.id, NotificacionTipo.INVITACION_RECIBIDA, students[3]!.usuario.id));
+  const receivedInvitationNotices = await isolated.query(`SELECT "usuario_id","canal"::text AS canal,"mensaje" FROM ${schemaSql()}."notificacion" WHERE "tipo"='INVITACION_RECIBIDA' AND "entidad_id"=$1 ORDER BY "usuario_id","canal"`, [invitationForNotices.id]) as Array<{ usuario_id: string; canal: string; mensaje: string }>;
+  if (receivedInvitationNotices.length !== 2 || receivedInvitationNotices.some((row) => row.usuario_id !== students[4]!.usuario.id || row.mensaje.includes('@') || row.mensaje.includes('Requisito pendiente'))) throw new Error('La invitación no notificó exclusivamente al destinatario por ambos canales o expuso información privada.');
+  invitationForNotices.estado = InvitacionEstado.RECHAZADA; invitationForNotices.fecha_respuesta = now;
+  await isolated.getRepository(Invitacion).save(invitationForNotices);
+  await isolated.transaction((manager) => notificationPersistence.invitacion(manager, invitationForNotices.id, NotificacionTipo.INVITACION_RECHAZADA, students[4]!.usuario.id));
+  const rejectedInvitationNotices = await isolated.query(`SELECT DISTINCT "usuario_id" FROM ${schemaSql()}."notificacion" WHERE "tipo"='INVITACION_RECHAZADA' AND "entidad_id"=$1`, [invitationForNotices.id]) as Array<{ usuario_id: string }>;
+  if (rejectedInvitationNotices.length !== 1 || rejectedInvitationNotices[0]?.usuario_id !== students[3]!.usuario.id) throw new Error('El aviso de rechazo de invitación no llegó únicamente al emisor.');
+  const assignmentPersistence = new AsignacionTemaPersistenciaService(assignmentAudit, new AsignacionTutorPersistenciaService(assignmentAudit), notificationPersistence);
+  const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence, notificationPersistence);
+  const assignmentsService = new AsignacionesTemaService(isolated.getRepository(AsignacionTema), isolated.getRepository(Estudiante), isolated, habilitadosService, audit, assignmentPersistence, notificationPersistence);
   const assignDto = { motivo: 'La comisión confirmó la evaluación y seleccionó la candidatura ganadora.' };
   const attempts = await Promise.allSettled([
     assignmentsService.assign(period.id, apps[1]!.id, assignDto, adminUser, null),
     assignmentsService.assign(period.id, apps[1]!.id, assignDto, adminUser, null),
   ]);
-  if (attempts.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('Dos solicitudes concurrentes asignaron ambas el mismo tema.');
+  if (attempts.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error(`La concurrencia esperaba un éxito y obtuvo ${attempts.filter((result) => result.status === 'fulfilled').length}: ${attempts.map((result) => result.status === 'rejected' ? `${String(result.reason)}${result.reason instanceof HttpException && (result.reason as HttpException & { cause?: unknown }).cause instanceof Error ? ` — ${(result.reason as HttpException & { cause: Error }).cause.message}` : ''}` : `asignación ${result.value.id}`).join(' | ')}`);
   const assignment = await isolated.getRepository(AsignacionTema).findOneByOrFail({ postulacion_id: apps[1]!.id });
   if (assignment.estado !== 'VIGENTE' || await appRepo.findOneByOrFail({ id: apps[1]!.id }).then((item) => item.estado) !== EstadoPostulacion.ACEPTADA || await appRepo.findOneByOrFail({ id: apps[0]!.id }).then((item) => item.estado) !== EstadoPostulacion.RECHAZADA || await isolated.getRepository(Tema).findOneByOrFail({ id: topic.id }).then((item) => item.estado) !== EstadoTema.ASIGNADO) throw new Error('La asignación no actualizó tema y postulaciones de forma atómica.');
+  const selectedAssignmentNotice = await isolated.query(`SELECT "canal"::text AS canal FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "tipo"='TEMA_ASIGNADO' AND "entidad_id"=$2 ORDER BY "canal"`, [students[1]!.usuario.id, assignment.id]) as Array<{ canal: string }>;
+  const rejectedApplicationNotice = await isolated.query(`SELECT count(*)::int AS total FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "tipo"='POSTULACION_RECHAZADA' AND "entidad_id"=$2`, [students[0]!.usuario.id, apps[0]!.id]) as Array<{ total: number }>;
+  const assignmentActorNotice = await isolated.query(`SELECT count(*)::int AS total FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "entidad_id"=$2`, [adminUser.id, assignment.id]) as Array<{ total: number }>;
+  const proposerAssignmentNotice = await isolated.query(`SELECT count(*)::int AS total FROM ${schemaSql()}."notificacion" WHERE "usuario_id"=$1 AND "tipo"='TEMA_ASIGNADO' AND "entidad_id"=$2`, [teacherUser.id, assignment.id]) as Array<{ total: number }>;
+  if (selectedAssignmentNotice.map((row) => row.canal).join(',') !== 'EMAIL,EN_APP' || Number(rejectedApplicationNotice[0]?.total ?? 0) !== 2 || Number(assignmentActorNotice[0]?.total ?? 0) !== 0 || Number(proposerAssignmentNotice[0]?.total ?? 0) !== 2) throw new Error('La asignación no notificó a seleccionados, descartados y proponente correctamente, o notificó al actor.');
 
   step = 'asignación directa de candidatura única y asignación grupal';
   const directAssignmentResponse = await assignmentsService.assign(period.id, directApplication.id, assignDto, adminUser, null);
@@ -216,17 +239,6 @@ async function verify(): Promise<void> {
   try { await revisionMigration.up(revisionRunner); await revisionRunner.commitTransaction(); }
   catch (error: unknown) { if (revisionRunner.isTransactionActive) await revisionRunner.rollbackTransaction(); throw error; }
   finally { await revisionRunner.release(); }
-  const notificationMigration = new CreateNotificaciones20261013100000();
-  const notificationRunner = isolated.createQueryRunner(); await notificationRunner.connect(); await notificationRunner.startTransaction();
-  try { await notificationMigration.up(notificationRunner); await notificationRunner.commitTransaction(); }
-  catch (error: unknown) { if (notificationRunner.isTransactionActive) await notificationRunner.rollbackTransaction(); throw error; }
-  finally { await notificationRunner.release(); }
-  const notificationIntegrityMigration = new EnforceNotificationEmailDelivery20261014100000();
-  const notificationIntegrityRunner = isolated.createQueryRunner(); await notificationIntegrityRunner.connect(); await notificationIntegrityRunner.startTransaction();
-  try { await notificationIntegrityMigration.up(notificationIntegrityRunner); await notificationIntegrityRunner.commitTransaction(); }
-  catch (error: unknown) { if (notificationIntegrityRunner.isTransactionActive) await notificationIntegrityRunner.rollbackTransaction(); throw error; }
-  finally { await notificationIntegrityRunner.release(); }
-  const notificationPersistence = new NotificacionesPersistenciaService(isolated!);
   const documentsService = new DocumentosPatService(isolated.getRepository(DocumentoPat), isolated, { signPrivateDownload: async () => '' } as unknown as AlmacenamientoService, {} as never, new AuditoriaService(), notificationPersistence);
   const reviewsService = new RevisionesPatService(isolated.getRepository(RevisionPat), isolated, documentsService, new AuditoriaService(), notificationPersistence);
   const historicalApproval = await reviewsService.crear(period.id, directAssignment.id, firstDocument.id, { resultado: RevisionPatResultado.APROBADO }, adminUser, null);
@@ -362,7 +374,7 @@ async function verify(): Promise<void> {
   const tutorService = new AsignacionesTutorService(
     isolated.getRepository(AsignacionTutor), isolated.getRepository(AsignacionTema), isolated.getRepository(PeriodoTitulacion),
     isolated.getRepository(Docente), isolated.getRepository(Estudiante), isolated.getRepository(GrupoIntegrante),
-    isolated.getRepository(TutorPropuesto), isolated, tutorAudit, new CargaTutorialPersistenciaService(),
+    isolated.getRepository(TutorPropuesto), isolated, tutorAudit, new CargaTutorialPersistenciaService(), notificationPersistence,
   );
   const tutorDto = { docente_id: teacher.id };
   const concurrentTutorAssignments = await Promise.allSettled([
@@ -377,6 +389,9 @@ async function verify(): Promise<void> {
   const oldTutor = await isolated.getRepository(AsignacionTutor).findOneByOrFail({ id: currentTutor.id });
   const newTutor = await isolated.getRepository(AsignacionTutor).findOneByOrFail({ id: replaced.asignacion.id });
   if (oldTutor.estado !== 'REEMPLAZADA' || oldTutor.motivo_cambio !== 'Reemplazo verificado en esquema temporal.' || newTutor.estado !== 'VIGENTE') throw new Error('El reemplazo no conservó el tutor anterior y el nuevo registro vigente.');
+  const replacementRecipients = await isolated.query(`SELECT "usuario_id" FROM ${schemaSql()}."notificacion" WHERE "tipo"='TUTOR_REEMPLAZADO' AND "entidad_id"=$1 ORDER BY "usuario_id"`, [newTutor.id]) as Array<{ usuario_id: string }>;
+  const replacementRecipientIds = new Set(replacementRecipients.map((row) => row.usuario_id));
+  if (!replacementRecipientIds.has(teacherUser.id) || !replacementRecipientIds.has(newTeacherUser.id) || replacementRecipientIds.has(adminUser.id)) throw new Error('El aviso de reemplazo no incluyó a ambos tutores o notificó al actor.');
   const tutorAuditCount = await isolated.getRepository(Auditoria).countBy({ accion: 'ASIGNAR_TUTOR' }) + await isolated.getRepository(Auditoria).countBy({ accion: 'REEMPLAZAR_TUTOR' });
   if (tutorAuditCount !== 2) throw new Error('La asignación y reemplazo de tutor no registraron auditoría atómica.');
   const secondTutorRejected = await isolated.getRepository(AsignacionTutor).insert({ asignacion_tema_id: currentTutorWorkId, docente_id: replacementTeacher.id, tutor_propuesto_id: null, tipo: AsignacionTutorTipo.ASIGNADO_DIRECTO, estado: AsignacionTutorEstado.VIGENTE, asignada_por_id: adminUser.id }).then(() => false, (error: unknown) => code(error) === '23505' || code(error) === '23514');

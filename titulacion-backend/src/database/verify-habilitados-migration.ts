@@ -15,6 +15,7 @@ import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
@@ -35,6 +36,7 @@ import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
 
 const schema = `test_habilitados_${randomBytes(8).toString('hex')}`;
+const notifications = { invitacion: async () => undefined, postulacion: async () => undefined, asignacionTema: async () => undefined, tutor: async () => undefined, ingreso: async () => undefined } as unknown as NotificacionesPersistenciaService;
 let schemaCreated = false;
 let verificationStep = 'conexión y migraciones';
 let adminDataSource: DatabaseDataSource | undefined;
@@ -113,7 +115,8 @@ async function verify(): Promise<void> {
     isolatedDataSource,
     new EstudiantesService(students, isolatedDataSource),
     audit,
-    new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit)),
+    new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications),
+    notifications,
   );
   const conditional = {
     estudiante_id: studentProfiles[0].id,

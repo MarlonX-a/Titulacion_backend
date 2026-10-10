@@ -25,6 +25,7 @@ import { HabilitadoEstado } from './enums/habilitado-estado.enum.js';
 import { HabilitadoOrigen } from './enums/habilitado-origen.enum.js';
 import { SituacionIngreso } from './enums/situacion-ingreso.enum.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 
 interface PostgresDriverError { code?: string; }
 
@@ -73,6 +74,7 @@ export class HabilitadosService {
     private readonly estudiantes: EstudiantesService,
     private readonly auditoria: AuditoriaService,
     private readonly asignaciones: AsignacionTemaPersistenciaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   /** Comprueba y bloquea una habilitación para una operación de grupo dentro de la transacción actual. */
@@ -253,6 +255,7 @@ export class HabilitadosService {
           resuelto_por_id: actor.id,
           observacion_ingreso: updated.observacion_ingreso,
         }, ip_origen: ip });
+        await this.notificaciones.ingreso(manager, record.id, actor.id);
         return responseFrom(updated);
       });
     } catch (error: unknown) {

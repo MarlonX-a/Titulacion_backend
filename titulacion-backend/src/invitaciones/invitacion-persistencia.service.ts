@@ -5,10 +5,12 @@ import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { Invitacion } from './entities/invitacion.entity.js';
 import { InvitacionEstado } from './enums/invitacion-estado.enum.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 @Injectable()
 export class InvitacionPersistenciaService {
-  constructor(private readonly auditoria: AuditoriaService) {}
+  constructor(private readonly auditoria: AuditoriaService, private readonly notificaciones: NotificacionesPersistenciaService) {}
 
   async resolverPendientesDelGrupo(
     manager: EntityManager,
@@ -41,6 +43,7 @@ export class InvitacionPersistenciaService {
         valores_nuevos: { estado: item.estado, fecha_respuesta: item.fecha_respuesta, motivo, causa: accion },
         ip_origen: ip,
       });
+      await this.notificaciones.invitacion(manager, item.id, expired ? NotificacionTipo.INVITACION_EXPIRADA : NotificacionTipo.INVITACION_CANCELADA, actor.id);
     }
   }
 }

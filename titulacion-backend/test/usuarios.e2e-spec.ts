@@ -24,6 +24,7 @@ import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
 import { CondicionIngreso } from '../src/habilitados/enums/condicion-ingreso.enum.js';
 import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { NotificacionesPersistenciaService } from '../src/notificaciones/notificaciones-persistencia.service.js';
 import {
   addUsuarioTestRecord,
   clearUsuarioTestRecords,
@@ -122,6 +123,8 @@ describe('Usuarios (e2e)', () => {
         const externalSubject = typeof payload.sub === 'string' ? payload.sub : '';
         return { subject: findUsuarioTestIdByExternalId(externalSubject) ?? externalSubject, issuer: 'http://127.0.0.1:3000', firstAccess: false };
       } })
+      .overrideProvider(NotificacionesPersistenciaService)
+      .useValue({ ingreso: async () => undefined })
       .compile();
     app = moduleFixture.createNestApplication<INestApplication<App>>();
     configureApplication(app);

@@ -18,6 +18,8 @@ import { ListInvitacionesQueryDto } from './dto/list-invitaciones-query.dto.js';
 import { Invitacion } from './entities/invitacion.entity.js';
 import { InvitacionEstado } from './enums/invitacion-estado.enum.js';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, grupo: true, estudiante_emisor: { usuario: true }, estudiante_destino: { usuario: true } } as const;
@@ -44,6 +46,7 @@ export class InvitacionesService {
     private readonly habilitados: HabilitadosService,
     private readonly auditoria: AuditoriaService,
     private readonly postulaciones: PostulacionPersistenciaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async create(periodoId: string, grupoId: string, actor: Usuario, dto: CreateInvitacionDto, ip: string | null): Promise<InvitacionResponseDto> {
@@ -70,12 +73,14 @@ export class InvitacionesService {
           existing.fecha_respuesta = existing.expira_en;
           await manager.getRepository(Invitacion).save(existing);
           await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_EXPIRACION_INVITACION', entidad_tipo: 'invitacion', entidad_id: existing.id, valores_anteriores: { estado: InvitacionEstado.PENDIENTE }, valores_nuevos: { estado: InvitacionEstado.EXPIRADA, fecha_respuesta: existing.expira_en }, ip_origen: ip });
+          await this.notificaciones.invitacion(manager, existing.id, NotificacionTipo.INVITACION_EXPIRADA, actor.id);
         }
         const repo = manager.getRepository(Invitacion);
         this.groups.assertApplicationWindow(period);
         const now = new Date();
         const item = await repo.save(repo.create({ grupo: group, periodo: period, estudiante_emisor: { id: senderId } as Estudiante, estudiante_destino: { id: targetId } as Estudiante, estado: InvitacionEstado.PENDIENTE, fecha_envio: now, expira_en: period.fecha_fin_postulacion, fecha_respuesta: null }));
         await this.auditoria.registrar(manager, { actor, accion: 'ENVIAR_INVITACION_GRUPO', entidad_tipo: 'invitacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { grupo_id: group.id, periodo_id: periodoId, estudiante_emisor_id: senderId, estudiante_destino_id: targetId, estado: item.estado, expira_en: item.expira_en }, ip_origen: ip });
+        await this.notificaciones.invitacion(manager, item.id, NotificacionTipo.INVITACION_RECIBIDA, actor.id);
         return item.id;
       });
       return await this.getOne(periodoId, id);
@@ -152,6 +157,7 @@ export class InvitacionesService {
           invitation.fecha_respuesta = invitation.expira_en;
           await inviteRepo.save(invitation);
           await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_EXPIRACION_INVITACION', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: oldState }, valores_nuevos: { estado: invitation.estado, fecha_respuesta: invitation.fecha_respuesta }, ip_origen: ip });
+          await this.notificaciones.invitacion(manager, invitation.id, NotificacionTipo.INVITACION_EXPIRADA, actor.id);
           return { expired: true, id: invitation.id };
         }
         if (state === InvitacionEstado.ACEPTADA) {
@@ -172,6 +178,7 @@ export class InvitacionesService {
             invitation.fecha_respuesta = invitation.expira_en;
             await inviteRepo.save(invitation);
             await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_EXPIRACION_INVITACION', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: InvitacionEstado.PENDIENTE }, valores_nuevos: { estado: InvitacionEstado.EXPIRADA, fecha_respuesta: invitation.expira_en }, ip_origen: ip });
+            await this.notificaciones.invitacion(manager, invitation.id, NotificacionTipo.INVITACION_EXPIRADA, actor.id);
             return { expired: true, id: invitation.id };
           }
           const oldState = invitation.estado;
@@ -180,12 +187,14 @@ export class InvitacionesService {
           await inviteRepo.save(invitation);
           await this.groups.addInvitedMember(manager, group, actorStudentId, actor, ip);
           await this.auditoria.registrar(manager, { actor, accion: 'ACEPTAR_INVITACION_GRUPO', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: oldState }, valores_nuevos: { estado: state, estudiante_destino_id: actorStudentId, fecha_respuesta: resolvedAt }, ip_origen: ip });
+          await this.notificaciones.invitacion(manager, invitation.id, NotificacionTipo.INVITACION_ACEPTADA, actor.id);
           return { expired: false, id: invitation.id };
         }
         invitation.estado = state;
         invitation.fecha_respuesta = now;
         await inviteRepo.save(invitation);
         await this.auditoria.registrar(manager, { actor, accion: state === InvitacionEstado.RECHAZADA ? 'RECHAZAR_INVITACION_GRUPO' : 'CANCELAR_INVITACION_GRUPO', entidad_tipo: 'invitacion', entidad_id: invitation.id, valores_anteriores: { estado: InvitacionEstado.PENDIENTE }, valores_nuevos: { estado: state, fecha_respuesta: now }, ip_origen: ip });
+        await this.notificaciones.invitacion(manager, invitation.id, state === InvitacionEstado.RECHAZADA ? NotificacionTipo.INVITACION_RECHAZADA : NotificacionTipo.INVITACION_CANCELADA, actor.id);
         return { expired: false, id: invitation.id };
       });
       if (outcome.expired) return { expired: true as const, item: null };

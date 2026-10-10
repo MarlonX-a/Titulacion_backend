@@ -20,7 +20,6 @@ export interface CorreoAdminItem {
   enviado_en: Date | null;
 }
 export interface NotificacionCorreoAdminItem { id: string; correo_destino: string; tipo: string; titulo: string; estado: EntregaCorreoEstado; intentos: number; creada_en: Date; actualizada_en: Date; ultimo_error: string | null; enviada_en: Date | null }
-
 @Injectable()
 export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | undefined;
@@ -62,10 +61,16 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
         });
       }
       const s = this.schema();
-      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='PENDIENTE', "reserva_hasta"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "estado"='PROCESANDO' AND "reserva_hasta" <= CURRENT_TIMESTAMP`);
+      await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"=CASE WHEN "intentos">=5 THEN 'FALLIDO'::${s}."entrega_correo_estado_enum" ELSE 'PENDIENTE'::${s}."entrega_correo_estado_enum" END, "generacion_reintento"="generacion_reintento"+CASE WHEN "intentos"<5 THEN 1 ELSE 0 END, "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"=CASE WHEN "intentos">=5 THEN 'La reserva expiró después de agotar los intentos.' ELSE "ultimo_error" END WHERE "estado"='PROCESANDO' AND "reserva_hasta" <= CURRENT_TIMESTAMP`);
       const notifications = await this.dataSource.getRepository(EntregaCorreoNotificacion).find({ where: { estado: EntregaCorreoEstado.PENDIENTE }, order: { creada_en: 'ASC' }, take: 50 });
       for (const delivery of notifications) {
-        await this.queue.add('enviar-notificacion', { id: delivery.id }, { jobId: `notificacion-${delivery.id}`, attempts: 5, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
+        const jobId = `notificacion-${delivery.id}-g${delivery.generacion_reintento}`;
+        const existing = await this.queue.getJob(jobId);
+        if (existing) {
+          const state = await existing.getState();
+          if (state === 'failed' || state === 'completed') await existing.remove();
+        }
+        await this.queue.add('enviar-notificacion', { id: delivery.id, generation: delivery.generacion_reintento }, { jobId, attempts: 5, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
       }
     } catch {
       // El registro de salida permanece en PostgreSQL; el siguiente ciclo reintenta publicarlo.
@@ -124,13 +129,9 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
         const delivery = rows[0];
         if (!delivery) throw new NotFoundException('No existe la entrega de correo indicada.');
         if (delivery.estado !== EntregaCorreoEstado.FALLIDO) throw new ConflictException('Solo se pueden reintentar correos fallidos.');
-        await manager.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='PENDIENTE', "intentos"=0, "ultimo_error"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1`, [id]);
+        await manager.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='PENDIENTE', "intentos"=0, "generacion_reintento"="generacion_reintento"+1, "reserva_hasta"=NULL, "reserva_token"=NULL, "ultimo_error"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1`, [id]);
         await this.auditoria.registrar(manager, { actor, accion: 'REINTENTAR_NOTIFICACION_EMAIL', entidad_tipo: 'notificacion', entidad_id: delivery.notificacion_id, valores_anteriores: { estado: delivery.estado }, valores_nuevos: { estado: EntregaCorreoEstado.PENDIENTE }, ip_origen: ip });
       });
-      const jobId = `notificacion-${id}`;
-      const existing = await this.queue.getJob(jobId);
-      if (existing) { const state = await existing.getState(); if (state === 'failed' || state === 'completed') await existing.remove(); }
-      await this.queue.add('enviar-notificacion', { id }, { jobId, attempts: 5, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
     } catch (error: unknown) {
       if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
       throw new ServiceUnavailableException('No fue posible reintentar la notificación por correo.');

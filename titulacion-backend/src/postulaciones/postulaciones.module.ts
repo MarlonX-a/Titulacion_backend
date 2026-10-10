@@ -11,9 +11,10 @@ import { PostulacionesService } from './postulaciones.service.js';
 import { InvitacionPersistenciaModule } from '../invitaciones/invitacion-persistencia.module.js';
 import { TutoresPropuestosModule } from './tutores-propuestos.module.js';
 import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacion-tema-persistencia.module.js';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Postulacion, Estudiante, GrupoIntegrante]), EstudiantesModule, HabilitadosModule, AuditoriaModule, InvitacionPersistenciaModule, TutoresPropuestosModule, AsignacionTemaPersistenciaModule],
+  imports: [TypeOrmModule.forFeature([Postulacion, Estudiante, GrupoIntegrante]), EstudiantesModule, HabilitadosModule, AuditoriaModule, InvitacionPersistenciaModule, TutoresPropuestosModule, AsignacionTemaPersistenciaModule, NotificacionesModule],
   controllers: [PostulacionesController],
   providers: [PostulacionesService],
 })

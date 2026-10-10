@@ -761,6 +761,41 @@ ejecuta el worker con un destinatario de prueba y comprueba el mensaje. El
 flujo de notificaciones PAT se comprueba con
 `npm run db:verify-revisiones-pat` cuando el almacenamiento local está activo.
 
+## Notificaciones del proceso
+
+Además de PAT, se generan avisos dentro de la aplicación y por correo para
+invitaciones (recibidas, aceptadas, rechazadas, canceladas y expiradas),
+postulaciones (registradas, canceladas y descartadas), asignaciones y
+anulaciones de tema, asignaciones y reemplazos de tutor, y resoluciones de
+ingreso. Se notifica a las cuentas activas involucradas; los grupos incluyen a
+todos sus integrantes activos. Se excluye a quien ejecutó la acción y se
+deduplican personas con más de un papel. Las cancelaciones automáticas de
+invitaciones y los efectos de una asignación o anulación se incluyen en el
+aviso de la operación que los produjo, sin mensajes redundantes.
+
+Las notificaciones de vencimiento se crean cuando una operación persiste la
+transición a `EXPIRADA`; consultar una invitación no modifica ni notifica su
+estado. El correo solo describe el período, grupo o tema y el resultado, sin
+observaciones, requisitos, motivos libres ni enlaces privados. El detalle se
+consulta en las rutas protegidas correspondientes.
+
+La bandeja conserva sus rutas existentes (`GET /notificaciones`, contador,
+detalle y marcar como leída) y el filtro `tipo` acepta el catálogo completo.
+Los correos se publican desde PostgreSQL a BullMQ cada cinco segundos. Las
+reservas tienen un identificador único y cada reintento una generación propia,
+para impedir que un trabajo antiguo confirme el resultado de otro intento.
+Tras cinco intentos la entrega queda `FALLIDO`; ADMIN puede solicitar un nuevo
+ciclo desde `POST /admin/notificaciones-email/{id}/reintentar`. Redis puede
+estar temporalmente fuera de servicio sin perder solicitudes persistidas.
+Como SMTP no garantiza entrega exactamente una vez, un correo podría repetirse
+si el servidor lo acepta y el proceso falla antes de registrar la confirmación;
+la bandeja y la solicitud de correo sí permanecen únicas.
+
+Para probar el recorrido: desde dos estudiantes de prueba, invitar y aceptar;
+registrar postulaciones y asignar un tema; asignar o reemplazar el tutor; luego
+consultar la bandeja de cada participante y el correo en Mailpit. Las cuentas
+de prueba deben estar activas y el worker de correo en ejecución.
+
 ## Verificación
 
 ```powershell
