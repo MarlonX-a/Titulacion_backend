@@ -509,8 +509,13 @@ export const usuarioTestDataSource = {
     if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
-  transaction: async <T>(callback: (manager: unknown) => Promise<T>) =>
-    withTransaction(() =>
+  transaction: async <T>(
+    isolationOrCallback: string | ((manager: unknown) => Promise<T>),
+    maybeCallback?: (manager: unknown) => Promise<T>,
+  ) => {
+    const callback = typeof isolationOrCallback === 'function' ? isolationOrCallback : maybeCallback;
+    if (!callback) throw new Error('Falta callback de transacción en repositorio de prueba.');
+    return withTransaction(() =>
       callback({
         connection: usuarioTestDataSource,
         query: async (sql: string, parameters?: unknown[]) => {
@@ -520,6 +525,12 @@ export const usuarioTestDataSource = {
           }
           if (sql.includes('asignacion_tema')) return [];
           if (sql.includes('pg_advisory_xact_lock')) return [];
+          if (sql.includes('FROM "estudiante_habilitado"') && sql.includes('"situacion_ingreso" = \'PENDIENTE\'')) {
+            return habilitadoRecords
+              .filter((record) => record.periodo.id === parameters?.[0] &&
+                record.condicion_ingreso === 'CONDICIONADO' && record.situacion_ingreso === 'PENDIENTE')
+              .map((record) => ({ id: record.id }));
+          }
           return [];
         },
         getRepository: (entity: unknown) => {
@@ -551,7 +562,8 @@ export const usuarioTestDataSource = {
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),
-    ),
+    );
+  },
 };
 
 export function clearUsuarioTestRecords(): void {
@@ -609,6 +621,11 @@ export function setPeriodoTestFechas(
     periodo.fecha_inicio_postulacion = inicio;
     periodo.fecha_fin_postulacion = fin;
   }
+}
+
+export function setPeriodoTestInicioTitulacion(id: string, inicio: Date): void {
+  const periodo = periodoRecords.find((record) => record.id === id);
+  if (periodo) periodo.fecha_inicio_titulacion = inicio;
 }
 
 // Simula también el bloqueo del primer ADMIN y los repositorios para pruebas HTTP.

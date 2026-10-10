@@ -566,6 +566,18 @@ no cambia las postulaciones ni inicia la titulación. Los condicionados todavía
 pendientes pueden resolverse después del cierre y antes del inicio de
 titulación.
 
+El inicio formal también es manual y exclusivo de ADMIN: `POST
+/periodos/:id/iniciar-titulacion`. Solo se permite desde
+`POSTULACION_CERRADA` cuando ya llegó `fecha_inicio_titulacion`. Antes, ADMIN
+puede consultar los condicionados en `GET /periodos/:periodoId/habilitados` y
+resolverlos. El inicio se rechaza si queda cualquier condicionado pendiente,
+incluso si está suspendido o su cuenta está inactiva; la respuesta informa solo
+la cantidad. `ADMITIDO` debe resolverse antes de la fecha de inicio;
+`NO_ADMITIDO` puede resolverse después mientras el período siga cerrado. La
+transición y auditoría son atómicas, y PostgreSQL impide introducir pendientes
+una vez iniciado el período. Ejecuta `npm run db:verify-inicio-titulacion`
+para verificar estas protecciones en un esquema temporal.
+
 ADMIN consulta los temas con competencia en `GET
 /periodos/:periodoId/conflictos` y sus candidaturas en `GET
 /periodos/:periodoId/temas/:temaId/conflicto`. La elegibilidad se calcula con
