@@ -26,6 +26,7 @@ import { InvitacionesService } from '../invitaciones/invitaciones.service.js';
 import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { CreateGrupoDto } from '../grupos/dto/create-grupo.dto.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
 import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
 import { CreateHabilitados20261002030000 } from './migrations/20261002030000-CreateHabilitados.js';
@@ -51,6 +52,7 @@ import { Tema } from '../temas/entities/tema.entity.js';
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 
 const schema = `test_grupos_${randomBytes(8).toString('hex')}`;
+const notifications = { invitacion: async () => undefined, postulacion: async () => undefined, asignacionTema: async () => undefined, tutor: async () => undefined, ingreso: async () => undefined } as unknown as NotificacionesPersistenciaService;
 let admin: DatabaseDataSource | undefined;
 let isolated: DatabaseDataSource | undefined;
 let createdSchema = false;
@@ -96,11 +98,11 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const students = isolated.getRepository(Estudiante);
-  const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit)));
+  const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications), notifications);
   const postulacionPersistence = new PostulacionPersistenciaService();
   const groupService = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), students, isolated, habilitadoService, audit, postulacionPersistence);
-  const inviteService = new InvitacionesService(isolated.getRepository(Invitacion), students, isolated, groupService, habilitadoService, audit, postulacionPersistence);
-  const invitePersistence = new InvitacionPersistenciaService(audit);
+  const inviteService = new InvitacionesService(isolated.getRepository(Invitacion), students, isolated, groupService, habilitadoService, audit, postulacionPersistence, notifications);
+  const invitePersistence = new InvitacionPersistenciaService(audit, notifications);
   const management = new GrupoGestionService(isolated, groupService, habilitadoService, audit, invitePersistence, postulacionPersistence);
   const studentUsers = profiles.map((profile) => profile.usuario);
 

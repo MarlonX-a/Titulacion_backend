@@ -12,12 +12,15 @@ import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
 import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
 import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 @Injectable()
 export class AsignacionTemaPersistenciaService {
   constructor(
     private readonly auditoria: AuditoriaService,
     private readonly asignacionesTutor: AsignacionTutorPersistenciaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async tieneVigenteParaEstudiante(manager: EntityManager, estudianteId: string): Promise<boolean> {
@@ -83,6 +86,7 @@ export class AsignacionTemaPersistenciaService {
       await this.auditoria.registrar(manager, { actor, accion: 'ANULAR_ASIGNACION_TEMA', entidad_tipo: 'asignacion_tema', entidad_id: assignment.id, valores_anteriores: previousAssignment, valores_nuevos: { estado: assignment.estado, causa_anulacion: assignment.causa_anulacion, motivo_anulacion: observacion, anulada_por_id: actor.id, fecha_anulacion: now }, ip_origen: ip });
       await this.auditoria.registrar(manager, { actor, accion: 'ANULAR_POSTULACION_INCUMPLIMIENTO', entidad_tipo: 'postulacion', entidad_id: application.id, valores_anteriores: previousApplication, valores_nuevos: { estado: application.estado, observacion: application.observacion }, ip_origen: ip });
       await this.auditoria.registrar(manager, { actor, accion: 'REPUBLICAR_TEMA_INCUMPLIMIENTO', entidad_tipo: 'tema', entidad_id: topic.id, valores_anteriores: previousTopic, valores_nuevos: nextTopic, ip_origen: ip });
+      await this.notificaciones.asignacionTema(manager, assignment.id, NotificacionTipo.TEMA_ANULADO, actor.id);
     }
   }
 

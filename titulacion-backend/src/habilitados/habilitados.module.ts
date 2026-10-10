@@ -8,6 +8,7 @@ import { EstudianteHabilitado } from './entities/estudiante-habilitado.entity.js
 import { HabilitadosController } from './habilitados.controller.js';
 import { HabilitadosService } from './habilitados.service.js';
 import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacion-tema-persistencia.module.js';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacio
     EstudiantesModule,
     AuditoriaModule,
     AsignacionTemaPersistenciaModule,
+    NotificacionesModule,
   ],
   controllers: [HabilitadosController],
   providers: [HabilitadosService],

@@ -26,6 +26,8 @@ import { ListPostulacionesQueryDto } from './dto/list-postulaciones-query.dto.js
 import { PagedPostulacionesResponseDto, PostulacionResponseDto } from './dto/postulacion-response.dto.js';
 import { TutoresPropuestosService } from './tutores-propuestos.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, tema: { linea: true, docente_proponente: { usuario: true } }, grupo: true, estudiante: { usuario: true }, registrada_por: true } as const;
@@ -42,6 +44,7 @@ export class PostulacionesService {
     private readonly invitaciones: InvitacionPersistenciaService,
     private readonly tutores: TutoresPropuestosService,
     private readonly asignaciones: AsignacionTemaPersistenciaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreatePostulacionDto, ip: string | null): Promise<PostulacionResponseDto> {
@@ -90,6 +93,7 @@ export class PostulacionesService {
         await this.tutores.agregar(manager, item.id, dto.tutores_propuestos);
         await this.auditoria.registrar(manager, { actor, accion: 'CREAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tema_id: topic.id, periodo_id: period.id, grupo_id: groupId, estudiante_id: studentId, participantes: participantIds, num_integrantes: count, estado: item.estado, fecha_postulacion: item.fecha_postulacion, tutores_propuestos: dto.tutores_propuestos.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
         await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_TUTORES_PROPUESTOS', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tutores_propuestos: dto.tutores_propuestos.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
+        await this.notificaciones.postulacion(manager, item.id, NotificacionTipo.POSTULACION_REGISTRADA, actor.id);
         return item.id;
       });
       return this.getRecord(periodoId, id);
@@ -164,6 +168,7 @@ export class PostulacionesService {
         item.estado = EstadoPostulacion.CANCELADA; item.observacion = dto.motivo.trim();
         await repo.save(item);
         await this.auditoria.registrar(manager, { actor, accion: 'CANCELAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: before, valores_nuevos: { estado: item.estado, observacion: item.observacion }, ip_origen: ip });
+        await this.notificaciones.postulacion(manager, item.id, NotificacionTipo.POSTULACION_CANCELADA, actor.id);
       });
       return this.getRecord(periodoId, id);
     } catch (error: unknown) { this.handleDatabaseError(error); }

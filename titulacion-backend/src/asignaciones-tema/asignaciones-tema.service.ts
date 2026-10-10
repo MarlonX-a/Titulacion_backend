@@ -30,6 +30,8 @@ import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
 import { AsignarTemaDto } from './dto/asignar-tema.dto.js';
 import { ListAsignacionesTemaQueryDto } from './dto/list-asignaciones-tema-query.dto.js';
 import { AsignacionTemaResponseDto, PagedAsignacionesTemaResponseDto } from './dto/asignacion-tema-response.dto.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 interface PgError { code?: string; }
 const relations = {
@@ -46,6 +48,7 @@ export class AsignacionesTemaService {
     private readonly habilitados: HabilitadosService,
     private readonly auditoria: AuditoriaService,
     private readonly persistencia: AsignacionTemaPersistenciaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async assign(periodoId: string, postulacionId: string, dto: AsignarTemaDto, actor: Usuario, ip: string | null): Promise<AsignacionTemaResponseDto> {
@@ -115,6 +118,7 @@ export class AsignacionesTemaService {
         await this.auditoria.registrar(manager, { actor, accion: 'ACEPTAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: app.id, valores_anteriores: { estado: EstadoPostulacion.PENDIENTE, observacion: null }, valores_nuevos: { estado: app.estado, observacion: app.observacion }, ip_origen: ip });
         await this.auditoria.registrar(manager, { actor, accion: 'ASIGNAR_TEMA', entidad_tipo: 'asignacion_tema', entidad_id: assignment.id, valores_anteriores: null, valores_nuevos: { periodo_id: periodoId, tema_id: topic.id, postulacion_id: app.id, grupo_id: app.grupo?.id ?? null, estudiante_id: app.estudiante?.id ?? null, participantes: participantIds, aprobada_por_id: actor.id, estado: assignment.estado, fecha_asignacion: now, motivo: assignment.motivo }, ip_origen: ip });
         await this.auditoria.registrar(manager, { actor, accion: 'ASIGNAR_TEMA', entidad_tipo: 'tema', entidad_id: topic.id, valores_anteriores: beforeTopic, valores_nuevos: nextTopic, ip_origen: ip });
+        await this.notificaciones.asignacionTema(manager, assignment.id, NotificacionTipo.TEMA_ASIGNADO, actor.id);
         const losers = await manager.getRepository(Postulacion).find({ where: { tema: { id: topic.id }, periodo: { id: periodoId } } });
         for (const loser of losers) {
           if (loser.id === app.id || ![EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(loser.estado)) continue;
@@ -123,6 +127,7 @@ export class AsignacionesTemaService {
           loser.observacion = `Otra postulación fue asignada: ${dto.motivo.trim()}`;
           await manager.getRepository(Postulacion).save(loser);
           await this.auditoria.registrar(manager, { actor, accion: 'RECHAZAR_POSTULACION_POR_ASIGNACION', entidad_tipo: 'postulacion', entidad_id: loser.id, valores_anteriores: previous, valores_nuevos: { estado: loser.estado, observacion: loser.observacion }, ip_origen: ip });
+          await this.notificaciones.postulacion(manager, loser.id, NotificacionTipo.POSTULACION_RECHAZADA, actor.id);
         }
         return assignment.id;
       });

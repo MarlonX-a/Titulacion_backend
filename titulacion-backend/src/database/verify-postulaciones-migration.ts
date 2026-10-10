@@ -28,6 +28,7 @@ import { CreateInvitacionDto } from '../invitaciones/dto/create-invitacion.dto.j
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { CreateTutoresPropuestos20261002090000 } from './migrations/20261002090000-CreateTutoresPropuestos.js';
 import { CreateAsignacionesTema20261002110000 } from './migrations/20261002110000-CreateAsignacionesTema.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
@@ -60,6 +61,7 @@ import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
 
 const schema = `test_postulaciones_${randomBytes(8).toString('hex')}`;
+const notifications = { invitacion: async () => undefined, postulacion: async () => undefined, asignacionTema: async () => undefined, tutor: async () => undefined, ingreso: async () => undefined } as unknown as NotificacionesPersistenciaService;
 let admin: DatabaseDataSource | undefined;
 let isolated: DatabaseDataSource | undefined;
 let createdSchema = false;
@@ -113,16 +115,16 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
-  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit));
-  const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence);
+  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications);
+  const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence, notifications);
   const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit);
   const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);
   const persistence = new PostulacionPersistenciaService();
-  const invitePersistence = new InvitacionPersistenciaService(audit);
+  const invitePersistence = new InvitacionPersistenciaService(audit, notifications);
   const groups = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), studentRepo, isolated, habilitados, audit, persistence);
   const groupManagement = new GrupoGestionService(isolated, groups, habilitados, audit, invitePersistence, persistence);
-  const invitations = new InvitacionesService(isolated.getRepository(Invitacion), studentRepo, isolated, groups, habilitados, audit, persistence);
-  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence);
+  const invitations = new InvitacionesService(isolated.getRepository(Invitacion), studentRepo, isolated, groups, habilitados, audit, persistence, notifications);
+  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence, notifications);
 
   step = 'postulación antigua sin preferencias y carga única';
   await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" DISABLE TRIGGER "TRG_postulacion_requiere_tutores"`);

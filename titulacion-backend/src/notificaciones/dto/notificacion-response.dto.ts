@@ -1,15 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { NotificacionCanal } from '../enums/notificacion-canal.enum.js';
+import { NotificacionTipo } from '../enums/notificacion-canal.enum.js';
 
 export class NotificacionResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;
-  @ApiProperty({ enum: ['PAT_ENTREGADO', 'PAT_REVISADO'] })
+  @ApiProperty({ enum: NotificacionTipo })
   tipo: string;
   @ApiProperty()
   titulo: string;
   @ApiProperty()
   mensaje: string;
-  @ApiProperty({ enum: ['documento_pat', 'revision_pat'] })
+  @ApiProperty({ enum: ['documento_pat', 'revision_pat', 'invitacion', 'postulacion', 'asignacion_tema', 'asignacion_tutor', 'estudiante_habilitado'] })
   entidad_tipo: string;
   @ApiProperty({ format: 'uuid' }) entidad_id: string;
   @ApiProperty({ enum: NotificacionCanal })

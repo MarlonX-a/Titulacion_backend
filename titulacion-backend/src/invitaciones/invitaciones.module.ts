@@ -10,9 +10,10 @@ import { InvitacionPersistenciaModule } from './invitacion-persistencia.module.j
 import { InvitacionesController } from './invitaciones.controller.js';
 import { InvitacionesService } from './invitaciones.service.js';
 import { PostulacionesPersistenciaModule } from '../postulaciones/postulaciones-persistencia.module.js';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Invitacion, Estudiante]), EstudiantesModule, HabilitadosModule, GruposModule, AuditoriaModule, InvitacionPersistenciaModule, PostulacionesPersistenciaModule],
+  imports: [TypeOrmModule.forFeature([Invitacion, Estudiante]), EstudiantesModule, HabilitadosModule, GruposModule, AuditoriaModule, InvitacionPersistenciaModule, PostulacionesPersistenciaModule, NotificacionesModule],
   controllers: [InvitacionesController],
   providers: [InvitacionesService],
 })

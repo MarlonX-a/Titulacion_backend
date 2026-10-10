@@ -9,9 +9,10 @@ import { AsignacionTemaPersistenciaModule } from './asignacion-tema-persistencia
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionesTemaController } from './asignaciones-tema.controller.js';
 import { AsignacionesTemaService } from './asignaciones-tema.service.js';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([AsignacionTema, Estudiante, GrupoIntegrante, PeriodoTitulacion]), HabilitadosModule, AuditoriaModule, AsignacionTemaPersistenciaModule],
+  imports: [TypeOrmModule.forFeature([AsignacionTema, Estudiante, GrupoIntegrante, PeriodoTitulacion]), HabilitadosModule, AuditoriaModule, AsignacionTemaPersistenciaModule, NotificacionesModule],
   controllers: [AsignacionesTemaController],
   providers: [AsignacionesTemaService],
 })

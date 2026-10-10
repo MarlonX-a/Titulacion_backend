@@ -32,6 +32,8 @@ import { ReemplazarTutorDto } from './dto/reemplazar-tutor.dto.js';
 import { ListAsignacionesTutorQueryDto } from './dto/list-asignaciones-tutor-query.dto.js';
 import { AsignacionTutorResponseDto, CargaProyectadaResponseDto, CargaTutorActualResponseDto, PagedAsignacionTutorResponseDto, ParticipanteTutorResponseDto, ResultadoAsignacionTutorResponseDto } from './dto/asignacion-tutor-response.dto.js';
 import { PagedTutorPropuestoAsignacionResponseDto, TutorPropuestoAsignacionResponseDto } from './dto/tutor-propuesto-asignacion-response.dto.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 interface DriverError { code?: string; constraint?: string }
 interface ChargeEval {
@@ -63,6 +65,7 @@ export class AsignacionesTutorService {
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
     private readonly cargaTutorial: CargaTutorialPersistenciaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async asignar(periodoId: string, trabajoId: string, dto: AsignarTutorDto, actor: Usuario, ip: string | null): Promise<ResultadoAsignacionTutorResponseDto> {
@@ -106,6 +109,7 @@ export class AsignacionesTutorService {
           valores_nuevos: this.assignmentAudit(assignment, periodoId, projected),
           ip_origen: ip,
         });
+        await this.notificaciones.tutor(manager, assignment.id, NotificacionTipo.TUTOR_ASIGNADO, actor.id);
         return { id: assignment.id, projected };
       });
       return this.operationResponse(periodoId, outcome.id, outcome.projected);
@@ -159,6 +163,7 @@ export class AsignacionesTutorService {
           valores_nuevos: { ...this.assignmentAudit(next, periodoId, projected), reemplaza_asignacion_tutor_id: current.id, motivo: dto.motivo.trim() },
           ip_origen: ip,
         });
+        await this.notificaciones.tutor(manager, next.id, NotificacionTipo.TUTOR_REEMPLAZADO, actor.id);
         return { id: next.id, projected };
       });
       return this.operationResponse(periodoId, outcome.id, outcome.projected);

@@ -12,6 +12,7 @@ import { AsignacionTutor } from './entities/asignacion-tutor.entity.js';
 import { AsignacionTutorPersistenciaModule } from './asignacion-tutor-persistencia.module.js';
 import { AsignacionesTutorController } from './asignaciones-tutor.controller.js';
 import { AsignacionesTutorService } from './asignaciones-tutor.service.js';
+import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AsignacionesTutorService } from './asignaciones-tutor.service.js';
     AuditoriaModule,
     CargaTutorialPersistenciaModule,
     AsignacionTutorPersistenciaModule,
+    NotificacionesModule,
   ],
   controllers: [AsignacionesTutorController],
   providers: [AsignacionesTutorService],
