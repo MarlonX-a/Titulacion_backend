@@ -34,6 +34,7 @@ import { ArchivoPendiente } from '../src/almacenamiento/entities/archivo-pendien
 import { RevisionPat } from '../src/revisiones-pat/entities/revision-pat.entity.js';
 import { Notificacion } from '../src/notificaciones/entities/notificacion.entity.js';
 import { EntregaCorreoNotificacion } from '../src/notificaciones/entities/entrega-correo-notificacion.entity.js';
+import { SolicitudExportacion } from '../src/exportaciones/entities/solicitud-exportacion.entity.js';
 
 type UsuarioRecord = Partial<Usuario> &
   Pick<Usuario, 'id_externo_sso' | 'email' | 'nombres' | 'apellidos' | 'rol'>;
@@ -425,6 +426,7 @@ const asignacionTutorTestRepository = emptyRepository<AsignacionTutor>();
 const plantillaPatTestRepository = emptyRepository<PlantillaPat>();
 const documentoPatTestRepository = emptyRepository<DocumentoPat>();
 const archivoPendienteTestRepository = emptyRepository<ArchivoPendiente>();
+const solicitudExportacionTestRepository = emptyRepository<SolicitudExportacion>();
 
 async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   const previous = transactionQueue;
@@ -479,6 +481,7 @@ export const usuarioTestDataSource = {
     { target: RevisionPat },
     { target: Notificacion },
     { target: EntregaCorreoNotificacion },
+    { target: SolicitudExportacion },
   ],
   getRepository: (entity: unknown) => {
     if (entity === Usuario) return usuarioTestRepository;
@@ -507,6 +510,7 @@ export const usuarioTestDataSource = {
     if (entity === RevisionPat) return { create: (value: unknown) => value, save: async (value: unknown) => value, exist: async () => false, findOne: async () => null };
     if (entity === Notificacion) return notificacionTestRepository;
     if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
+    if (entity === SolicitudExportacion) return solicitudExportacionTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(
@@ -559,6 +563,7 @@ export const usuarioTestDataSource = {
           if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
           if (entity === Notificacion) return notificacionTestRepository;
           if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
+          if (entity === SolicitudExportacion) return solicitudExportacionTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),

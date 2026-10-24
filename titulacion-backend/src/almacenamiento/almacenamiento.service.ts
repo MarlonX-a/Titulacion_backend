@@ -56,19 +56,19 @@ export class AlmacenamientoService implements OnModuleDestroy {
     return this.putPrivate(`plantillas-pat/${randomUUID()}.${extension}`, buffer, contentType, 'No se pudo guardar la plantilla PAT.');
   }
 
-  createPrivateKey(prefix: 'plantillas-pat' | 'documentos-pat', extension: 'pdf' | 'docx'): string {
+  createPrivateKey(prefix: 'plantillas-pat' | 'documentos-pat' | 'exportaciones', extension: 'pdf' | 'docx' | 'xlsx' | 'csv'): string {
     return `${prefix}/${randomUUID()}.${extension}`;
   }
 
   async saveAtPrivateKey(key: string, buffer: Buffer, contentType: string): Promise<void> {
-    if (!key.startsWith('plantillas-pat/') && !key.startsWith('documentos-pat/')) {
+    if (!['plantillas-pat/', 'documentos-pat/', 'exportaciones/'].some((prefix) => key.startsWith(prefix))) {
       throw new ServiceUnavailableException('La ruta privada del archivo no es válida.');
     }
     await this.putPrivate(key, buffer, contentType, 'No se pudo guardar el archivo privado.');
   }
 
-  async signPrivateDownload(key: string, fileName: string, contentType: string): Promise<string> {
-    if (!this.bucket || (!key.startsWith('plantillas-pat/') && !key.startsWith('documentos-pat/'))) {
+  async signPrivateDownload(key: string, fileName: string, contentType: string, expiresIn = 300): Promise<string> {
+    if (!this.bucket || !['plantillas-pat/', 'documentos-pat/', 'exportaciones/'].some((prefix) => key.startsWith(prefix))) {
       throw new ServiceUnavailableException('El archivo privado no está disponible.');
     }
     try {
@@ -77,7 +77,7 @@ export class AlmacenamientoService implements OnModuleDestroy {
         Key: key,
         ResponseContentType: contentType,
         ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
-      }), { expiresIn: 300 });
+      }), { expiresIn: Math.max(1, Math.min(300, expiresIn)) });
     } catch (error: unknown) {
       throw new ServiceUnavailableException('No se pudo preparar la descarga privada.', { cause: error });
     }
@@ -123,8 +123,21 @@ export class AlmacenamientoService implements OnModuleDestroy {
     }
   }
 
+  async readPrivateExport(key: string): Promise<Buffer> {
+    if (!this.bucket || !key.startsWith('exportaciones/')) {
+      throw new ServiceUnavailableException('El archivo de exportación no está disponible.');
+    }
+    try {
+      const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      if (!result.Body) throw new Error('body absent');
+      return Buffer.from(await result.Body.transformToByteArray());
+    } catch (error: unknown) {
+      throw new ServiceUnavailableException('No se pudo leer el archivo privado.', { cause: error });
+    }
+  }
+
   async removePrivate(key: string): Promise<void> {
-    if (!this.bucket || (!key.startsWith('importaciones/') && !key.startsWith('plantillas-pat/') && !key.startsWith('documentos-pat/'))) return;
+    if (!this.bucket || !['importaciones/', 'plantillas-pat/', 'documentos-pat/', 'exportaciones/'].some((prefix) => key.startsWith(prefix))) return;
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
     );

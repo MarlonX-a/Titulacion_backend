@@ -9,6 +9,7 @@ describe('ArchivoLimpiezaWorker', () => {
       .mockResolvedValueOnce([{ periodo_id: 'period-id' }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: 'pending-id', estado: 'LIMPIEZA', creado_en: new Date() }])
+      .mockResolvedValueOnce([{ available: true }])
       .mockResolvedValueOnce([{ referenced: true }])
       .mockResolvedValueOnce([]) };
     const dataSource = { options: { schema: 'test_files' }, transaction: (work: (tx: typeof manager) => Promise<void>) => work(manager) } as unknown as DataSource;
@@ -16,7 +17,7 @@ describe('ArchivoLimpiezaWorker', () => {
     const worker = new ArchivoLimpiezaWorker(dataSource, storage);
     await worker.process({ name: 'limpiar-archivo-no-referenciado', data: { key: 'documentos-pat/object.pdf' } } as Job<{ key: string }>);
     expect(storage.removePrivate).not.toHaveBeenCalled();
-    expect(manager.query).toHaveBeenCalledTimes(5);
+    expect(manager.query).toHaveBeenCalledTimes(6);
   });
 
   it('elimina un objeto fallido no referenciado y consume la intención', async () => {
@@ -24,6 +25,7 @@ describe('ArchivoLimpiezaWorker', () => {
       .mockResolvedValueOnce([{ periodo_id: 'period-id' }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: 'pending-id', estado: 'LIMPIEZA', creado_en: new Date() }])
+      .mockResolvedValueOnce([{ available: true }])
       .mockResolvedValueOnce([{ referenced: false }])
       .mockResolvedValueOnce([]) };
     const dataSource = { options: { schema: 'test_files' }, transaction: (work: (tx: typeof manager) => Promise<void>) => work(manager) } as unknown as DataSource;
@@ -31,6 +33,6 @@ describe('ArchivoLimpiezaWorker', () => {
     const worker = new ArchivoLimpiezaWorker(dataSource, storage);
     await worker.process({ name: 'limpiar-archivo-no-referenciado', data: { key: 'plantillas-pat/object.pdf' } } as Job<{ key: string }>);
     expect(storage.removePrivate).toHaveBeenCalledWith('plantillas-pat/object.pdf');
-    expect(manager.query).toHaveBeenCalledTimes(5);
+    expect(manager.query).toHaveBeenCalledTimes(6);
   });
 });

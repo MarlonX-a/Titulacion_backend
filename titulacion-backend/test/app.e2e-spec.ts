@@ -49,6 +49,16 @@ describe('AppController (e2e)', () => {
       .expect(401);
   });
 
+  it('documenta exportaciones administrativas y exige autenticación', async () => {
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.paths['/periodos/{periodoId}/exportaciones']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/exportaciones/{id}/descarga']).toBeDefined();
+    await request(app.getHttpServer())
+      .post('/periodos/00000000-0000-4000-8000-000000000001/exportaciones')
+      .send({ tipo_reporte: 'ESTUDIANTES', formato: 'CSV' })
+      .expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

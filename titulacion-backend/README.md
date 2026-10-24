@@ -844,3 +844,34 @@ temporal aislado.
 Asignaciones de tutores, carga concurrente y reemplazos se comprueban con
 `npm run db:verify-asignaciones-tutor`; plantillas PAT, versiones únicas y
 publicaciones concurrentes se comprueban con `npm run db:verify-plantillas-pat`.
+
+## Reportes y exportaciones
+
+ADMIN puede solicitar reportes de cualquier período desde `POST
+/periodos/{periodoId}/exportaciones`. Los tipos son `ESTUDIANTES`, `GRUPOS`,
+`TEMAS_OFERTADOS`, `TEMAS_ASIGNADOS`, `TEMAS_DISPONIBLES`, `DOCENTES` y
+`CARGA_TUTORIAL`; los formatos disponibles son `PDF`, `XLSX` y `CSV`. Cada
+reporte admite filtros específicos documentados en Swagger. El estado y los
+resultados se consultan en `GET /periodos/{periodoId}/exportaciones`; solo el
+ADMIN solicitante puede ver y descargar su solicitud. El archivo expira 24
+horas después de generarse y cada URL de descarga dura como máximo cinco
+minutos.
+
+Los resultados reflejan una lectura consistente al comenzar la generación e
+incluyen el período, los filtros y la fecha de corte. Las fechas se muestran
+en `America/Guayaquil`. Se excluyen cédulas, correos, identificadores SSO,
+credenciales y observaciones académicas completas. CSV neutraliza valores que
+puedan ejecutarse como fórmulas y XLSX conserva las matrículas como texto.
+Los reintentos automáticos se limitan a cinco por ciclo; ADMIN puede iniciar
+otro desde `POST /periodos/{periodoId}/exportaciones/{id}/reintentar`.
+
+Redis y SeaweedFS deben estar disponibles para completar y descargar los
+archivos. PostgreSQL conserva las solicitudes si Redis está temporalmente
+fuera de servicio, para que el publicador las recupere. Al expirar, la descarga
+se bloquea de inmediato y la limpieza del objeto se reintenta sin eliminar el
+registro histórico.
+
+La migración se aplica con `npm run migration:run` tras confirmar
+`DB_SCHEMA=titulacion_dev`; `npm run db:verify-exportaciones` comprueba las
+restricciones, el reclamo concurrente, el rollback y la reversión protegida en
+un esquema temporal.
