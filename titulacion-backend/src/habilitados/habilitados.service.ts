@@ -12,12 +12,15 @@ import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
+import { GrupoIntegrante } from '../grupos/entities/grupo-integrante.entity.js';
+import { GrupoIntegranteEstado } from '../grupos/enums/grupo-integrante-estado.enum.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { CreateHabilitacionDto } from './dto/create-habilitacion.dto.js';
 import { HabilitadoResponseDto } from './dto/habilitado-response.dto.js';
 import { ListHabilitadosQueryDto } from './dto/list-habilitados-query.dto.js';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ResolveIngresoDto } from './dto/resolve-ingreso.dto.js';
 import { EstudianteHabilitado } from './entities/estudiante-habilitado.entity.js';
 import { CondicionIngreso } from './enums/condicion-ingreso.enum.js';
@@ -183,6 +186,40 @@ export class HabilitadosService {
       });
       if (!record) throw new NotFoundException('No existe esa habilitación en el período indicado.');
       return responseFrom(record);
+    } catch (error: unknown) {
+      this.handleDatabaseError(error);
+    }
+  }
+
+  /**
+   * Compañeros que el estudiante puede invitar: habilitados del mismo período, no excluidos
+   * por NO_ADMITIDO y sin integración activa en un grupo. Solo lo consulta quien está habilitado.
+   */
+  async candidatosInvitacion(periodoId: string, usuario: Usuario, query: PaginationQueryDto): Promise<PagedHabilitados> {
+    try {
+      await this.getMine(periodoId, usuario);
+      const [records, total] = await this.repository.createQueryBuilder('habilitado')
+        .innerJoinAndSelect('habilitado.periodo', 'periodo')
+        .innerJoinAndSelect('habilitado.estudiante', 'estudiante')
+        .innerJoinAndSelect('estudiante.usuario', 'cuenta')
+        .where('periodo.id = :periodoId', { periodoId })
+        .andWhere('habilitado.estado = :estado', { estado: HabilitadoEstado.HABILITADO })
+        .andWhere('habilitado.situacion_ingreso <> :noAdmitido', { noAdmitido: SituacionIngreso.NO_ADMITIDO })
+        .andWhere('cuenta.id <> :usuarioId', { usuarioId: usuario.id })
+        .andWhere((qb) => `NOT EXISTS ${qb.subQuery()
+          .select('1')
+          .from(GrupoIntegrante, 'integrante')
+          .where('integrante.periodo_id = periodo.id')
+          .andWhere('integrante.estudiante_id = estudiante.id')
+          .andWhere('integrante.estado = :integranteActivo')
+          .getQuery()}`, { integranteActivo: GrupoIntegranteEstado.ACTIVO })
+        .orderBy('cuenta.apellidos', 'ASC')
+        .addOrderBy('cuenta.nombres', 'ASC')
+        .addOrderBy('habilitado.id', 'ASC')
+        .skip((query.page - 1) * query.limit)
+        .take(query.limit)
+        .getManyAndCount();
+      return { data: records.map(responseFrom), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }

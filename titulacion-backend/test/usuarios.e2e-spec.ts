@@ -680,7 +680,7 @@ describe('Usuarios (e2e)', () => {
       .expect(400);
   });
 
-  it('administra códigos únicos y períodos paginados con acceso solo ADMIN', async () => {
+  it('administra códigos únicos y períodos paginados; solo ADMIN los modifica', async () => {
     addAdmin();
     addUsuarioTestRecord({
       id_externo_sso: 'student-sub',
@@ -714,7 +714,8 @@ describe('Usuarios (e2e)', () => {
     ).expect(200);
     expect(response.body).toMatchObject({ total: 2, page: 1, limit: 1 });
     expect(response.body.data).toHaveLength(1);
-    await authenticated('get', '/periodos', 'student-sub', 'ADMIN').expect(403);
+    // todos los roles consultan períodos; solo ADMIN los modifica
+    await authenticated('get', '/periodos', 'student-sub', 'ADMIN').expect(200);
     await authenticated('post', '/periodos', 'student-sub', 'ADMIN')
       .send({})
       .expect(403);
