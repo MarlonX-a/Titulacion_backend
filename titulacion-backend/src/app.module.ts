@@ -24,6 +24,8 @@ import { PlantillasPatModule } from './plantillas-pat/plantillas-pat.module.js';
 import { DocumentosPatModule } from './documentos-pat/documentos-pat.module.js';
 import { RevisionesPatModule } from './revisiones-pat/revisiones-pat.module.js';
 import { NotificacionesModule } from './notificaciones/notificaciones.module.js';
+import { ReportesModule } from './reportes/reportes.module.js';
+import { ExportacionesModule } from './exportaciones/exportaciones.module.js';
 
 @Module({
   imports: [
@@ -51,6 +53,8 @@ import { NotificacionesModule } from './notificaciones/notificaciones.module.js'
     DocumentosPatModule,
     RevisionesPatModule,
     NotificacionesModule,
+    ReportesModule,
+    ExportacionesModule,
     ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
   ],
   controllers: [AppController],

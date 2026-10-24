@@ -8,6 +8,7 @@ describe('ArchivoLimpiezaService', () => {
     const repository = {
       save: vi.fn(), create: vi.fn((value: Partial<ArchivoPendiente>) => value),
       update: vi.fn().mockResolvedValue({ affected: 1 }), find: vi.fn().mockResolvedValue([]),
+      findOneBy: vi.fn().mockResolvedValue(null),
     };
     const queue = { add: vi.fn().mockRejectedValue(new Error('redis unavailable')) };
     const service = new ArchivoLimpiezaService(repository as unknown as Repository<ArchivoPendiente>, queue as unknown as Queue);

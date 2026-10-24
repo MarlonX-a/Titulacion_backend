@@ -9,14 +9,18 @@ import { ArchivoPendiente } from './entities/archivo-pendiente.entity.js';
 export class ArchivoLimpiezaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ArchivoLimpiezaService.name);
   private timer?: NodeJS.Timeout;
+  private readonly testMode = process.env.NODE_ENV === 'test';
 
   constructor(
     @InjectRepository(ArchivoPendiente) private readonly repository: Repository<ArchivoPendiente>,
     @InjectQueue('limpieza-archivos') private readonly queue: Queue,
   ) {}
 
-  async registrar(periodoId: string, key: string): Promise<void> {
+  async registrar(periodoId: string | null, key: string): Promise<boolean> {
+    const existing = await this.repository.findOneBy({ ruta_almacenamiento: key });
+    if (existing) return false;
     await this.repository.save(this.repository.create({ periodo_id: periodoId, ruta_almacenamiento: key, estado: 'SUBIENDO' }));
+    return true;
   }
 
   async solicitar(manager: import('typeorm').EntityManager | undefined, key: string): Promise<void> {
@@ -33,6 +37,7 @@ export class ArchivoLimpiezaService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (this.testMode) return;
     this.timer = setInterval(() => void this.encolarPendientes(), 30_000);
     this.timer.unref();
     void this.encolarPendientes();
