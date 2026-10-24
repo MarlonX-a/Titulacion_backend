@@ -32,6 +32,7 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { Roles } from '../common/roles.decorator.js';
 import { CreateHabilitacionDto } from './dto/create-habilitacion.dto.js';
 import { HabilitadoResponseDto } from './dto/habilitado-response.dto.js';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ListHabilitadosQueryDto } from './dto/list-habilitados-query.dto.js';
 import { ResolveIngresoDto } from './dto/resolve-ingreso.dto.js';
 import { HabilitadosService } from './habilitados.service.js';
@@ -98,6 +99,28 @@ export class HabilitadosController {
     @CurrentUsuario() usuario: Usuario,
   ): Promise<HabilitadoResponseDto> {
     return this.habilitados.getMine(periodoId, usuario);
+  }
+
+  @Get('candidatos-invitacion')
+  @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Listar compañeros habilitados sin grupo para invitar' })
+  @ApiQuery({ name: 'page', required: false, type: Number, minimum: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, minimum: 1, maximum: 100 })
+  @ApiOkResponse({ schema: {
+    type: 'object', required: ['data', 'total', 'page', 'limit'],
+    properties: {
+      data: { type: 'array', items: { $ref: getSchemaPath(HabilitadoResponseDto) } },
+      total: { type: 'integer' }, page: { type: 'integer' }, limit: { type: 'integer' },
+    },
+  } })
+  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ESTUDIANTE activa.' })
+  @ApiNotFoundResponse({ description: 'No tienes perfil o habilitación en ese período.' })
+  candidatosInvitacion(
+    @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
+    @CurrentUsuario() usuario: Usuario,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.habilitados.candidatosInvitacion(periodoId, usuario, query);
   }
 
   @Get(':id')

@@ -142,6 +142,15 @@ $env:SWAGGER_ENABLED = 'false'
 npm run start:prod
 ```
 
+## Conexión con el frontend
+
+El frontend ([`Johan2418/Titulacion---Frontend`](https://github.com/Johan2418/Titulacion---Frontend))
+llama a `/api/v1/*`; en desarrollo Vite redirige esas rutas a este backend
+(`http://127.0.0.1:3000`) quitando el prefijo y reescribe la ruta de la cookie de
+renovación, y en el contenedor lo hace Nginx. Por eso no se requiere CORS, pero la
+renovación de sesión valida el encabezado `Origin`: el origen del frontend debe
+figurar en `AUTH_ORIGINS` (el ejemplo incluye `http://localhost:5173`).
+
 ## Conexión y migraciones
 
 `DatabaseModule` usa las mismas opciones de conexión que el `DataSource` del CLI.
@@ -324,7 +333,9 @@ se indica otro valor al crearlo.
 ## Períodos de titulación
 
 Un ADMIN puede crear, consultar y editar períodos mientras estén en estado
-`BORRADOR`. Los endpoints están disponibles en `/periodos` y
+`BORRADOR`. `GET /periodos` y `GET /periodos/:id` también están disponibles para
+DOCENTE y ESTUDIANTE, que necesitan conocer el período vigente para consultar sus
+temas, grupos, postulaciones y asignaciones. Los endpoints están disponibles en `/periodos` y
 `/periodos/:id`; el listado usa `page` y `limit`, y `PATCH /periodos/:id`
 actualiza solo los campos enviados. El estado y el ID los asigna el servidor.
 
@@ -353,6 +364,11 @@ paginado y filtrar por condición, situación de ingreso y estado. El detalle se
 consulta en `GET /periodos/:periodoId/habilitados/:id`. Cada estudiante puede
 consultar exclusivamente su registro en
 `GET /periodos/:periodoId/habilitados/me`.
+
+Para formar grupos, cada estudiante habilitado puede consultar en
+`GET /periodos/:periodoId/habilitados/candidatos-invitacion` a los compañeros del
+mismo período que puede invitar: habilitados, no `NO_ADMITIDO` y sin integración
+activa en un grupo. El listado excluye al propio estudiante y es paginado.
 
 ADMIN resuelve un caso condicionado pendiente en
 `POST /periodos/:periodoId/habilitados/:id/resolver-ingreso`, indicando

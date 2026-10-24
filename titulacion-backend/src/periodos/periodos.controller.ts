@@ -66,6 +66,7 @@ export class PeriodosController {
   }
 
   @Get()
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Listar períodos paginados' })
   @ApiQuery({ name: 'page', required: false, type: Number, minimum: 1 })
   @ApiQuery({
@@ -96,6 +97,7 @@ export class PeriodosController {
   }
 
   @Get(':id')
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Consultar un período por UUID' })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({ description: 'El identificador debe ser un UUID válido.' })
