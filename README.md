@@ -100,7 +100,7 @@ privado configurados.
 
 ### Preparar servicios de desarrollo
 
-El archivo `docker-compose.dev.yml` proporciona Redis, almacenamiento S3 local
+El archivo `docker-compose.yml` proporciona Redis, almacenamiento S3 local
 (SeaweedFS con cifrado SSE-S3) y Mailpit. AIStor permanece disponible bajo el
 perfil opcional `aistor`, conservando su volumen. Antes de iniciar los servicios,
 genera la clave persistente de SeaweedFS; el comando no reemplaza una clave ya
@@ -116,7 +116,7 @@ Si
 Docker Desktop está instalado:
 
 ```powershell
-docker compose -f docker-compose.dev.yml up -d
+docker compose up -d
 npm run auth:keys
 npm run db:prepare-auth
 npm run usuario:bootstrap-admin
