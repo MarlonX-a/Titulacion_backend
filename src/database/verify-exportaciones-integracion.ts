@@ -98,7 +98,7 @@ async function verify(): Promise<void> {
     const queued = await isolated.getRepository(SolicitudExportacion).findOneBy({ id: submitted.id });
     if (!queued?.reserva_id || queued.estado !== ExportacionEstado.PROCESANDO) throw new Error(`La cola no reservó el trabajo ${format}.`);
     const job = await queue.getJob(queued.reserva_id);
-    if (!job || Object.keys(job.data).sort().join(',') !== 'ciclo,id') throw new Error('Redis recibió más datos que el identificador y ciclo de exportación.');
+    if (!job || Object.keys(job.data).sort((left, right) => left.localeCompare(right)).join(',') !== 'ciclo,id') throw new Error('Redis recibió más datos que el identificador y ciclo de exportación.');
     await service.procesar(job.data, job.id!);
     await job.remove();
 

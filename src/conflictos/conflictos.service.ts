@@ -80,8 +80,8 @@ export class ConflictosService {
         if (new Set(inputIds).size !== inputIds.length) throw new ConflictException('No se pueden repetir postulaciones entre los participantes.');
         await manager.query(`SELECT "id" FROM ${this.schema(manager)}."postulacion" WHERE "periodo_id"=$1 AND "tema_id"=$2 ORDER BY "id" FOR UPDATE`, [periodoId, temaId]);
         const rows = await this.candidateRows(manager, periodoId, temaId);
-        const eligible = rows.filter((row) => row.elegible).map((row) => row.id).sort();
-        const supplied = [...inputIds].sort();
+        const eligible = rows.filter((row) => row.elegible).map((row) => row.id).sort((left, right) => left.localeCompare(right));
+        const supplied = [...inputIds].sort((left, right) => left.localeCompare(right));
         if (eligible.length < 2 || eligible.length !== supplied.length || eligible.some((id, index) => id !== supplied[index])) {
           throw new ConflictException('Las postulaciones elegibles cambiaron; consulta nuevamente las candidaturas del conflicto.');
         }

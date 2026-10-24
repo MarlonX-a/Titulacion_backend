@@ -77,7 +77,7 @@ export class PostulacionesService {
           participantIds = members.map((member) => member.estudiante.id); count = participantIds.length;
           if (count < 2) throw new ConflictException('La postulación grupal requiere al menos dos integrantes activos.');
           if (!participantIds.includes(student)) throw new ForbiddenException('No formas parte del grupo representante.');
-          for (const participantId of [...participantIds].sort()) await this.lockAssignmentStudent(manager, participantId);
+          for (const participantId of [...participantIds].sort((left, right) => left.localeCompare(right))) await this.lockAssignmentStudent(manager, participantId);
           for (const participantId of participantIds) {
             await this.habilitados.getEligibleStudentForGroup(periodoId, participantId, manager);
             if (await this.asignaciones.tieneVigenteParaEstudiante(manager, participantId)) throw new ConflictException('Uno de los integrantes ya tiene una asignación vigente.');
