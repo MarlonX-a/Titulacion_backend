@@ -881,6 +881,10 @@ puedan ejecutarse como fórmulas y XLSX conserva las matrículas como texto.
 Los reintentos automáticos se limitan a cinco por ciclo; ADMIN puede iniciar
 otro desde `POST /periodos/{periodoId}/exportaciones/{id}/reintentar`.
 
+### Integración continua
+
+GitHub Actions ejecuta el lint, la comprobación estricta de TypeScript, las pruebas unitarias y HTTP, la compilación y `db:verify-exportaciones` sobre PostgreSQL 17 temporal en cada pull request hacia `main` y en cada push a `main`. Las pruebas HTTP no requieren servicios externos. SonarCloud conserva su Automatic Analysis configurado en el proyecto; el workflow no necesita ni almacena `SONAR_TOKEN`.
+
 Redis y SeaweedFS deben estar disponibles para completar y descargar los
 archivos. PostgreSQL conserva las solicitudes si Redis está temporalmente
 fuera de servicio, para que el publicador las recupere. Al expirar, la descarga

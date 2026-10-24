@@ -1,6 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { randomBytes } from 'node:crypto';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../src/app.module.js';
@@ -75,9 +76,10 @@ describe('Autenticación de cuenta propia (e2e)', () => {
   });
 
   it('limita el token temporal de primer acceso al cambio de contraseña', async () => {
+    const initialPassword = randomBytes(18).toString('base64url');
     await request(app.getHttpServer()).get('/usuarios').set('Authorization', 'Bearer first-access-token').expect(403);
-    await request(app.getHttpServer()).post('/auth/change-initial-password').set('Authorization', 'Bearer first-access-token').send({ password: 'una-clave-personal-de-15' }).expect(204);
-    expect(authentication.changeInitialPassword).toHaveBeenCalledWith(identityId, { password: 'una-clave-personal-de-15' });
+    await request(app.getHttpServer()).post('/auth/change-initial-password').set('Authorization', 'Bearer first-access-token').send({ password: initialPassword }).expect(204);
+    expect(authentication.changeInitialPassword).toHaveBeenCalledWith(identityId, { password: initialPassword });
   });
 
   it('renueva sesión solo con origen permitido y CSRF coincidente', async () => {

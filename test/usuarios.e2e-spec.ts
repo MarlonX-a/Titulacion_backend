@@ -277,13 +277,13 @@ describe('Usuarios (e2e)', () => {
         email: 'bootstrap@uleam.edu.ec',
         nombres: 'Admin',
         apellidos: 'Inicial',
-        password: 'contrasena-personal-segura-01',
+        password: randomBytes(18).toString('base64url'),
       }),
       usuarios.createInitialAdmin({
         email: 'bootstrap-2@uleam.edu.ec',
         nombres: 'Admin',
         apellidos: 'Inicial',
-        password: 'contrasena-personal-segura-02',
+        password: randomBytes(18).toString('base64url'),
       }),
     ]);
     expect(

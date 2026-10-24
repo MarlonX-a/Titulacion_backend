@@ -199,7 +199,7 @@ export class AsignacionesTemaService {
   }
 
   private async validateParticipants(manager: EntityManager, periodoId: string, ids: string[], start: Date): Promise<void> {
-    for (const id of [...ids].sort()) {
+    for (const id of [...ids].sort((left, right) => left.localeCompare(right))) {
       await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 7319))', [id]);
       await this.habilitados.getEligibleStudentForGroup(periodoId, id, manager);
       const eligible = await manager.getRepository(EstudianteHabilitado).findOne({ where: { periodo: { id: periodoId }, estudiante: { id } } });
