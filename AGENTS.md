@@ -1,5 +1,100 @@
 # AGENTS.md
 
+Esta guía es la referencia de trabajo para personas y agentes que contribuyan al
+backend. Léela antes de cambiar código y actualízala cuando cambien las decisiones
+del proyecto o sus pasos operativos.
+
+## Guía rápida para continuar el trabajo
+
+### Ubicación del proyecto
+
+La raíz del repositorio es la carpeta que contiene `.git`, `package.json`, `src/`
+y este archivo. El proyecto ya no está dentro de una subcarpeta
+`titulacion-backend`; ejecuta los comandos desde la raíz actual. El Compose de
+desarrollo se llama `docker-compose.yml`.
+
+### Comandos habituales
+
+```powershell
+npm ci
+```
+
+En una terminal, inicia las dependencias y deja visibles sus logs:
+
+```powershell
+docker compose up
+```
+
+En otra terminal, inicia NestJS:
+
+```powershell
+npm run start:dev
+```
+
+Para dejar Docker ejecutándose en segundo plano, usa `docker compose up -d`;
+puedes seguir los logs con `docker compose logs -f` y detener los contenedores con
+`docker compose down`. Este último comando conserva los volúmenes.
+
+En otra terminal, las comprobaciones disponibles son:
+
+```powershell
+npm run lint
+npm run typecheck
+npm test
+npm run test:e2e
+npm run build
+```
+
+No ejecutes migraciones contra `public` ni `local_demo`. Para desarrollo, el
+esquema aprobado es `titulacion_dev`; antes de `npm run migration:run`, confirma
+el valor efectivo de `DB_SCHEMA` y revisa `npm run migration:show`. Los
+verificadores `db:verify-*` deben usar esquemas temporales y limpiarlos al
+terminar. Nunca muestres ni copies secretos de `.env` en la salida o en la guía;
+usa `.env.example` como referencia.
+
+### Estado del backend
+
+El código contiene módulos para autenticación y usuarios, períodos, perfiles y
+habilitaciones, líneas y temas, grupos e invitaciones, postulaciones, conflictos,
+asignaciones de tema y tutor, carga tutorial, PAT, notificaciones, importaciones,
+reportes y exportaciones. La presencia de un módulo no demuestra por sí sola que
+todos sus requisitos tengan pruebas suficientes: revisa el caso de uso, DTO,
+autorización, migración y pruebas que correspondan antes de ampliarlo.
+
+GitHub Actions ejecuta lint, TypeScript estricto, pruebas unitarias y HTTP,
+compilación y una verificación de migraciones de exportaciones en PostgreSQL.
+SonarCloud está configurado con Automatic Analysis; comprueba el Quality Gate en
+SonarCloud después de integrar cambios en la rama analizada. No añadas el token
+de Sonar al workflow sin cambiar primero esa configuración.
+
+### Pendientes conocidos y orden sugerido
+
+1. **Archivo de períodos y revisión final de cobertura funcional.** Es el
+   siguiente alcance funcional acordado. Antes de definir transiciones, permisos
+   o efectos del archivo, contrasta los requisitos, el DER y el código; conserva
+   el historial y no inventes reglas que los documentos no indiquen.
+2. **Cerrar brechas de verificación.** Revisar las pruebas de concurrencia,
+   restricciones PostgreSQL, reversión protegida y atomicidad de auditoría de
+   todos los módulos críticos. El CI actual ejecuta automáticamente solo el
+   verificador de exportaciones; ampliar el workflow de forma deliberada.
+3. **Revisar los comandos `db:verify-*`.** Algunos nombres reutilizan archivos de
+   verificación de dominios relacionados. Confirma que cada comando cubra las
+   restricciones que anuncia, en particular perfiles, tutores propuestos y
+   revisiones PAT, antes de depender de su nombre como evidencia.
+4. **Ajustar la importación Excel.** El formato implementado es provisional;
+   actualizar sus encabezados y reglas cuando la profesora entregue el archivo
+   real y se confirme su estructura.
+5. **Preparar el despliegue real.** La salida SMTP institucional autorizada,
+   secretos de producción, almacenamiento, Redis, PostgreSQL, copias de
+   seguridad y operación del entorno deben configurarse con sus responsables;
+   no sustituirlos por credenciales inventadas.
+6. **Frontend.** La interfaz de inicio de sesión y carga de Excel no forma parte
+   de este repositorio backend; coordinarla como trabajo separado.
+
+La lista es una guía, no una afirmación de que los puntos posteriores estén
+terminados o bloqueados. Verifica el estado actual del código, CI y servicios
+antes de marcar trabajo como completado.
+
 ## 1. Contexto del proyecto
 
 Este repositorio contiene el backend del:
