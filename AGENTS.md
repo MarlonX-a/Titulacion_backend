@@ -90,6 +90,9 @@ de Sonar al workflow sin cambiar primero esa configuración.
    no sustituirlos por credenciales inventadas.
 6. **Frontend.** La interfaz de inicio de sesión y carga de Excel no forma parte
    de este repositorio backend; coordinarla como trabajo separado.
+7. Revisar la matriz de cobertura funcional y no funcional en
+   [`docs/cobertura-backend.md`](docs/cobertura-backend.md) antes de elegir una
+   brecha nueva; actualizar su estado cuando se agregue evidencia.
 
 La lista es una guía, no una afirmación de que los puntos posteriores estén
 terminados o bloqueados. Verifica el estado actual del código, CI y servicios

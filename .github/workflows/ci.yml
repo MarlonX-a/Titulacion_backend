@@ -88,3 +88,6 @@ jobs:
 
       - name: Verify migrations and export constraints
         run: npm run db:verify-exportaciones
+
+      - name: Verify period archival constraints
+        run: npm run db:verify-archivo-periodo

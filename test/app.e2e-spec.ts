@@ -59,6 +59,15 @@ describe('AppController (e2e)', () => {
       .expect(401);
   });
 
+  it('documenta el archivo de períodos y exige autenticación', async () => {
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.paths['/periodos/{id}/archivar']).toBeDefined();
+    await request(app.getHttpServer())
+      .post('/periodos/00000000-0000-4000-8000-000000000001/archivar')
+      .send({ motivo: 'Cierre administrativo' })
+      .expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

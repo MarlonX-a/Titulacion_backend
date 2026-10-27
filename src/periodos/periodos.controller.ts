@@ -34,11 +34,13 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { AbrirPostulacionDto } from './dto/abrir-postulacion.dto.js';
+import { ArchivarPeriodoDto } from './dto/archivar-periodo.dto.js';
 import { CreatePeriodoDto } from './dto/create-periodo.dto.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodosService } from './periodos.service.js';
 import { InicioTitulacionService } from './inicio-titulacion.service.js';
+import { ArchivoPeriodoService } from './archivo-periodo.service.js';
 
 @ApiTags('Períodos de titulación')
 @ApiBearerAuth('bearer')
@@ -52,6 +54,7 @@ export class PeriodosController {
   constructor(
     private readonly periodos: PeriodosService,
     private readonly inicioTitulacion: InicioTitulacionService,
+    private readonly archivoPeriodo: ArchivoPeriodoService,
   ) {}
 
   @Post()
@@ -170,5 +173,21 @@ export class PeriodosController {
   ): Promise<PeriodoResponseDto> {
     void dto;
     return this.inicioTitulacion.iniciar(id, actor, request.ip || null);
+  }
+
+  @Post(':id/archivar')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Archivar un período EN_CURSO y conservar su historial' })
+  @ApiOkResponse({ type: PeriodoResponseDto })
+  @ApiBadRequestResponse({ description: 'UUID o motivo inválido, o cuerpo con propiedades no permitidas.' })
+  @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
+  @ApiConflictResponse({ description: 'Solo se archivan períodos EN_CURSO; el estado ARCHIVADO es terminal.' })
+  archivar(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: ArchivarPeriodoDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<PeriodoResponseDto> {
+    return this.archivoPeriodo.archivar(id, dto, actor, request.ip || null);
   }
 }
