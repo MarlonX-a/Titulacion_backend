@@ -347,9 +347,21 @@ posterior al inicio y que la titulación comience al cierre o después; devuelve
 las fechas en UTC. PostgreSQL protege también esas reglas y la unicidad exacta
 del código.
 
-Los estados posteriores a `BORRADOR` están definidos en el modelo, pero sus
-transiciones se implementarán cuando estén disponibles las validaciones de
-estudiantes habilitados y condicionados.
+ADMIN abre postulaciones con `POST /periodos/:id/abrir-postulacion` dentro del
+plazo configurado, las cierra con `POST /periodos/:id/cerrar-postulacion` una
+vez vencido el plazo y puede iniciar titulación con
+`POST /periodos/:id/iniciar-titulacion` desde la fecha configurada y después de
+resolver todos los condicionados pendientes.
+
+Al terminar el proceso, ADMIN puede archivar un período `EN_CURSO` con
+`POST /periodos/:id/archivar` y un motivo obligatorio. El archivo conserva las
+entidades y archivos, bloquea cambios académicos y no altera los permisos de
+consulta de cada endpoint. Las exportaciones administrativas siguen disponibles.
+No hay reapertura. Ejemplo de cuerpo:
+
+```json
+{ "motivo": "Cierre administrativo del proceso correspondiente al período." }
+```
 
 ## Estudiantes habilitados
 
@@ -884,6 +896,11 @@ otro desde `POST /periodos/{periodoId}/exportaciones/{id}/reintentar`.
 ### Integración continua
 
 GitHub Actions ejecuta el lint, la comprobación estricta de TypeScript, las pruebas unitarias y HTTP, la compilación y `db:verify-exportaciones` sobre PostgreSQL 17 temporal en cada pull request hacia `main` y en cada push a `main`. Las pruebas HTTP no requieren servicios externos. SonarCloud conserva su Automatic Analysis configurado en el proyecto; el workflow no necesita ni almacena `SONAR_TOKEN`.
+
+El workflow ejecuta además `db:verify-archivo-periodo` en el mismo PostgreSQL
+temporal. La matriz de cobertura por requisito y el backlog técnico están en
+[`docs/cobertura-backend.md`](docs/cobertura-backend.md); sus estados distinguen
+implementación de evidencia de pruebas y operación productiva.
 
 Redis y SeaweedFS deben estar disponibles para completar y descargar los
 archivos. PostgreSQL conserva las solicitudes si Redis está temporalmente
