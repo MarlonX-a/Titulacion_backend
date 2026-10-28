@@ -27,6 +27,7 @@ import { ConflictoParticipante } from '../src/conflictos/entities/conflicto-part
 import { AsignacionTema } from '../src/asignaciones-tema/entities/asignacion-tema.entity.js';
 import { CredencialUsuario } from '../src/auth/entities/credencial-usuario.entity.js';
 import { CorreoSalida } from '../src/auth/entities/correo-salida.entity.js';
+import { SesionUsuario } from '../src/auth/entities/sesion-usuario.entity.js';
 import { ConfigCargaTutorial } from '../src/carga-tutorial/entities/config-carga-tutorial.entity.js';
 import { AsignacionTutor } from '../src/asignaciones-tutor/entities/asignacion-tutor.entity.js';
 import { PlantillaPat } from '../src/plantillas-pat/entities/plantilla-pat.entity.js';
@@ -198,14 +199,24 @@ export const docenteTestRepository = {
     ] as const;
   },
   findOne: async (options: {
-    where: { id?: string; usuario?: { id: string } };
+    where: { id?: string; cedula?: string; usuario?: { id: string } };
   }) =>
     docenteRecords.find(
       (record) =>
         (options.where.id !== undefined && record.id === options.where.id) ||
+        (options.where.cedula !== undefined && record.cedula === options.where.cedula) ||
         (options.where.usuario !== undefined &&
           record.usuario.id === options.where.usuario.id),
     ) ?? null,
+  update: async (criteria: { id: string }, values: Partial<Docente>) => {
+    if (values.cedula !== undefined &&
+      docenteRecords.some((record) => record.cedula === values.cedula && record.id !== criteria.id)) {
+      throw duplicateError('UPDATE docente');
+    }
+    const found = docenteRecords.find((record) => record.id === criteria.id);
+    if (found) Object.assign(found, values);
+    return { affected: found ? 1 : 0 };
+  },
 };
 
 export const periodoTestRepository = {
@@ -396,7 +407,12 @@ const credencialTestRepository = {
     return value;
   },
   findOneBy: async (criteria: Partial<CredencialUsuario>) => credencialRecords.find((item) => Object.entries(criteria).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
+  findOne: async (options: { where: Partial<CredencialUsuario> }) => credencialRecords.find((item) => Object.entries(options.where).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
   update: async () => ({ affected: 1 }),
+};
+const sesionRevocations: string[] = [];
+const sesionTestRepository = {
+  update: async (criteria: { usuario_id: string }) => { sesionRevocations.push(criteria.usuario_id); return { affected: 1 }; },
 };
 const correoTestRepository = {
   create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,
@@ -572,6 +588,7 @@ export const usuarioTestDataSource = {
           if (entity === AsignacionTema) return assignmentTemaTestRepository;
           if (entity === CredencialUsuario) return credencialTestRepository;
           if (entity === CorreoSalida) return correoTestRepository;
+          if (entity === SesionUsuario) return sesionTestRepository;
           if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
           if (entity === AsignacionTutor) return asignacionTutorTestRepository;
           if (entity === PlantillaPat) return plantillaPatTestRepository;
@@ -604,6 +621,19 @@ export function clearUsuarioTestRecords(): void {
   credencialRecords.length = 0;
   correoRecords.length = 0;
   notificacionRecords.length = 0;
+  sesionRevocations.length = 0;
+}
+
+export function credencialTestRecords(): readonly CredencialUsuario[] {
+  return credencialRecords;
+}
+
+export function correoTestRecords(): readonly CorreoSalida[] {
+  return correoRecords;
+}
+
+export function sesionRevocationsTestRecords(): readonly string[] {
+  return sesionRevocations;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {

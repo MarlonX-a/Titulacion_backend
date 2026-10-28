@@ -12,6 +12,8 @@ import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
 import { DocentesService } from '../docentes/docentes.service.js';
+import { UsuariosService } from '../usuarios/usuarios.service.js';
+import type { AuditoriaService } from '../auditoria/auditoria.service.js';
 
 const schema = `test_perfiles_${randomBytes(8).toString('hex')}`;
 let schemaCreated = false;
@@ -65,9 +67,13 @@ async function verify(): Promise<void> {
     isolatedDataSource.getRepository(Estudiante),
     isolatedDataSource,
   );
+  // Este esquema temporal no crea la tabla auditoria; la auditoría de perfiles se verifica en HTTP.
+  const auditoriaSinTabla = { registrar: async () => undefined } as unknown as AuditoriaService;
   const docentesService = new DocentesService(
     isolatedDataSource.getRepository(Docente),
     isolatedDataSource,
+    new UsuariosService(users, isolatedDataSource),
+    auditoriaSinTabla,
   );
   const studentProfile = await estudiantesService.create({
     usuario_id: demoStudent.id,
@@ -81,7 +87,7 @@ async function verify(): Promise<void> {
     cedula: '3002030405',
     titulo_academico: 'Magíster',
     departamento: 'Verificación',
-  });
+  }, admin, null);
 
   if (
     studentProfile.usuario.id !== demoStudent.id ||

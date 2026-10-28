@@ -41,6 +41,9 @@ import {
   setTemaTestEstado,
   findUsuarioTestIdByExternalId,
   DatabaseTestingModule,
+  credencialTestRecords,
+  correoTestRecords,
+  sesionRevocationsTestRecords,
 } from './database-testing.module.js';
 
 describe('Usuarios (e2e)', () => {
@@ -1460,5 +1463,77 @@ describe('Usuarios (e2e)', () => {
     setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() - 1_000));
     await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub')
       .expect(200).then((response) => expect(response.body.estado).toBe(PeriodoEstado.EN_CURSO));
+  });
+  it('crea cuenta DOCENTE, credencial temporal, correo de acceso y perfil en una sola operación', async () => {
+    addAdmin();
+    const response = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: ' Nuevo.Docente@ULEAM.edu.ec ', nombres: ' Rosa ', apellidos: 'Mera', cedula: '1316661675', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true })
+      .expect(201);
+    expect(response.body).toMatchObject({
+      usuario: { email: 'nuevo.docente@uleam.edu.ec', nombres: 'Rosa', apellidos: 'Mera', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO },
+      cedula: '1316661675', habilitado_tutoria: true,
+    });
+    const usuarioId = response.body.usuario.id as string;
+    expect(credencialTestRecords().find((item) => item.usuario_id === usuarioId)?.requiere_cambio).toBe(true);
+    expect(correoTestRecords().filter((item) => item.usuario_id === usuarioId && item.tipo === 'ACCESO')).toHaveLength(1);
+    const acciones = auditoriaTestRecords().map((item) => item.accion);
+    expect(acciones).toEqual(expect.arrayContaining(['CREAR_USUARIO', 'CREAR_DOCENTE']));
+
+    // correo o cédula repetidos: 409 claro y sin cuenta huérfana
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'nuevo.docente@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(409).then((r) => expect(r.body.message).toContain('correo'));
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'otro@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '1316661675', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(409).then((r) => expect(r.body.message).toContain('cédula'));
+    await authenticated('get', '/usuarios?limit=100', 'admin-sub').expect(200)
+      .then((r) => expect(r.body.data.map((u: { email: string }) => u.email)).not.toContain('otro@uleam.edu.ec'));
+  });
+
+  it('rechaza altas de docente con dominio inválido, datos incompletos o mezcla de usuario_id y cuenta', async () => {
+    addAdmin();
+    const base = { cedula: '1316661675', titulo_academico: 'Magíster', departamento: 'Sistemas' };
+    await authenticated('post', '/docentes', 'admin-sub').send({ ...base, email: 'd@gmail.com', nombres: 'A', apellidos: 'B' }).expect(400);
+    await authenticated('post', '/docentes', 'admin-sub').send({ ...base, email: 'd@uleam.edu.ec', nombres: 'A' }).expect(400);
+    await authenticated('post', '/docentes', 'admin-sub').send(base).expect(400);
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ ...base, usuario_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', email: 'd@uleam.edu.ec', nombres: 'A', apellidos: 'B' })
+      .expect(400);
+    await authenticated('post', '/docentes', 'student-sub').send({ ...base, email: 'd@uleam.edu.ec', nombres: 'A', apellidos: 'B' }).expect(403);
+  });
+
+  it('ADMIN edita un docente con auditoría, rechaza el correo y revoca sesiones al desactivarlo', async () => {
+    addAdmin();
+    const created = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'editable@uleam.edu.ec', nombres: 'Luis', apellidos: 'Vera', cedula: '1316661675', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(201);
+    const other = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'otro.docente@uleam.edu.ec', nombres: 'Ana', apellidos: 'Loor', cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(201);
+    const id = created.body.id as string;
+
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({}).expect(400);
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ email: 'nuevo@uleam.edu.ec' }).expect(400)
+      .then((r) => expect(JSON.stringify(r.body.message)).toContain('correo'));
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: 'BLOQUEADO' }).expect(400);
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ cedula: other.body.cedula }).expect(409)
+      .then((r) => expect(r.body.message).toContain('cédula'));
+    await authenticated('patch', '/docentes/ffffffff-ffff-4fff-8fff-ffffffffffff', 'admin-sub').send({ nombres: 'X' }).expect(404);
+    await authenticated('patch', `/docentes/${id}`, 'student-sub').send({ nombres: 'X' }).expect(403);
+
+    const edited = await authenticated('patch', `/docentes/${id}`, 'admin-sub')
+      .send({ nombres: ' Luis Alberto ', titulo_academico: 'Magíster', habilitado_tutoria: true, cedula: '0102030418' })
+      .expect(200);
+    expect(edited.body).toMatchObject({ usuario: { nombres: 'Luis Alberto', email: 'editable@uleam.edu.ec' }, titulo_academico: 'Magíster', habilitado_tutoria: true, cedula: '0102030418' });
+    const audit = auditoriaTestRecords().find((item) => item.accion === 'EDITAR_DOCENTE');
+    expect(audit?.valores_anteriores).toMatchObject({ nombres: 'Luis', titulo_academico: 'Ing.', habilitado_tutoria: false });
+    expect(audit?.valores_nuevos).toMatchObject({ nombres: 'Luis Alberto', titulo_academico: 'Magíster', habilitado_tutoria: true });
+
+    const deactivated = await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: UsuarioEstado.INACTIVO }).expect(200);
+    expect(deactivated.body.usuario.estado).toBe(UsuarioEstado.INACTIVO);
+    expect(sesionRevocationsTestRecords()).toContain(created.body.usuario.id);
+    expect(credencialTestRecords().find((item) => item.usuario_id === created.body.usuario.id)?.version_sesion).toBe(1);
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: UsuarioEstado.ACTIVO }).expect(200)
+      .then((r) => expect(r.body.usuario.estado).toBe(UsuarioEstado.ACTIVO));
   });
 });

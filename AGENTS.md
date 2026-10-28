@@ -347,6 +347,16 @@ cambiarse en el primer acceso; las altas manuales conservan claves aleatorias.
 El esquema nuevo de desarrollo es `titulacion_dev`; preservar el esquema
 histórico `local_demo` sin cambios.
 
+Docentes (RF-19): `POST /docentes` sin `usuario_id` crea en una transacción la cuenta
+DOCENTE (clave temporal aleatoria y correo ACCESO cifrado, como `POST /usuarios`) y su
+perfil, con auditoría `CREAR_USUARIO` y `CREAR_DOCENTE`; con `usuario_id` vincula una cuenta
+existente (mezclar ambos es 400). `PATCH /docentes/:id` (ADMIN) edita nombres, apellidos,
+estado ACTIVO/INACTIVO, cédula, título, departamento y `habilitado_tutoria` con auditoría
+`EDITAR_DOCENTE` antes/después; el correo es el usuario de acceso y se rechaza con 400. Una
+cédula repetida responde 409. Pasar a INACTIVO revoca las sesiones (`version_sesion` + 1 y
+sesiones revocadas) y no altera tutorías VIGENTES, asignaciones ni límites de carga: el docente
+inactivo deja de poder ingresar y el trigger de tutor ya impide asignarle tutorías nuevas.
+
 ---
 
 ## Períodos
