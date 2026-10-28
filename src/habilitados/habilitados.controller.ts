@@ -5,6 +5,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -35,6 +36,7 @@ import { HabilitadoResponseDto } from './dto/habilitado-response.dto.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ListHabilitadosQueryDto } from './dto/list-habilitados-query.dto.js';
 import { ResolveIngresoDto } from './dto/resolve-ingreso.dto.js';
+import { UpdateHabilitacionDto } from './dto/update-habilitacion.dto.js';
 import { HabilitadosService } from './habilitados.service.js';
 
 @ApiTags('Estudiantes habilitados')
@@ -135,6 +137,24 @@ export class HabilitadosController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<HabilitadoResponseDto> {
     return this.habilitados.getById(periodoId, id);
+  }
+
+  @Patch(':id')
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Editar la condición de ingreso de una habilitación y volver a habilitar al estudiante' })
+  @ApiOkResponse({ type: HabilitadoResponseDto })
+  @ApiBadRequestResponse({ description: 'Condición inválida, requisito pendiente ausente para CONDICIONADO o presente para REGULAR.' })
+  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
+  @ApiNotFoundResponse({ description: 'No existe la habilitación en el período indicado.' })
+  @ApiConflictResponse({ description: 'El período está ARCHIVADO o no admite condicionados pendientes (EN_CURSO).' })
+  actualizarCondicion(
+    @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateHabilitacionDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<HabilitadoResponseDto> {
+    return this.habilitados.actualizarCondicion(periodoId, id, actor, dto, request.ip || null);
   }
 
   @Post(':id/resolver-ingreso')

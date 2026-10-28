@@ -911,6 +911,33 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths[`/periodos/{periodoId}/habilitados/me`].get).toBeDefined();
   });
 
+  it('vuelve a habilitar como condicionado a un estudiante SUSPENDIDO del período', async () => {
+    addAdmin();
+    const { profile } = await createStudentProfile();
+    const period = await createPeriod();
+    const created = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR })
+      .expect(201);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR }).expect(409);
+    const row = habilitadosTestRecords().find((item) => item.id === created.body.id);
+    if (!row) throw new Error('No se creó la habilitación de prueba.');
+    row.estado = HabilitadoEstado.SUSPENDIDO;
+    row.situacion_ingreso = SituacionIngreso.NO_ADMITIDO;
+
+    const reactivated = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Rendir examen de inglés' })
+      .expect(201);
+    expect(reactivated.body).toMatchObject({
+      id: created.body.id,
+      estado: HabilitadoEstado.HABILITADO,
+      condicion_ingreso: CondicionIngreso.CONDICIONADO,
+      requisito_pendiente: 'Rendir examen de inglés',
+      situacion_ingreso: SituacionIngreso.PENDIENTE,
+    });
+    expect(auditoriaTestRecords().map((entry) => entry.accion)).toContain('REACTIVAR_HABILITACION');
+  });
+
   it('administra líneas y aplica visibilidad por rol, normalización y auditoría', async () => {
     addAdmin();
     addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Prueba', rol: UsuarioRol.DOCENTE });
