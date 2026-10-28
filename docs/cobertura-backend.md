@@ -27,30 +27,30 @@ producción estén desplegados.
 | RF-13 | Carga y versionado PAT | `src/documentos-pat`, `db:verify-documentos-pat` | PARCIAL | Mantener prueba integrada de almacenamiento y hashes en entorno real. |
 | RF-14 | Correcciones con versiones e historial | `src/revisiones-pat`, `db:verify-revisiones-pat` | PARCIAL | Cubrir carga concurrente frente a revisión con servicios reales. |
 | RF-15 | Seguimiento de estado del proceso | Endpoints propios de grupos, postulaciones y asignaciones | PARCIAL | Añadir una consulta consolidada de seguimiento si la interfaz la requiere. |
-| RF-16 | Notificación en aplicación y correo | `src/notificaciones`, `db:verify-notificaciones` | PARCIAL | Ampliar pruebas de destinatarios y entrega SMTP real con Mailpit. |
-| RF-17 | Crear, configurar, iniciar, cerrar y archivar períodos | `src/periodos`, verificadores de período e inicio y archivo | PARCIAL | Completar pruebas HTTP autenticadas del ciclo entero y conservar historial. |
-| RF-18 | Habilitados manuales/importados y resolución de ingreso | `src/habilitados`, `src/importaciones`, `db:verify-habilitados` | PARCIAL | Sincronización institucional no está integrada; validar Excel real al recibirlo. |
-| RF-19 | Registrar/importar docentes | `src/docentes`, alta administrativa de usuarios | PARCIAL | Importación Excel de docentes y formato institucional siguen pendientes. |
+| RF-16 | Notificación en aplicación y correo | `src/notificaciones` (bandeja, contador y `POST /notificaciones/leer-todas` limitado al usuario actual), `db:verify-notificaciones` | PARCIAL | Ampliar pruebas de destinatarios y entrega SMTP real con Mailpit. |
+| RF-17 | Crear, configurar, iniciar, cerrar y archivar períodos | `src/periodos`, verificadores de período e inicio y archivo; `GET /periodos/:id/resumen` (ADMIN, indicadores agregados en una consulta, `resumen-periodo.service.spec.ts`) y `condicionados_pendientes` por período solo para ADMIN (`consultas-agregadas.e2e-spec.ts`); reapertura POSTULACION_CERRADA → POSTULACION_ABIERTA (`REABRIR_POSTULACION`) y edición de la fecha fin en POSTULACION_CERRADA con prueba HTTP | PARCIAL | Completar pruebas HTTP autenticadas del ciclo entero y conservar historial. |
+| RF-18 | Habilitados manuales/importados y resolución de ingreso | `src/habilitados` (respuestas ADMIN con correo, cédula, carrera, nivel y `resuelto_por`; candidatos de invitación sin datos personales, `habilitados.service.spec.ts`), `src/importaciones`, `db:verify-habilitados` | PARCIAL | Sincronización institucional no está integrada; validar Excel real al recibirlo. |
+| RF-19 | Registrar/importar docentes | `src/docentes` (alta atómica cuenta+perfil, `PATCH /docentes/:id`), `src/importaciones` (plantilla XLSX propia de docentes), `db:verify-importacion-docentes`, `db:verify-usuarios` | PARCIAL | Alta, edición e importación implementadas con pruebas unitarias y HTTP; la importación no tiene prueba HTTP porque `ImportacionesModule` no se carga en e2e. Confirmar con la institución la cédula como clave inicial. |
 | RF-20 | Registrar temas con referencias y rango | `src/temas`, `db:verify-temas` | PARCIAL | Aumentar pruebas HTTP con repositorios reales y referencias incompatibles. |
-| RF-21 | Editar, publicar, cerrar y retirar con historial | Temas e historial implementan borrador/publicación | PARCIAL | Cierre y retiro manual de temas requieren etapa funcional posterior. |
-| RF-22 | Consultar postulaciones por período/tema/estado | `src/postulaciones`, Swagger | PARCIAL | Ampliar filtros y autorización de recurso en HTTP. |
-| RF-23 | Resolver competencia y guardar puntajes | `src/conflictos`, `db:verify-conflictos` | PARCIAL | Completar concurrencia y elegibilidad histórica en verificador aislado. |
-| RF-24 | Asignar tema y anular por condición | `src/asignaciones-tema`, `db:verify-asignaciones-tema` | PARCIAL | Validar todos los casos grupales y carreras con tutor vigente. |
-| RF-25 | Cierre de disponibilidad y rechazo de candidaturas | Asignación cambia tema y postulaciones pendientes | PARCIAL | Cierre manual de tema no está implementado. |
+| RF-21 | Editar, publicar, cerrar y retirar con historial | `POST .../temas/:id/cerrar`, `/retirar` (motivo) y reapertura CERRADO → PUBLICADO por `/publicar`; historial, auditoría, `temas.service.spec.ts`, HTTP y `db:verify-postulaciones` | PARCIAL | Edición de temas publicados sigue fuera de alcance; cubrir carrera cierre/postulación en verificador aislado. |
+| RF-22 | Consultar postulaciones por período/tema/estado | `src/postulaciones` (filtro `modalidad`; integrantes, habilitaciones y `tutores_propuestos` cargados en lote, `tutores-propuestos.service.spec.ts`), Swagger | PARCIAL | Ampliar filtros y autorización de recurso en HTTP. |
+| RF-23 | Resolver competencia y guardar puntajes | `src/conflictos` (el listado incluye candidaturas con `grupo_nombre` y resolución, cargadas en lote), `db:verify-conflictos` | PARCIAL | Completar concurrencia y elegibilidad histórica en verificador aislado. |
+| RF-24 | Asignar tema y anular por condición o manualmente | `src/asignaciones-tema` (incluye `POST .../asignaciones-tema/:id/anular` con causa y motivo, flujo compartido con la anulación por incumplimiento), `db:verify-asignaciones-tema` | PARCIAL | Validar todos los casos grupales y carreras con tutor vigente. |
+| RF-25 | Cierre de disponibilidad y rechazo de candidaturas | Asignación y cierre/retiro manual de tema rechazan las postulaciones PENDIENTE y EN_CONFLICTO con auditoría y aviso; `db:verify-postulaciones` | PARCIAL | Ampliar verificación aislada con postulaciones EN_CONFLICTO y concurrencia con nuevas postulaciones. |
 | RF-26 | Ver prioridades y proponente de tutores postulados | Endpoint de tutores propuestos | PARCIAL | Añadir prueba de contrato con proponente no habilitado. |
 | RF-27 | Asignar y reemplazar tutor | `src/asignaciones-tutor`, `db:verify-asignaciones-tutor` | PARCIAL | Cubrir carga concurrente y rollback integral de historial/auditoría. |
 | RF-28 | Prioridad visual del docente proponente | Orden del listado de tutores propuestos | PARCIAL | Comprobar orden en endpoint de asignación de tutor. |
-| RF-29 | Configurar límites globales/específicos | `src/carga-tutorial`, `db:verify-carga-tutorial` | PARCIAL | Cobertura concurrente está aislada; ampliar HTTP de precedencia. |
+| RF-29 | Configurar límites globales/específicos | `src/carga-tutorial` (incluye desactivación de límites específicos), `db:verify-carga-tutorial` | PARCIAL | Cobertura concurrente está aislada; ampliar HTTP de precedencia. |
 | RF-30 | Advertir o bloquear exceso de carga | Persistencia centralizada de carga tutorial | PARCIAL | Probar escenarios de advertencia/bloqueo con asignaciones simultáneas. |
-| RF-31 | Revisar cada PAT | `src/revisiones-pat`, `db:verify-revisiones-pat` | PARCIAL | Revisar nombres de verificadores y ampliar resultados por versión. |
+| RF-31 | Revisar cada PAT | `src/revisiones-pat`, bandeja `GET /periodos/:id/documentos-pat/ultimas` (ADMIN, última versión y revisión por asignación VIGENTE, `documentos-pat-periodo.spec.ts`), `db:verify-revisiones-pat` | PARCIAL | Revisar nombres de verificadores y ampliar resultados por versión. |
 | RF-32 | Observaciones y consulta estudiantil | DTO y autorización de revisión PAT | PARCIAL | Añadir recorrido HTTP estudiante-ADMIN completo. |
 | RF-33 | Publicar y versionar plantilla | `src/plantillas-pat`, verificador de plantillas | PARCIAL | Verificar persistencia de objeto y sustituciones concurrentes en SeaweedFS. |
-| RF-34 | Trazabilidad completa | Auditoría compartida e historiales por dominio | PARCIAL | La auditoría aún no expone una consulta administrativa general. |
+| RF-34 | Trazabilidad completa | Auditoría compartida, historiales por dominio y `GET /auditoria` (ADMIN, paginado, filtros por entidad, acción, actor, fechas y texto libre); `auditoria-consulta.service.spec.ts`, HTTP `consultas-admin.e2e-spec.ts`, `db:verify-auditoria`. Historial de importaciones `GET /periodos/:id/importaciones/estudiantes` y `GET /importaciones/docentes` (incluye vencidas) | PARCIAL | Revisar que cada caso de uso relevante registre auditoría. |
 | RF-35 | Generar siete reportes administrativos | `src/reportes`, `db:verify-exportaciones` | PARCIAL | Comprobar contenido contra conjuntos grandes y fixtures de cada tipo. |
 | RF-36 | Exportar PDF/XLSX/CSV en segundo plano | `src/exportaciones`, BullMQ | PARCIAL | Ejecución integrada Redis/SeaweedFS aún depende del entorno local. |
 | RF-37 | Consulta docente de temas y postulaciones | Rutas de temas y postulaciones con filtro docente | PARCIAL | Añadir prueba HTTP de aislamiento entre docentes. |
 | RF-38 | Consultar tutorías asignadas | `src/asignaciones-tutor` | PARCIAL | Cobertura de autorización histórica y reemplazos por recurso. |
-| RF-39 | Consultar carga tutorial frente al límite | `src/carga-tutorial` | PARCIAL | Añadir prueba HTTP para configuración ausente y exceso de carga. |
+| RF-39 | Consultar carga tutorial frente al límite | `src/carga-tutorial`; `GET /periodos/:id/carga-tutorial` (ADMIN, todos los docentes con la misma regla de límite efectivo, sin consultas por docente, `carga-tutorial-persistencia.service.spec.ts`) | PARCIAL | Añadir prueba HTTP para configuración ausente y exceso de carga. |
 
 ## Requisitos no funcionales
 
@@ -89,7 +89,7 @@ producción estén desplegados.
 | RNF-31 | No borrar historial | Estados, triggers restrictivos y reversión protegida | PARCIAL | Auditar eliminaciones físicas y políticas de retención restantes. |
 | RNF-32 | Correo asíncrono | Outbox PostgreSQL, BullMQ y Mailpit | PARCIAL | Configurar remitente SMTP institucional autorizado. |
 | RNF-33 | Exportaciones con expiración | Caducidad y bloqueo de descarga | PARCIAL | Comprobar limpieza automática con almacenamiento integrado. |
-| RNF-34 | Auditoría de acciones relevantes | AuditoriaService con usuario, cambios, IP y fecha | PARCIAL | Revisar cobertura por caso de uso y consulta de auditoría. |
+| RNF-34 | Auditoría de acciones relevantes | AuditoriaService con usuario, cambios, IP y fecha; consulta ADMIN `GET /auditoria` con índices `IDX_auditoria_fecha_hora` e `IDX_auditoria_usuario` (migración `20261027100000`) y ocultamiento defensivo de claves sensibles | PARCIAL | Revisar cobertura por caso de uso. Los valores de docentes incluyen la cédula, que coincide con la clave temporal inicial de las cuentas importadas. |
 
 ## Decisiones de infraestructura y autenticación
 
