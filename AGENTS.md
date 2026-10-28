@@ -678,6 +678,16 @@ La carga tutorial puede tener:
 - límite global del período;
 - límite específico por docente.
 
+Un límite específico no se elimina: `POST /periodos/:pid/config-carga-tutorial/:id/desactivar`
+(ADMIN, auditoría `DESACTIVAR_CONFIG_CARGA_TUTORIAL`) lo deja `activa = false` como historial.
+La resolución efectiva (`CargaTutorialPersistenciaService` y el trigger
+`proteger_asignacion_tutor`) ignora los inactivos y vuelve a aplicar el global. Un límite
+inactivo no se modifica (409 en servicio, 23514 en PostgreSQL); el global no se desactiva. La
+unicidad es parcial (`UQ_config_carga_tutorial_global` y
+`UQ_config_carga_tutorial_docente_activa`), por lo que puede crearse un nuevo límite específico
+para el mismo docente. `GET .../config-carga-tutorial` lista solo activos salvo
+`incluir_inactivas=true`. Migración `20261020100000`.
+
 El sistema debe determinar la configuración aplicable.
 
 Al superar el límite:

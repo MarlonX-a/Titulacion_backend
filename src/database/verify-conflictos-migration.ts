@@ -25,6 +25,7 @@ import { CreateNotificaciones20261013100000 } from './migrations/20261013100000-
 import { EnforceNotificationEmailDelivery20261014100000 } from './migrations/20261014100000-EnforceNotificationEmailDelivery.js';
 import { ExtendProcessNotifications20261015100000 } from './migrations/20261015100000-ExtendProcessNotifications.js';
 import { AllowRetiroNoAdmitidoConPostulacion20261019100000 } from './migrations/20261019100000-AllowRetiroNoAdmitidoConPostulacion.js';
+import { DesactivarConfigCargaTutorial20261020100000 } from './migrations/20261020100000-DesactivarConfigCargaTutorial.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { Notificacion } from '../notificaciones/entities/notificacion.entity.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
@@ -104,7 +105,7 @@ async function verify(): Promise<void> {
   const options = createDatabaseOptions(loadEnvironment());
   admin = new DatabaseDataSource({ ...options, schema: 'public', entities: [], migrations: [] }); await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`); createdSchema = true;
-  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000, CreateNotificaciones20261013100000, EnforceNotificationEmailDelivery20261014100000, ExtendProcessNotifications20261015100000, AllowRetiroNoAdmitidoConPostulacion20261019100000];
+  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000, CreateNotificaciones20261013100000, EnforceNotificationEmailDelivery20261014100000, ExtendProcessNotifications20261015100000, AllowRetiroNoAdmitidoConPostulacion20261019100000, DesactivarConfigCargaTutorial20261020100000];
   isolated = new DatabaseDataSource({ ...options, schema, migrations }); await isolated.initialize(); await isolated.runMigrations({ transaction: 'all' });
 
   step = 'preparación de postulaciones concurrentes';

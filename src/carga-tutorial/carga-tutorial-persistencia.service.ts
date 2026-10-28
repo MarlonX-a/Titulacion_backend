@@ -27,7 +27,8 @@ export class CargaTutorialPersistenciaService {
     docenteId: string,
   ): Promise<ConfiguracionCargaEfectiva> {
     const repository = manager.getRepository(ConfigCargaTutorial);
-    const especifica = await repository.findOneBy({ periodo_id: periodoId, docente_id: docenteId });
+    // Un límite específico desactivado se conserva como historial pero ya no aplica.
+    const especifica = await repository.findOneBy({ periodo_id: periodoId, docente_id: docenteId, activa: true });
     if (especifica) return { origen: ConfigCargaOrigen.DOCENTE, configuracion: especifica };
 
     const global = await repository.findOneBy({ periodo_id: periodoId, docente_id: IsNull() });

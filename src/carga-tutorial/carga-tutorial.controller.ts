@@ -28,7 +28,7 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator.js';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { ListConfigCargaTutorialQueryDto } from './dto/list-config-carga-tutorial-query.dto.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -67,8 +67,9 @@ export class CargaTutorialController {
   @ApiOperation({ summary: 'Listar las configuraciones de carga tutorial del período' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20, maximum: 100 })
+  @ApiQuery({ name: 'incluir_inactivas', required: false, type: Boolean, description: 'Incluye límites específicos desactivados.' })
   @ApiOkResponse({
-    description: 'Lista paginada, con el ámbito global primero.',
+    description: 'Lista paginada de límites activos (o todos con incluir_inactivas=true), con el ámbito global primero.',
     schema: {
       type: 'object',
       required: ['data', 'total', 'page', 'limit'],
@@ -81,7 +82,7 @@ export class CargaTutorialController {
     },
   })
   @ApiBadRequestResponse({ description: 'La paginación no es válida.' })
-  list(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Query() query: PaginationQueryDto) {
+  list(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Query() query: ListConfigCargaTutorialQueryDto) {
     return this.cargaTutorial.list(periodoId, query);
   }
 
@@ -116,7 +117,7 @@ export class CargaTutorialController {
   @ApiOkResponse({ type: ConfigCargaTutorialResponseDto })
   @ApiBadRequestResponse({ description: 'El cuerpo está vacío o contiene valores inválidos.' })
   @ApiNotFoundResponse({ description: 'No existe esa configuración en el período.' })
-  @ApiConflictResponse({ description: 'El período está archivado.' })
+  @ApiConflictResponse({ description: 'El período está archivado o el límite está desactivado.' })
   update(
     @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
     @Param('id', new ParseUUIDPipe()) id: string,
@@ -125,5 +126,21 @@ export class CargaTutorialController {
     @Req() request: Request,
   ) {
     return this.cargaTutorial.update(periodoId, id, dto, actor, request.ip || null);
+  }
+
+  @Post(':id/desactivar')
+  @Roles(UsuarioRol.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Desactivar un límite específico de docente (se conserva como historial y vuelve a aplicar el global)' })
+  @ApiOkResponse({ type: ConfigCargaTutorialResponseDto })
+  @ApiNotFoundResponse({ description: 'No existe esa configuración en el período.' })
+  @ApiConflictResponse({ description: 'Es el límite global, ya estaba desactivado o el período está archivado.' })
+  deactivate(
+    @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ) {
+    return this.cargaTutorial.deactivate(periodoId, id, actor, request.ip || null);
   }
 }

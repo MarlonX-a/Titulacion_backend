@@ -31,4 +31,14 @@ describe('CargaTutorialPersistenciaService', () => {
     await expect(service.resolverConfiguracionEfectiva(manager as never, 'periodo-1', 'docente-1'))
       .resolves.toEqual({ origen: ConfigCargaOrigen.SIN_CONFIGURACION, configuracion: null });
   });
+
+  it('ignora límites específicos desactivados para que vuelva a aplicar el global', async () => {
+    const global = { id: 'global', docente_id: null, max_trabajos: 4, bloquear_al_superar: true, activa: true };
+    const repository = { findOneBy: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(global) };
+    const manager = { getRepository: vi.fn().mockReturnValue(repository) };
+
+    await expect(service.resolverConfiguracionEfectiva(manager as never, 'periodo-1', 'docente-1'))
+      .resolves.toEqual({ origen: ConfigCargaOrigen.GLOBAL, configuracion: global });
+    expect(repository.findOneBy).toHaveBeenNthCalledWith(1, { periodo_id: 'periodo-1', docente_id: 'docente-1', activa: true });
+  });
 });

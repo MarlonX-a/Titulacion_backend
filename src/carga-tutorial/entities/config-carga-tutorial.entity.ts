@@ -5,6 +5,7 @@ import { PeriodoTitulacion } from '../../periodos/entities/periodo-titulacion.en
 @Entity({ name: 'config_carga_tutorial' })
 @Index('IDX_config_carga_tutorial_periodo', ['periodo_id', 'docente_id', 'id'])
 @Check('CHK_config_carga_tutorial_max_trabajos', '"max_trabajos" >= 1')
+@Check('CHK_config_carga_tutorial_global_activa', '"docente_id" IS NOT NULL OR "activa"')
 export class ConfigCargaTutorial {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -28,4 +29,8 @@ export class ConfigCargaTutorial {
 
   @Column({ type: 'boolean', name: 'bloquear_al_superar' })
   bloquear_al_superar: boolean;
+
+  /** Un límite específico desactivado se conserva como historial y deja de aplicarse. */
+  @Column({ type: 'boolean', default: true })
+  activa: boolean;
 }

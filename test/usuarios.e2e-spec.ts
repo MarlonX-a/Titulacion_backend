@@ -1536,4 +1536,15 @@ describe('Usuarios (e2e)', () => {
     await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: UsuarioEstado.ACTIVO }).expect(200)
       .then((r) => expect(r.body.usuario.estado).toBe(UsuarioEstado.ACTIVO));
   });
+
+  it('desactiva límites específicos de carga solo como ADMIN y con UUID válidos', async () => {
+    addAdmin();
+    const period = await createPeriod('CARGA-DESACTIVAR');
+    await authenticated('post', `/periodos/${period.body.id}/config-carga-tutorial/no-es-uuid/desactivar`, 'admin-sub').expect(400);
+    await authenticated('post', `/periodos/${period.body.id}/config-carga-tutorial/ffffffff-ffff-4fff-8fff-ffffffffffff/desactivar`, 'student-sub').expect(403);
+    await authenticated('get', `/periodos/${period.body.id}/config-carga-tutorial?incluir_inactivas=quizas`, 'admin-sub').expect(400);
+    const document = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(document.body.paths['/periodos/{periodoId}/config-carga-tutorial/{id}/desactivar'].post).toBeDefined();
+    expect(document.body.paths['/docentes/{id}'].patch).toBeDefined();
+  });
 });
