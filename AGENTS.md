@@ -81,9 +81,19 @@ de Sonar al workflow sin cambiar primero esa configuración.
    verificación de dominios relacionados. Confirma que cada comando cubra las
    restricciones que anuncia, en particular perfiles, tutores propuestos y
    revisiones PAT, antes de depender de su nombre como evidencia.
-4. **Ajustar la importación Excel.** El formato implementado es provisional;
-   actualizar sus encabezados y reglas cuando la profesora entregue el archivo
-   real y se confirme su estructura.
+4. **Importación Excel institucional (implementada).** Se usa la primera hoja
+   del libro; la fila de encabezados se detecta en las primeras 20 filas por la
+   celda `Identificación` y se exigen `Identificación`, `Apellidos`, `Nombres`,
+   `nivel`, `ACADEMICO` e `INGLES` (sin importar mayúsculas ni tildes); las
+   demás columnas se ignoran. La carrera se toma del título (`CARRERA
+   SOFTWARE`). El correo es `e{cedula}@live.uleam.edu.ec`, la matrícula es la
+   cédula y la clave temporal inicial es la cédula, con cambio obligatorio en
+   el primer acceso. SI/SI en ACADEMICO/INGLES crea la habilitación
+   `HABILITADO`/`ADMITIDO`; cualquier otra combinación válida crea
+   `SUSPENDIDO`/`NO_ADMITIDO` (ambas REGULAR, resueltas por el ADMIN que
+   importó). Se admiten filas ocultas por autofiltro. La importación sigue
+   permitida solo en períodos BORRADOR. Pendiente: confirmar con la
+   institución si la cédula como clave inicial es aceptable en producción.
 5. **Preparar el despliegue real.** La salida SMTP institucional autorizada,
    secretos de producción, almacenamiento, Redis, PostgreSQL, copias de
    seguridad y operación del entorno deben configurarse con sus responsables;
@@ -331,7 +341,9 @@ las sesiones vigentes.
 Las cuentas se crean por ADMIN o por importación confirmada de Excel. La
 importación solo se admite con un período BORRADOR; validar genera vista previa
 y confirmar vuelve a comprobar los datos dentro de la transacción que crea
-usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso.
+usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso. En la
+importación, la clave temporal inicial de cada estudiante es su cédula y debe
+cambiarse en el primer acceso; las altas manuales conservan claves aleatorias.
 El esquema nuevo de desarrollo es `titulacion_dev`; preservar el esquema
 histórico `local_demo` sin cambios.
 

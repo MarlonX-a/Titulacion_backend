@@ -1,7 +1,6 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiAcceptedResponse, ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import ExcelJS from 'exceljs';
 import type { Request, Response } from 'express';
 import 'multer';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
@@ -10,8 +9,19 @@ import { Roles } from '../common/roles.decorator.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { ImportacionesService } from './importaciones.service.js';
 import { ConfirmarImportacionDto } from './confirmar-importacion.dto.js';
+import { buildStudentsTemplate } from './estudiantes-excel.template.js';
 
-const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** Límites compartidos para cargar libros XLSX de importación (5 MiB, un archivo). */
+export const XLSX_UPLOAD_OPTIONS = {
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_request: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
+    const extension = file.originalname.toLowerCase().endsWith('.xlsx');
+    const mime = file.mimetype === XLSX_MIME || file.mimetype === 'application/octet-stream';
+    callback(extension && mime ? null : new BadRequestException('Adjunta un archivo .xlsx.'), extension && mime);
+  },
+};
 
 @ApiTags('Importaciones')
 @ApiBearerAuth('bearer')
@@ -22,29 +32,9 @@ export class ImportacionesController {
 
   @Get('importaciones/estudiantes/plantilla')
   @ApiOperation({ summary: 'Descargar plantilla para estudiantes habilitados' })
-  @ApiOkResponse({ description: 'Libro XLSX con encabezados oficiales.' })
+  @ApiOkResponse({ description: 'Libro XLSX con el formato institucional: título con "CARRERA <NOMBRE>" y encabezados en la fila 6 (#, Campus, Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES).' })
   async downloadTemplate(@Res() response: Response): Promise<void> {
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Estudiantes');
-    sheet.columns = [
-      { header: 'email', key: 'email', width: 34 },
-      { header: 'nombres', key: 'nombres', width: 24 },
-      { header: 'apellidos', key: 'apellidos', width: 24 },
-      { header: 'cedula', key: 'cedula', width: 16 },
-      { header: 'matricula', key: 'matricula', width: 18 },
-      { header: 'carrera', key: 'carrera', width: 32 },
-      { header: 'nivel', key: 'nivel', width: 12 },
-      { header: 'condicion_ingreso', key: 'condicion_ingreso', width: 23 },
-      { header: 'requisito_pendiente', key: 'requisito_pendiente', width: 36 },
-    ];
-    sheet.getRow(1).font = { bold: true };
-    sheet.views = [{ state: 'frozen', ySplit: 1 }];
-    for (let row = 2; row <= 1001; row += 1) {
-      sheet.getCell(`H${row}`).dataValidation = { type: 'list', formulae: ['"REGULAR,CONDICIONADO"'], allowBlank: false };
-      sheet.getCell(`D${row}`).numFmt = '@';
-      sheet.getCell(`E${row}`).numFmt = '@';
-    }
-    const bytes = await workbook.xlsx.writeBuffer();
+    const bytes = await buildStudentsTemplate();
     response.setHeader('Content-Type', XLSX_MIME);
     response.setHeader('Content-Disposition', 'attachment; filename="plantilla-estudiantes-titulacion.xlsx"');
     response.setHeader('Cache-Control', 'no-store');
@@ -52,14 +42,7 @@ export class ImportacionesController {
   }
 
   @Post('periodos/:periodoId/importaciones/estudiantes/validar')
-  @UseInterceptors(FileInterceptor('archivo', {
-    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-    fileFilter: (_request, file, callback) => {
-      const extension = file.originalname.toLowerCase().endsWith('.xlsx');
-      const mime = file.mimetype === XLSX_MIME || file.mimetype === 'application/octet-stream';
-      callback(extension && mime ? null : new BadRequestException('Adjunta un archivo .xlsx.'), extension && mime);
-    },
-  }))
+  @UseInterceptors(FileInterceptor('archivo', XLSX_UPLOAD_OPTIONS))
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', required: ['archivo'], properties: { archivo: { type: 'string', format: 'binary' } } } })
   @ApiOperation({ summary: 'Validar un Excel y generar una vista previa sin crear cuentas' })

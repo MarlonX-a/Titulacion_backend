@@ -27,9 +27,22 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
-import { createEncryptedOutbox, createTemporaryCredentialHash, generateOneTimeSecret, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
+import { createEncryptedOutbox, createTemporaryCredentialHash, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
 
 const PREPARATION_TTL_MS = 12 * 60 * 60 * 1000;
+
+interface HabilitacionImportada {
+  estado: HabilitadoEstado;
+  condicion_ingreso: CondicionIngreso;
+  requisito_pendiente: null;
+  situacion_ingreso: SituacionIngreso;
+}
+
+function habilitacionImportada(row: EstudianteExcelRow): HabilitacionImportada {
+  return row.habilitado
+    ? { estado: HabilitadoEstado.HABILITADO, condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.ADMITIDO }
+    : { estado: HabilitadoEstado.SUSPENDIDO, condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.NO_ADMITIDO };
+}
 
 export interface ImportacionResumen {
   id: string;
@@ -173,11 +186,16 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     if (!record || record.estado !== EstadoPreparacion.EN_COLA || record.expira_en <= new Date()) return;
     if (!Array.isArray(record.filas) || !Array.isArray(record.errores) || record.errores.length > 0) throw new ConflictException('La preparación ya no es válida.');
     const rows = record.filas as EstudianteExcelRow[];
+    if (rows.some((row) => typeof row.habilitado !== 'boolean' || typeof row.cedula !== 'string')) {
+      const message = 'La vista previa usa un formato anterior; vuelve a validar el archivo.';
+      await prepRepo.update({ id }, { estado: EstadoPreparacion.INVALIDA, errores: [{ fila: 0, columna: 'confirmación', mensaje: message }] });
+      throw new ConflictException(message);
+    }
     const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
     if (createHash('sha256').update(buffer).digest('hex') !== record.sha256) throw new ConflictException('El archivo guardado no coincide con la vista previa validada.');
-    const access = await Promise.all(rows.map(async (row) => ({ row, temp: generateOneTimeSecret() })));
+    // La clave temporal inicial es la cédula; la credencial exige cambiarla en el primer acceso.
     const tempHashes = new Map<string, string>();
-    for (const item of access) tempHashes.set(item.row.email, await createTemporaryCredentialHash(item.temp));
+    for (const row of rows) tempHashes.set(row.email, await createTemporaryCredentialHash(row.cedula));
     try {
       const wasImported = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
         const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: record.periodo.id }, lock: { mode: 'pessimistic_write' } });
@@ -207,26 +225,22 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           if (!profile) profile = await students.save(students.create({ usuario: user, cedula: row.cedula, matricula: row.matricula, carrera: row.carrera, nivel: row.nivel }));
           let habilitation = await enabledRepo.findOne({ where: { periodo: { id: period.id }, estudiante: { id: profile.id } }, lock: { mode: 'pessimistic_write' } });
           if (!habilitation) {
-            const regular = row.condicion_ingreso === CondicionIngreso.REGULAR;
+            const resolution = habilitacionImportada(row);
             habilitation = await enabledRepo.save(enabledRepo.create({
               periodo: period, estudiante: profile, origen: HabilitadoOrigen.IMPORTACION, lote_importacion: lot,
-              estado: HabilitadoEstado.HABILITADO, condicion_ingreso: row.condicion_ingreso,
-              requisito_pendiente: row.requisito_pendiente,
-              situacion_ingreso: regular ? SituacionIngreso.ADMITIDO : SituacionIngreso.PENDIENTE,
-              fecha_habilitacion: now, fecha_resolucion_ingreso: regular ? now : null,
-              resuelto_por: regular ? record.solicitada_por : null, observacion_ingreso: null,
+              ...resolution,
+              fecha_habilitacion: now, fecha_resolucion_ingreso: now,
+              resuelto_por: record.solicitada_por, observacion_ingreso: null,
             }));
-            await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_HABILITACION', entidad_tipo: 'estudiante_habilitado', entidad_id: habilitation.id, valores_anteriores: null, valores_nuevos: { periodo_id: period.id, estudiante_id: profile.id, lote_importacion_id: lot.id, condicion_ingreso: row.condicion_ingreso, situacion_ingreso: habilitation.situacion_ingreso, origen: HabilitadoOrigen.IMPORTACION }, ip_origen: record.ip_origen });
+            await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_HABILITACION', entidad_tipo: 'estudiante_habilitado', entidad_id: habilitation.id, valores_anteriores: null, valores_nuevos: { periodo_id: period.id, estudiante_id: profile.id, lote_importacion_id: lot.id, estado: resolution.estado, condicion_ingreso: resolution.condicion_ingreso, situacion_ingreso: resolution.situacion_ingreso, origen: HabilitadoOrigen.IMPORTACION }, ip_origen: record.ip_origen });
           }
           const credential = await credentials.findOne({ where: { usuario_id: user.id }, lock: { mode: 'pessimistic_write' } });
           if (!credential) {
-            const password = access.find((item) => item.row.email === row.email)?.temp;
-            if (!password) throw new Error('No se pudo generar una clave temporal.');
             const expiry = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
             const hash = tempHashes.get(row.email);
             if (!hash) throw new Error('No se pudo proteger la clave temporal.');
             await credentials.save(credentials.create({ usuario_id: user.id, password_hash: hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));
-            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', password, expiry, this.encryptionKey));
+            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', row.cedula, expiry, this.encryptionKey));
           }
         }
         lot.filas_ok = rows.length;
@@ -301,8 +315,9 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
         }
         if (profile) {
           const old = await enabledRepo.findOneBy({ periodo: { id: periodId }, estudiante: { id: profile.id } });
-          if (old && (old.estado !== HabilitadoEstado.HABILITADO || old.condicion_ingreso !== row.condicion_ingreso || old.requisito_pendiente !== row.requisito_pendiente || old.situacion_ingreso !== (row.condicion_ingreso === CondicionIngreso.REGULAR ? SituacionIngreso.ADMITIDO : SituacionIngreso.PENDIENTE))) {
-            errors.push({ fila: row.fila, columna: 'condicion_ingreso', mensaje: 'La habilitación del período existe con datos o una resolución distinta; no se sobrescribirá.' });
+          const expected = habilitacionImportada(row);
+          if (old && (old.estado !== expected.estado || old.condicion_ingreso !== expected.condicion_ingreso || old.requisito_pendiente !== expected.requisito_pendiente || old.situacion_ingreso !== expected.situacion_ingreso)) {
+            errors.push({ fila: row.fila, columna: 'habilitado', mensaje: 'La habilitación del período existe con datos o una resolución distinta; no se sobrescribirá.' });
           }
         }
       }
