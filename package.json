@@ -41,6 +41,7 @@
     "db:verify-notificaciones": "npm run build && node dist/database/verify-notificaciones-migration.js",
     "db:verify-exportaciones": "npm run build && node dist/database/verify-exportaciones-migration.js",
     "db:verify-archivo-periodo": "npm run build && node dist/database/verify-archivo-periodo.js",
+    "db:verify-importacion-docentes": "npm run build && node dist/database/verify-importacion-docentes-migration.js",
     "exportaciones:verify-integracion": "npm run build && node dist/database/verify-exportaciones-integracion.js",
     "migration:create": "typeorm migration:create",
     "migration:generate": "npm run build && typeorm migration:generate -d dist/database/data-source.js",

@@ -59,12 +59,19 @@ export interface ImportacionResumen {
 
 function response(record: PreparacionImportacion): ImportacionResumen {
   return {
-    id: record.id, periodo_id: record.periodo.id, nombre_archivo: record.nombre_archivo,
+    id: record.id, periodo_id: record.periodo?.id ?? '', nombre_archivo: record.nombre_archivo,
     estado: record.estado, total_filas: record.total_filas,
     errores: (record.errores as ExcelRowError[] | null) ?? [],
     vista_previa: (record.filas as EstudianteExcelRow[] | null) ?? [],
     lote_id: record.lote?.id ?? null, creada_en: record.creada_en, expira_en: record.expira_en,
   };
+}
+
+/** Nombre del trabajo BullMQ según el tipo de importación y su estado duradero pendiente. */
+export function jobName(tipo: LoteImportacionTipo, estado: EstadoPreparacion): string {
+  const validating = estado === EstadoPreparacion.VALIDANDO;
+  if (tipo === LoteImportacionTipo.DOCENTES) return validating ? 'validar-docentes' : 'importar-docentes';
+  return validating ? 'validar-excel' : 'importar-estudiantes';
 }
 
 @Injectable()
@@ -101,7 +108,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       record = await this.dataSource.transaction(async (manager) => {
         const preparationRepo = manager.getRepository(PreparacionImportacion);
         const created = await preparationRepo.save(preparationRepo.create({
-          periodo: { id: periodId }, solicitada_por: actor, lote: null,
+          periodo: { id: periodId }, tipo: LoteImportacionTipo.ESTUDIANTES, solicitada_por: actor, lote: null,
           nombre_archivo: filename.slice(0, 200), ruta_almacenamiento: key,
           sha256: createHash('sha256').update(buffer).digest('hex'),
           estado: EstadoPreparacion.VALIDANDO, total_filas: 0, filas: null, errores: null,
@@ -124,14 +131,15 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
 
   async validateFile(id: string): Promise<void> {
     const repository = this.dataSource.getRepository(PreparacionImportacion);
-    const record = await repository.findOne({ where: { id }, relations: { periodo: true } });
-    if (!record || record.estado !== EstadoPreparacion.VALIDANDO || record.expira_en <= new Date()) return;
+    const record = await repository.findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES }, relations: { periodo: true } });
+    if (!record?.periodo || record.estado !== EstadoPreparacion.VALIDANDO || record.expira_en <= new Date()) return;
+    const periodo = record.periodo;
     try {
-      await this.assertDraftPeriod(record.periodo.id);
+      await this.assertDraftPeriod(periodo.id);
       const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
       const parsed = await parseStudentsXlsx(buffer);
       if (parsed.sha256 !== record.sha256) throw new ConflictException('El archivo cambió desde que se envió a validar.');
-      const databaseErrors = await this.validateExistingRows(parsed.rows, record.periodo.id);
+      const databaseErrors = await this.validateExistingRows(parsed.rows, periodo.id);
       const errors = [...parsed.errors, ...databaseErrors];
       record.total_filas = parsed.rows.length;
       record.filas = parsed.rows;
@@ -146,7 +154,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   }
 
   async get(periodId: string, id: string): Promise<ImportacionResumen> {
-    const record = await this.dataSource.getRepository(PreparacionImportacion).findOne({ where: { id, periodo: { id: periodId } }, relations: { periodo: true, lote: true } });
+    const record = await this.dataSource.getRepository(PreparacionImportacion).findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES, periodo: { id: periodId } }, relations: { periodo: true, lote: true } });
     if (!record) throw new NotFoundException('No existe la preparación indicada para el período.');
     if (record.expira_en <= new Date() && [EstadoPreparacion.VALIDANDO, EstadoPreparacion.LISTA, EstadoPreparacion.INVALIDA].includes(record.estado)) throw new GoneException('La preparación venció; vuelve a cargar el archivo.');
     return response(record);
@@ -157,7 +165,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodId }, lock: { mode: 'pessimistic_write' } });
       if (!period) throw new NotFoundException('No existe el período indicado.');
       if (period.estado !== PeriodoEstado.BORRADOR) throw new ConflictException('Solo se puede importar en períodos BORRADOR.');
-      const record = await manager.getRepository(PreparacionImportacion).findOne({ where: { id, periodo: { id: periodId } }, relations: { periodo: true }, lock: { mode: 'pessimistic_write' } });
+      const record = await manager.getRepository(PreparacionImportacion).findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES, periodo: { id: periodId } }, relations: { periodo: true }, lock: { mode: 'pessimistic_write' } });
       if (!record) throw new NotFoundException('No existe la preparación indicada para el período.');
       if (record.estado === EstadoPreparacion.COMPLETADA) throw new ConflictException('La importación ya fue completada.');
       if (record.estado === EstadoPreparacion.LISTA) {
@@ -182,8 +190,9 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
 
   async importConfirmed(id: string): Promise<void> {
     const prepRepo = this.dataSource.getRepository(PreparacionImportacion);
-    const record = await prepRepo.findOne({ where: { id }, relations: { periodo: true, solicitada_por: true } });
-    if (!record || record.estado !== EstadoPreparacion.EN_COLA || record.expira_en <= new Date()) return;
+    const record = await prepRepo.findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES }, relations: { periodo: true, solicitada_por: true } });
+    if (!record?.periodo || record.estado !== EstadoPreparacion.EN_COLA || record.expira_en <= new Date()) return;
+    const periodoId = record.periodo.id;
     if (!Array.isArray(record.filas) || !Array.isArray(record.errores) || record.errores.length > 0) throw new ConflictException('La preparación ya no es válida.');
     const rows = record.filas as EstudianteExcelRow[];
     if (rows.some((row) => typeof row.habilitado !== 'boolean' || typeof row.cedula !== 'string')) {
@@ -198,7 +207,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     for (const row of rows) tempHashes.set(row.email, await createTemporaryCredentialHash(row.cedula));
     try {
       const wasImported = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
-        const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: record.periodo.id }, lock: { mode: 'pessimistic_write' } });
+        const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodoId }, lock: { mode: 'pessimistic_write' } });
         if (!period) throw new NotFoundException('No existe el período de la importación.');
         if (period.estado !== PeriodoEstado.BORRADOR) throw new ConflictException('El período dejó de estar en borrador; no se creó ningún registro.');
         const preparation = await manager.getRepository(PreparacionImportacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
@@ -277,7 +286,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     try {
       const pending = await this.dataSource.getRepository(PreparacionImportacion).find({ where: [{ estado: EstadoPreparacion.VALIDANDO }, { estado: EstadoPreparacion.EN_COLA }], order: { creada_en: 'ASC' }, take: 25 });
       for (const item of pending) {
-        await this.queue.add(item.estado === EstadoPreparacion.VALIDANDO ? 'validar-excel' : 'importar-estudiantes', { id: item.id }, { jobId: `importacion-${item.estado === EstadoPreparacion.VALIDANDO ? 'validar' : 'confirmar'}-${item.id}`, attempts: 3, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
+        await this.queue.add(jobName(item.tipo, item.estado), { id: item.id }, { jobId: `importacion-${item.estado === EstadoPreparacion.VALIDANDO ? 'validar' : 'confirmar'}-${item.id}`, attempts: 3, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
       }
     } catch {
       // Los estados duraderos en PostgreSQL permiten retomar el despacho en el siguiente ciclo.

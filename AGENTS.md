@@ -357,6 +357,16 @@ cédula repetida responde 409. Pasar a INACTIVO revoca las sesiones (`version_se
 sesiones revocadas) y no altera tutorías VIGENTES, asignaciones ni límites de carga: el docente
 inactivo deja de poder ingresar y el trigger de tutor ya impide asignarle tutorías nuevas.
 
+Importación de docentes: plantilla XLSX propia (`GET /importaciones/docentes/plantilla`,
+encabezados `cedula, nombres, apellidos, email, titulo, departamento, habilitado_tutoria` con
+SI/NO sin importar mayúsculas ni tildes). `POST /importaciones/docentes/validar` →
+`GET /importaciones/docentes/:id` → `POST /importaciones/docentes/:id/confirmar` (ADMIN, BullMQ,
+una transacción SERIALIZABLE). No depende de un período: `preparacion_importacion.tipo`
+(migración `20261020110000`) exige período para ESTUDIANTES y lo prohíbe para DOCENTES. Correo
+@uleam.edu.ec o @live.uleam.edu.ec, clave temporal inicial = cédula con cambio obligatorio y
+correo ACCESO cifrado. Conflictos con cuentas o cédulas existentes son errores por fila; los
+registros idénticos se omiten.
+
 ---
 
 ## Períodos

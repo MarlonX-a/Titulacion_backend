@@ -3,15 +3,20 @@ import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 import { PeriodoTitulacion } from '../../periodos/entities/periodo-titulacion.entity.js';
 import { LoteImportacion } from './lote-importacion.entity.js';
 import { PreparacionImportacionEstado } from '../enums/preparacion-importacion-estado.enum.js';
+import { LoteImportacionTipo } from '../enums/lote-importacion-tipo.enum.js';
 
 @Entity({ name: 'preparacion_importacion' })
 export class PreparacionImportacion {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => PeriodoTitulacion, { onDelete: 'RESTRICT' })
+  /** Obligatorio para ESTUDIANTES; las importaciones de DOCENTES no pertenecen a un período. */
+  @ManyToOne(() => PeriodoTitulacion, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'periodo_id' })
-  periodo: PeriodoTitulacion;
+  periodo: PeriodoTitulacion | null;
+
+  @Column({ type: 'enum', enum: LoteImportacionTipo, enumName: 'lote_importacion_tipo_enum', default: LoteImportacionTipo.ESTUDIANTES })
+  tipo: LoteImportacionTipo;
 
   @ManyToOne(() => Usuario, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'solicitada_por_id' })
