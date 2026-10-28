@@ -135,7 +135,7 @@ describe('Usuarios (e2e)', () => {
         return { subject: findUsuarioTestIdByExternalId(externalSubject) ?? externalSubject, issuer: 'http://127.0.0.1:3000', firstAccess: false };
       } })
       .overrideProvider(NotificacionesPersistenciaService)
-      .useValue({ ingreso: async (_manager: unknown, id: string, actorId: string, aviso = 'RESOLUCION') => { avisosIngreso.push({ id, actorId, aviso }); } })
+      .useValue({ ingreso: (_manager: unknown, id: string, actorId: string, aviso = 'RESOLUCION') => { avisosIngreso.push({ id, actorId, aviso }); return Promise.resolve(); } })
       .compile();
     app = moduleFixture.createNestApplication<INestApplication<App>>();
     configureApplication(app);
@@ -1376,7 +1376,7 @@ describe('Usuarios (e2e)', () => {
       expect(stored?.resuelto_por?.id).toBe(admin.id);
     }
     const suspensions = auditoriaTestRecords().filter((entry) => entry.accion === 'SUSPENDER_HABILITACION_INICIO');
-    expect(suspensions.map((entry) => entry.entidad_id).sort()).toEqual([firstRow.id, secondRow.id].sort());
+    expect(suspensions.map((entry) => entry.entidad_id).sort((a, b) => a.localeCompare(b))).toEqual([firstRow.id, secondRow.id].sort((a, b) => a.localeCompare(b)));
     expect(suspensions.find((entry) => entry.entidad_id === secondRow.id)).toMatchObject({
       valores_anteriores: { estado: HabilitadoEstado.HABILITADO, situacion_ingreso: SituacionIngreso.PENDIENTE },
       valores_nuevos: { estado: HabilitadoEstado.SUSPENDIDO, situacion_ingreso: SituacionIngreso.NO_ADMITIDO },

@@ -208,14 +208,14 @@ export const docenteTestRepository = {
         (options.where.usuario !== undefined &&
           record.usuario.id === options.where.usuario.id),
     ) ?? null,
-  update: async (criteria: { id: string }, values: Partial<Docente>) => {
+  update: (criteria: { id: string }, values: Partial<Docente>) => {
     if (values.cedula !== undefined &&
       docenteRecords.some((record) => record.cedula === values.cedula && record.id !== criteria.id)) {
-      throw duplicateError('UPDATE docente');
+      return Promise.reject(duplicateError('UPDATE docente'));
     }
     const found = docenteRecords.find((record) => record.id === criteria.id);
     if (found) Object.assign(found, values);
-    return { affected: found ? 1 : 0 };
+    return Promise.resolve({ affected: found ? 1 : 0 });
   },
 };
 
@@ -407,12 +407,12 @@ const credencialTestRepository = {
     return value;
   },
   findOneBy: async (criteria: Partial<CredencialUsuario>) => credencialRecords.find((item) => Object.entries(criteria).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
-  findOne: async (options: { where: Partial<CredencialUsuario> }) => credencialRecords.find((item) => Object.entries(options.where).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
-  update: async () => ({ affected: 1 }),
+  findOne: (options: { where: Partial<CredencialUsuario> }) => Promise.resolve(credencialRecords.find((item) => Object.entries(options.where).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null),
+  update: () => Promise.resolve({ affected: 1 }),
 };
 const sesionRevocations: string[] = [];
 const sesionTestRepository = {
-  update: async (criteria: { usuario_id: string }) => { sesionRevocations.push(criteria.usuario_id); return { affected: 1 }; },
+  update: (criteria: { usuario_id: string }) => { sesionRevocations.push(criteria.usuario_id); return Promise.resolve({ affected: 1 }); },
 };
 const correoTestRepository = {
   create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,

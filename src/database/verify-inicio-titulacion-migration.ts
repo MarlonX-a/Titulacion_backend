@@ -181,7 +181,7 @@ async function verify(): Promise<void> {
     registrar: async () => { throw new Error('fallo de auditoría provocado'); },
   } as unknown as AuditoriaService;
   // Este esquema temporal no instala asignaciones ni notificaciones; la verificación se centra en el rollback.
-  const noAdmisionSinEfectos = { aplicarNoAdmision: async () => undefined } as unknown as HabilitadosService;
+  const noAdmisionSinEfectos = { aplicarNoAdmision: () => Promise.resolve() } as unknown as HabilitadosService;
   const startService = new InicioTitulacionService(isolatedDataSource, failingAudit, noAdmisionSinEfectos);
   try {
     await startService.iniciar(rollbackPeriod, { id: adminRows[0].id } as Usuario, null);

@@ -24,9 +24,9 @@ describe('Auditoría, historial de importaciones y lectura masiva de notificacio
   const tokens = new Map<string, string>();
   const periodo = '00000000-0000-4000-8000-000000000010';
   const page = { data: [], total: 0, page: 1, limit: 20 };
-  const auditoria = { listar: vi.fn(async (query: { page: number; limit: number }) => ({ ...page, page: query.page, limit: query.limit })) };
-  const historial = { listarEstudiantes: vi.fn(async () => page), listarDocentes: vi.fn(async () => page) };
-  const notificaciones = { marcarTodasLeidas: vi.fn(async (actor: { id: string }) => ({ actualizadas: actor.id ? 2 : 0 })) };
+  const auditoria = { listar: vi.fn((query: { page: number; limit: number }) => Promise.resolve({ ...page, page: query.page, limit: query.limit })) };
+  const historial = { listarEstudiantes: vi.fn(() => Promise.resolve(page)), listarDocentes: vi.fn(() => Promise.resolve(page)) };
+  const notificaciones = { marcarTodasLeidas: vi.fn((actor: { id: string }) => Promise.resolve({ actualizadas: actor.id ? 2 : 0 })) };
 
   beforeAll(async () => {
     clearUsuarioTestRecords();
@@ -39,7 +39,7 @@ describe('Auditoría, historial de importaciones y lectura masiva de notificacio
       DB_SCHEMA: 'test', DB_USERNAME: 'test_user', DB_PASSWORD: 'test_password', DB_NAME: 'test_database',
       AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
     });
-    const auth = { verifyToken: vi.fn(async (token: string) => ({ subject: tokens.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
+    const auth = { verifyToken: vi.fn((token: string) => Promise.resolve({ subject: tokens.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
     // ImportacionesModule no se carga con NODE_ENV=test (requiere Redis): se montan sus controladores con servicios simulados.
     const module = await Test.createTestingModule({
       imports: [AppModule],

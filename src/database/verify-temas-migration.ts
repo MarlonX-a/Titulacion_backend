@@ -77,7 +77,7 @@ async function verify(): Promise<void> {
     isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), docentes,
     isolated.getRepository(Estudiante), isolated.getRepository(EstudianteHabilitado),
     isolated.getRepository(PeriodoTitulacion), isolated, auditoria,
-    { postulacion: async () => undefined } as unknown as NotificacionesPersistenciaService,
+    { postulacion: () => Promise.resolve() } as unknown as NotificacionesPersistenciaService,
   );
   const periodosService = new PeriodosService(periodos, isolated, auditoria);
   const dto = { linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;

@@ -109,13 +109,20 @@ function mapColumns(sheet: ExcelJS.Worksheet, headerRow: number): Record<Require
   return Object.fromEntries(columns) as Record<RequiredHeader, number>;
 }
 
+/** Devuelve el nombre tras «CARRERA» (y un «DE» opcional) o null si el texto no es el título de carrera. */
+function careerFromTitle(value: string): string | null {
+  const words = value.trim().split(/\s+/);
+  if (words[0]?.toLowerCase() !== 'carrera') return null;
+  const rest = words[1]?.toLowerCase() === 'de' ? words.slice(2) : words.slice(1);
+  return rest.length > 0 ? rest.join(' ') : null;
+}
+
 function findCareer(sheet: ExcelJS.Worksheet, headerRow: number): string {
   for (let number = 1; number < headerRow; number += 1) {
     let career: string | null = null;
     sheet.getRow(number).eachCell({ includeEmpty: false }, (cell) => {
       const value = cellText(cell.value);
-      const match = career === null && value !== null ? /^carrera\s+(?:de\s+)?(.+)$/i.exec(value.replace(/\s+/g, ' ')) : null;
-      if (match) career = match[1].trim();
+      if (career === null && value !== null) career = careerFromTitle(value);
     });
     if (career !== null) {
       const name = titleCase(career);

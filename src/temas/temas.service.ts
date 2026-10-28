@@ -380,7 +380,7 @@ export class TemasService {
     }
   }
 
-  private async hasCurrentAssignment(manager: EntityManager, temaId: string): Promise<boolean> {
+  private hasCurrentAssignment(manager: EntityManager, temaId: string): Promise<boolean> {
     return manager.getRepository(AsignacionTema).exist({ where: { tema_id: temaId, estado: AsignacionTemaEstado.VIGENTE } });
   }
 

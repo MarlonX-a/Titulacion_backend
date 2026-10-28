@@ -21,12 +21,12 @@ describe('Consultas agregadas de período (e2e)', () => {
   const tokens = new Map<string, string>();
   const periodo = '00000000-0000-4000-8000-000000000010';
   const page = { data: [], total: 0, page: 1, limit: 20 };
-  const resumen = { obtener: vi.fn(async (id: string) => ({ periodo_id: id, estudiantes_habilitados: 3, condicionados_pendientes: 1, conflictos_abiertos: 0, asignaciones_vigentes: 2, tutores_asignados: 1, sin_tutor: 1, pat_por_revisar: 1 })) };
-  const tutores = { cargaDelPeriodo: vi.fn(async (_p: string, pageNumber: number, limit: number) => ({ ...page, page: pageNumber, limit })) };
-  const documentos = { ultimasDelPeriodo: vi.fn(async () => page) };
+  const resumen = { obtener: vi.fn((id: string) => Promise.resolve({ periodo_id: id, estudiantes_habilitados: 3, condicionados_pendientes: 1, conflictos_abiertos: 0, asignaciones_vigentes: 2, tutores_asignados: 1, sin_tutor: 1, pat_por_revisar: 1 })) };
+  const tutores = { cargaDelPeriodo: vi.fn((_p: string, pageNumber: number, limit: number) => Promise.resolve({ ...page, page: pageNumber, limit })) };
+  const documentos = { ultimasDelPeriodo: vi.fn(() => Promise.resolve(page)) };
   const periodos = {
-    list: vi.fn(async (_query: unknown, admin: boolean) => ({ ...page, data: [{ id: periodo, ...(admin ? { condicionados_pendientes: 2 } : {}) }] })),
-    getById: vi.fn(async (id: string, admin: boolean) => ({ id, ...(admin ? { condicionados_pendientes: 2 } : {}) })),
+    list: vi.fn((_query: unknown, admin: boolean) => Promise.resolve({ ...page, data: [{ id: periodo, ...(admin ? { condicionados_pendientes: 2 } : {}) }] })),
+    getById: vi.fn((id: string, admin: boolean) => Promise.resolve({ id, ...(admin ? { condicionados_pendientes: 2 } : {}) })),
   };
 
   beforeAll(async () => {
@@ -40,7 +40,7 @@ describe('Consultas agregadas de período (e2e)', () => {
       DB_SCHEMA: 'test', DB_USERNAME: 'test_user', DB_PASSWORD: 'test_password', DB_NAME: 'test_database',
       AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
     });
-    const auth = { verifyToken: vi.fn(async (token: string) => ({ subject: tokens.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
+    const auth = { verifyToken: vi.fn((token: string) => Promise.resolve({ subject: tokens.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)

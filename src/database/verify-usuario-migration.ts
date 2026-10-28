@@ -68,7 +68,7 @@ async function verify(): Promise<void> {
     isolatedDataSource,
   );
   // Este esquema temporal no crea la tabla auditoria; la auditoría de perfiles se verifica en HTTP.
-  const auditoriaSinTabla = { registrar: async () => undefined } as unknown as AuditoriaService;
+  const auditoriaSinTabla = { registrar: () => Promise.resolve() } as unknown as AuditoriaService;
   const docentesService = new DocentesService(
     isolatedDataSource.getRepository(Docente),
     isolatedDataSource,

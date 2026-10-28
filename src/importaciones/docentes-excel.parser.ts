@@ -34,7 +34,7 @@ type TeacherHeader = (typeof TEACHER_REQUIRED_HEADERS)[number];
 const HEADER_LIST = TEACHER_REQUIRED_HEADERS.join(', ');
 /** DOCENTE y ADMIN pueden usar @uleam.edu.ec o @live.uleam.edu.ec (AGENTS.md, Usuarios). */
 const TEACHER_EMAIL = /^[^@\s]+@(?:live\.)?uleam\.edu\.ec$/;
-const BASIC_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const BASIC_EMAIL = /^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$/;
 
 function normalizeHeader(value: string): string {
   return normalizeExcelText(value).replace(/[\s-]+/g, '_');
