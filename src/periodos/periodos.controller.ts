@@ -112,13 +112,13 @@ export class PeriodosController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Editar un período que siga en estado BORRADOR' })
+  @ApiOperation({ summary: 'Editar un período en BORRADOR o la fecha fin de postulación en POSTULACION_CERRADA' })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({
     description: 'Cuerpo vacío, entrada inválida o cronología incompatible.',
   })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El período ya no está en BORRADOR o el código está duplicado.' })
+  @ApiConflictResponse({ description: 'El estado no permite la edición solicitada (en POSTULACION_CERRADA solo la fecha fin de postulación) o el código está duplicado.' })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdatePeriodoDto,
@@ -128,11 +128,11 @@ export class PeriodosController {
 
   @Post(':id/abrir-postulacion')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Abrir el período dentro del plazo de postulación' })
+  @ApiOperation({ summary: 'Abrir (desde BORRADOR) o reabrir (desde POSTULACION_CERRADA) la postulación dentro de su plazo' })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({ description: 'No se admiten propiedades en el cuerpo.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El estado o las fechas no permiten abrir el período.' })
+  @ApiConflictResponse({ description: 'El estado no es BORRADOR ni POSTULACION_CERRADA, o la fecha actual está fuera del plazo de postulación.' })
   abrirPostulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: AbrirPostulacionDto,

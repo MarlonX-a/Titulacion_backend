@@ -349,6 +349,20 @@ histórico `local_demo` sin cambios.
 
 ---
 
+## Períodos
+
+`POST /periodos/:id/abrir-postulacion` abre desde BORRADOR y reabre desde
+POSTULACION_CERRADA (auditoría `REABRIR_POSTULACION`), en ambos casos solo si la
+fecha actual está en [`fecha_inicio_postulacion`, `fecha_fin_postulacion`); fuera
+de ese plazo responde 409 pidiendo editar primero la fecha fin. Las postulaciones
+existentes se conservan. `PATCH /periodos/:id` edita cualquier campo en BORRADOR;
+en POSTULACION_CERRADA solo puede cambiar `fecha_fin_postulacion` (los demás
+campos se aceptan solo si repiten su valor actual) y se mantiene la cronología
+`fecha_fin_postulacion <= fecha_inicio_titulacion`. En los demás estados la
+edición responde 409. Ningún trigger restringe CERRADA → ABIERTA.
+
+---
+
 ## Estudiantes habilitados
 
 Un estudiante debe estar habilitado para participar en un período.

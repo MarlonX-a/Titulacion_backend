@@ -79,6 +79,26 @@ function datesFrom(dto: CreatePeriodoDto | UpdatePeriodoDto) {
   };
 }
 
+/**
+ * En POSTULACION_CERRADA solo puede cambiar la fecha fin de postulación (para poder reabrir);
+ * los demás campos se aceptan únicamente si repiten el valor actual.
+ */
+function assertOnlyEndDateChanges(current: PeriodoTitulacion, dto: UpdatePeriodoDto): void {
+  const sameDate = (value: string | undefined, actual: Date) =>
+    value === undefined || new Date(value).getTime() === actual.getTime();
+  const unchanged =
+    (dto.codigo === undefined || dto.codigo.trim() === current.codigo) &&
+    (dto.nombre === undefined || dto.nombre.trim() === current.nombre) &&
+    (dto.max_integrantes_default === undefined || dto.max_integrantes_default === current.max_integrantes_default) &&
+    sameDate(dto.fecha_inicio_postulacion, current.fecha_inicio_postulacion) &&
+    sameDate(dto.fecha_inicio_titulacion, current.fecha_inicio_titulacion);
+  if (!unchanged) {
+    throw new ConflictException(
+      'En POSTULACION_CERRADA solo se puede modificar la fecha fin de postulación.',
+    );
+  }
+}
+
 @Injectable()
 export class PeriodosService {
   constructor(
@@ -160,9 +180,11 @@ export class PeriodosService {
         if (!current) {
           throw new NotFoundException('No existe el período solicitado.');
         }
-        if (current.estado !== PeriodoEstado.BORRADOR) {
+        if (current.estado === PeriodoEstado.POSTULACION_CERRADA) {
+          assertOnlyEndDateChanges(current, dto);
+        } else if (current.estado !== PeriodoEstado.BORRADOR) {
           throw new ConflictException(
-            'Solo se pueden editar períodos en estado BORRADOR.',
+            'Solo se pueden editar períodos en BORRADOR; en POSTULACION_CERRADA solo la fecha fin de postulación.',
           );
         }
 
@@ -202,22 +224,27 @@ export class PeriodosService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!periodo) throw new NotFoundException('No existe el período solicitado.');
-        if (periodo.estado !== PeriodoEstado.BORRADOR) {
-          throw new ConflictException('Solo se pueden abrir períodos en estado BORRADOR.');
+        const previous = periodo.estado;
+        const reopening = previous === PeriodoEstado.POSTULACION_CERRADA;
+        if (previous !== PeriodoEstado.BORRADOR && !reopening) {
+          throw new ConflictException('Solo se pueden abrir períodos en BORRADOR o reabrir períodos en POSTULACION_CERRADA.');
         }
         const now = new Date();
         if (now < periodo.fecha_inicio_postulacion || now >= periodo.fecha_fin_postulacion) {
-          throw new ConflictException('El período solo puede abrirse dentro de las fechas de postulación.');
+          throw new ConflictException(reopening
+            ? 'La postulación solo puede reabrirse dentro de las fechas de postulación. Edita primero la fecha fin de postulación del período.'
+            : 'El período solo puede abrirse dentro de las fechas de postulación.');
         }
 
+        // Las postulaciones existentes se conservan al reabrir.
         periodo.estado = PeriodoEstado.POSTULACION_ABIERTA;
         const updated = await repository.save(periodo);
         await this.auditoria.registrar(manager, {
           actor,
-          accion: 'ABRIR_POSTULACION',
+          accion: reopening ? 'REABRIR_POSTULACION' : 'ABRIR_POSTULACION',
           entidad_tipo: 'periodo_titulacion',
           entidad_id: periodo.id,
-          valores_anteriores: { estado: PeriodoEstado.BORRADOR },
+          valores_anteriores: { estado: previous },
           valores_nuevos: { estado: PeriodoEstado.POSTULACION_ABIERTA },
           ip_origen: ip,
         });

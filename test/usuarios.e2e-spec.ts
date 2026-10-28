@@ -1289,6 +1289,37 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(409);
   });
 
+  it('reabre la postulación desde POSTULACION_CERRADA solo dentro del plazo y permite extender la fecha fin', async () => {
+    addAdmin();
+    const period = await createPeriod('REABRIR-1');
+    const start = new Date(Date.now() - 2 * 60 * 60_000);
+    const end = new Date(Date.now() - 60 * 60_000);
+    const titulation = new Date(Date.now() + 24 * 60 * 60_000);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
+      fecha_inicio_postulacion: start.toISOString(), fecha_fin_postulacion: end.toISOString(), fecha_inicio_titulacion: titulation.toISOString(),
+    }).expect(200);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+
+    const expired = await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+    expect(expired.body.message).toContain('Edita primero la fecha fin de postulación');
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({ nombre: 'Otro nombre' }).expect(409);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({ fecha_inicio_titulacion: new Date(titulation.getTime() + 60_000).toISOString() }).expect(409);
+    const newEnd = new Date(Date.now() + 60 * 60_000);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
+      codigo: 'REABRIR-1', nombre: 'Período de prueba', max_integrantes_default: 5,
+      fecha_inicio_postulacion: start.toISOString(), fecha_fin_postulacion: newEnd.toISOString(), fecha_inicio_titulacion: titulation.toISOString(),
+    }).expect(200);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({ fecha_fin_postulacion: new Date(titulation.getTime() + 60_000).toISOString() }).expect(400);
+
+    const reopened = await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(200);
+    expect(reopened.body.estado).toBe(PeriodoEstado.POSTULACION_ABIERTA);
+    const audit = auditoriaTestRecords().find((entry) => entry.accion === 'REABRIR_POSTULACION');
+    expect(audit?.valores_anteriores).toEqual({ estado: PeriodoEstado.POSTULACION_CERRADA });
+    await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.EN_CURSO);
+    await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+  });
+
   it('inicia la titulación desde POSTULACION_CERRADA en fecha y suspende a los condicionados pendientes', async () => {
     const anular = vi.spyOn(app.get(AsignacionTemaPersistenciaService), 'anularPorIncumplimiento');
     const cancelarPostulaciones = vi.spyOn(app.get(PostulacionPersistenciaService), 'cancelarPendientesPorNoAdmision');
