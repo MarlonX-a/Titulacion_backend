@@ -529,7 +529,7 @@ export const usuarioTestDataSource = {
           }
           if (sql.includes('asignacion_tema')) return [];
           if (sql.includes('pg_advisory_xact_lock')) return [];
-          if (sql.includes('FROM "estudiante_habilitado"') && sql.includes('"situacion_ingreso" = \'PENDIENTE\'')) {
+          if (/FROM (?:"[a-z0-9_]+"\.)?"estudiante_habilitado"/.test(sql) && sql.includes('"situacion_ingreso" = \'PENDIENTE\'')) {
             return habilitadoRecords
               .filter((record) => record.periodo.id === parameters?.[0] &&
                 record.condicion_ingreso === 'CONDICIONADO' && record.situacion_ingreso === 'PENDIENTE')

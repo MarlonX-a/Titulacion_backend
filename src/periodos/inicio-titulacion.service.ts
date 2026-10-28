@@ -5,8 +5,9 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { DataSource, QueryFailedError } from 'typeorm';
+import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
@@ -17,6 +18,12 @@ interface PostgresError { code?: string; }
 function isCode(error: unknown, code: string): boolean {
   return error instanceof QueryFailedError &&
     (error.driverError as PostgresError).code === code;
+}
+
+function schemaOf(manager: EntityManager): string {
+  const value = (manager.connection.options as PostgresConnectionOptions).schema ?? 'public';
+  if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new Error('El esquema PostgreSQL configurado no es válido.');
+  return `"${value}"`;
 }
 
 function responseFrom(periodo: PeriodoTitulacion): PeriodoResponseDto {
@@ -63,8 +70,10 @@ export class InicioTitulacionService {
 
         // La fila del período ya está bloqueada. Las escrituras de habilitaciones
         // toman este mismo bloqueo antes de sus cambios, serializando ambas operaciones.
+        // Las consultas crudas no heredan el esquema de las entidades; se califica explícitamente.
+        const schema = schemaOf(manager);
         const pendingRows = await manager.query(
-          `SELECT "id" FROM "estudiante_habilitado"
+          `SELECT "id" FROM ${schema}."estudiante_habilitado"
            WHERE "periodo_id" = $1
              AND "condicion_ingreso" = 'CONDICIONADO'
              AND "situacion_ingreso" = 'PENDIENTE'
