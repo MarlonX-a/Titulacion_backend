@@ -285,3 +285,35 @@ describe('HabilitadosService.aplicarNoAdmision', () => {
     expect(notificaciones.ingreso).not.toHaveBeenCalled();
   });
 });
+
+describe('HabilitadosService datos del estudiante en respuestas', () => {
+  const record = {
+    id: 'h1', periodo: { id: 'p1' },
+    estudiante: { id: 'e1', matricula: 'M1', cedula: '1300000001', carrera: 'Software', nivel: 9, usuario: { id: 'u1', nombres: 'Ana', apellidos: 'Pérez', email: 'e1300000001@live.uleam.edu.ec' } },
+    origen: HabilitadoOrigen.MANUAL, lote_importacion: null, estado: HabilitadoEstado.HABILITADO,
+    condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.ADMITIDO,
+    fecha_habilitacion: new Date(), fecha_resolucion_ingreso: new Date(), observacion_ingreso: null,
+    resuelto_por: { id: 'admin-1', nombres: 'Ada', apellidos: 'Admin', email: 'admin@uleam.edu.ec' },
+  };
+
+  it('el listado ADMIN incluye correo, cédula, carrera, nivel y el responsable', async () => {
+    const repository = { findAndCount: vi.fn(async () => [[record], 1]) };
+    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+    const page = await service.list('p1', { page: 1, limit: 20 } as never);
+    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1', email: 'e1300000001@live.uleam.edu.ec', cedula: '1300000001', carrera: 'Software', nivel: 9 });
+    expect(page.data[0].resuelto_por).toEqual({ id: 'admin-1', nombres: 'Ada', apellidos: 'Admin' });
+  });
+
+  it('los candidatos de invitación no exponen datos personales de otros estudiantes', async () => {
+    const qb = {
+      innerJoinAndSelect: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), andWhere: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(), addOrderBy: vi.fn().mockReturnThis(), skip: vi.fn().mockReturnThis(), take: vi.fn().mockReturnThis(),
+      getManyAndCount: vi.fn(async () => [[record], 1]),
+    };
+    const repository = { findOne: vi.fn(async () => record), createQueryBuilder: vi.fn(() => qb) };
+    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+    const page = await service.candidatosInvitacion('p1', { id: 'u2' } as never, { page: 1, limit: 20 });
+    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1' });
+    expect(page.data[0]).not.toHaveProperty('resuelto_por');
+  });
+});

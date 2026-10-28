@@ -30,7 +30,7 @@ import { AsignacionTutorTipo } from './enums/asignacion-tutor-tipo.enum.js';
 import { AsignarTutorDto } from './dto/asignar-tutor.dto.js';
 import { ReemplazarTutorDto } from './dto/reemplazar-tutor.dto.js';
 import { ListAsignacionesTutorQueryDto } from './dto/list-asignaciones-tutor-query.dto.js';
-import { AsignacionTutorResponseDto, CargaProyectadaResponseDto, CargaTutorActualResponseDto, PagedAsignacionTutorResponseDto, ParticipanteTutorResponseDto, ResultadoAsignacionTutorResponseDto } from './dto/asignacion-tutor-response.dto.js';
+import { AsignacionTutorResponseDto, CargaProyectadaResponseDto, CargaTutorActualResponseDto, PagedAsignacionTutorResponseDto, PagedCargaTutorialResponseDto, ParticipanteTutorResponseDto, ResultadoAsignacionTutorResponseDto } from './dto/asignacion-tutor-response.dto.js';
 import { PagedTutorPropuestoAsignacionResponseDto, TutorPropuestoAsignacionResponseDto } from './dto/tutor-propuesto-asignacion-response.dto.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
@@ -256,6 +256,36 @@ export class AsignacionesTutorService {
         excede_limite: config ? actual > config.max_trabajos : null,
         origen: effective.origen,
         configuracion: config ? { id: config.id, max_trabajos: config.max_trabajos, bloquear_al_superar: config.bloquear_al_superar } : null,
+      };
+    } catch (error: unknown) { this.handleError(error); }
+  }
+
+  /** Carga actual y límite efectivo de todos los docentes (paginado) sin consultas por docente. */
+  async cargaDelPeriodo(periodoId: string, page: number, limit: number): Promise<PagedCargaTutorialResponseDto> {
+    try {
+      if (!await this.periodos.exist({ where: { id: periodoId } })) throw new NotFoundException('No existe el período indicado.');
+      const [teachers, total] = await this.docentes.findAndCount({
+        relations: { usuario: true },
+        order: { usuario: { apellidos: 'ASC', nombres: 'ASC' }, id: 'ASC' },
+        skip: (page - 1) * limit, take: limit,
+      });
+      const cargas = await this.cargaTutorial.resumirCargaDocentes(this.dataSource.manager, periodoId, teachers.map((teacher) => teacher.id));
+      return {
+        data: teachers.map((teacher) => {
+          const carga = cargas.get(teacher.id);
+          const config = carga?.configuracion ?? null;
+          const actual = carga?.actual ?? 0;
+          return {
+            periodo_id: periodoId,
+            docente_id: teacher.id,
+            carga_actual: actual,
+            excede_limite: config ? actual > config.max_trabajos : null,
+            origen: carga?.origen ?? 'SIN_CONFIGURACION',
+            configuracion: config ? { id: config.id, max_trabajos: config.max_trabajos, bloquear_al_superar: config.bloquear_al_superar } : null,
+            docente: { id: teacher.id, nombres: teacher.usuario.nombres, apellidos: teacher.usuario.apellidos, email: teacher.usuario.email, cedula: teacher.cedula, habilitado_tutoria: teacher.habilitado_tutoria, estado: teacher.usuario.estado },
+          };
+        }),
+        total, page, limit,
       };
     } catch (error: unknown) { this.handleError(error); }
   }

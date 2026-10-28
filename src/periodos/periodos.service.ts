@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -132,15 +133,18 @@ export class PeriodosService {
     }
   }
 
-  async list(query: PaginationQueryDto): Promise<PagedPeriodos> {
+  async list(query: PaginationQueryDto, incluirCondicionados = false): Promise<PagedPeriodos> {
     try {
       const [periodos, total] = await this.repository.findAndCount({
         order: { fecha_inicio_postulacion: 'DESC', id: 'ASC' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
+      const pendientes = incluirCondicionados
+        ? await this.contarCondicionadosPendientes(periodos.map((periodo) => periodo.id))
+        : null;
       return {
-        data: periodos.map(responseFrom),
+        data: periodos.map((periodo) => this.withPendientes(responseFrom(periodo), pendientes)),
         total,
         page: query.page,
         limit: query.limit,
@@ -150,16 +154,39 @@ export class PeriodosService {
     }
   }
 
-  async getById(id: string): Promise<PeriodoResponseDto> {
+  async getById(id: string, incluirCondicionados = false): Promise<PeriodoResponseDto> {
     try {
       const periodo = await this.repository.findOneBy({ id });
       if (!periodo) {
         throw new NotFoundException('No existe el período solicitado.');
       }
-      return responseFrom(periodo);
+      const pendientes = incluirCondicionados ? await this.contarCondicionadosPendientes([periodo.id]) : null;
+      return this.withPendientes(responseFrom(periodo), pendientes);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
+  }
+
+  /** Cuenta, en una sola consulta agrupada, las habilitaciones CONDICIONADO/PENDIENTE por período. */
+  private async contarCondicionadosPendientes(ids: string[]): Promise<Map<string, number>> {
+    if (!ids.length) return new Map();
+    const rows = await this.dataSource.query(
+      `SELECT "periodo_id", count(*)::int AS total FROM ${this.schema()}."estudiante_habilitado"
+       WHERE "periodo_id" = ANY($1::uuid[]) AND "condicion_ingreso"='CONDICIONADO' AND "situacion_ingreso"='PENDIENTE'
+       GROUP BY "periodo_id"`,
+      [ids],
+    ) as Array<{ periodo_id: string; total: number }>;
+    return new Map(rows.map((row) => [row.periodo_id, Number(row.total)]));
+  }
+
+  private withPendientes(response: PeriodoResponseDto, pendientes: Map<string, number> | null): PeriodoResponseDto {
+    return pendientes ? { ...response, condicionados_pendientes: pendientes.get(response.id) ?? 0 } : response;
+  }
+
+  private schema(): string {
+    const value = (this.dataSource.options as PostgresConnectionOptions).schema ?? 'public';
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
+    return `"${value}"`;
   }
 
   async update(

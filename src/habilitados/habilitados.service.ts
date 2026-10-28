@@ -49,7 +49,13 @@ export interface PagedHabilitados {
   limit: number;
 }
 
-function responseFrom(record: EstudianteHabilitado): HabilitadoResponseDto {
+/**
+ * `detallado` agrega correo institucional, cédula, carrera, nivel y el responsable de la
+ * resolución. Solo se usa en respuestas para ADMIN o para el propio estudiante; los
+ * candidatos de invitación (vistos por otros estudiantes) no exponen esos datos.
+ */
+function responseFrom(record: EstudianteHabilitado, detallado = true): HabilitadoResponseDto {
+  const resuelto = record.resuelto_por;
   return {
     id: record.id,
     periodo_id: record.periodo.id,
@@ -59,7 +65,14 @@ function responseFrom(record: EstudianteHabilitado): HabilitadoResponseDto {
       nombres: record.estudiante.usuario.nombres,
       apellidos: record.estudiante.usuario.apellidos,
       matricula: record.estudiante.matricula,
+      ...(detallado ? {
+        email: record.estudiante.usuario.email,
+        cedula: record.estudiante.cedula,
+        carrera: record.estudiante.carrera,
+        nivel: record.estudiante.nivel,
+      } : {}),
     },
+    ...(detallado ? { resuelto_por: resuelto ? { id: resuelto.id, nombres: resuelto.nombres, apellidos: resuelto.apellidos } : null } : {}),
     origen: record.origen,
     lote_importacion_id: record.lote_importacion?.id ?? null,
     estado: record.estado,
@@ -202,7 +215,7 @@ export class HabilitadosService {
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
-      return { data: records.map(responseFrom), total, page: query.page, limit: query.limit };
+      return { data: records.map((record) => responseFrom(record)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -249,7 +262,7 @@ export class HabilitadosService {
         .skip((query.page - 1) * query.limit)
         .take(query.limit)
         .getManyAndCount();
-      return { data: records.map(responseFrom), total, page: query.page, limit: query.limit };
+      return { data: records.map((record) => responseFrom(record, false)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }

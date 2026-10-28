@@ -255,7 +255,9 @@ export class AsignacionesTemaService {
       estudiante_id: item.estudiante_id, participantes: participantRows,
       aprobada_por_id: item.aprobada_por_id, aprobada_por: { id: item.aprobada_por.id, nombres: item.aprobada_por.nombres, apellidos: item.aprobada_por.apellidos },
       estado: item.estado, fecha_asignacion: item.fecha_asignacion, motivo: item.motivo,
-      causa_anulacion: item.causa_anulacion, motivo_anulacion: item.motivo_anulacion, anulada_por_id: item.anulada_por_id, fecha_anulacion: item.fecha_anulacion,
+      causa_anulacion: item.causa_anulacion, motivo_anulacion: item.motivo_anulacion, anulada_por_id: item.anulada_por_id,
+      anulada_por: item.anulada_por ? { id: item.anulada_por.id, nombres: item.anulada_por.nombres, apellidos: item.anulada_por.apellidos } : null,
+      fecha_anulacion: item.fecha_anulacion,
     };
   }
 

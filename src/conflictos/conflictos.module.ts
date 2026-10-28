@@ -12,5 +12,6 @@ import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entit
   imports: [TypeOrmModule.forFeature([ResolucionConflicto, ConflictoParticipante, Tema, PeriodoTitulacion]), AuditoriaModule],
   controllers: [ConflictosController],
   providers: [ConflictosService],
+  exports: [ConflictosService],
 })
 export class ConflictosModule {}

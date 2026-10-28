@@ -41,6 +41,8 @@ import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodosService } from './periodos.service.js';
 import { InicioTitulacionService } from './inicio-titulacion.service.js';
 import { ArchivoPeriodoService } from './archivo-periodo.service.js';
+import { ResumenPeriodoService } from './resumen-periodo.service.js';
+import { ResumenPeriodoResponseDto } from './dto/resumen-periodo-response.dto.js';
 
 @ApiTags('Períodos de titulación')
 @ApiBearerAuth('bearer')
@@ -55,6 +57,7 @@ export class PeriodosController {
     private readonly periodos: PeriodosService,
     private readonly inicioTitulacion: InicioTitulacionService,
     private readonly archivoPeriodo: ArchivoPeriodoService,
+    private readonly resumenPeriodo: ResumenPeriodoService,
   ) {}
 
   @Post()
@@ -95,8 +98,8 @@ export class PeriodosController {
       },
     },
   })
-  list(@Query() query: PaginationQueryDto) {
-    return this.periodos.list(query);
+  list(@Query() query: PaginationQueryDto, @CurrentUsuario() actor: Usuario) {
+    return this.periodos.list(query, actor.rol === UsuarioRol.ADMIN);
   }
 
   @Get(':id')
@@ -107,8 +110,18 @@ export class PeriodosController {
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
   getById(
     @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUsuario() actor: Usuario,
   ): Promise<PeriodoResponseDto> {
-    return this.periodos.getById(id);
+    return this.periodos.getById(id, actor.rol === UsuarioRol.ADMIN);
+  }
+
+  @Get(':id/resumen')
+  @ApiOperation({ summary: 'Indicadores agregados del período para el panel administrativo' })
+  @ApiOkResponse({ type: ResumenPeriodoResponseDto })
+  @ApiBadRequestResponse({ description: 'El identificador debe ser un UUID válido.' })
+  @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
+  resumen(@Param('id', new ParseUUIDPipe()) id: string): Promise<ResumenPeriodoResponseDto> {
+    return this.resumenPeriodo.obtener(id);
   }
 
   @Patch(':id')

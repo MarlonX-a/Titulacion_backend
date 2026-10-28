@@ -9,7 +9,7 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { AsignarTutorDto } from './dto/asignar-tutor.dto.js';
 import { ReemplazarTutorDto } from './dto/reemplazar-tutor.dto.js';
 import { ListAsignacionesTutorQueryDto } from './dto/list-asignaciones-tutor-query.dto.js';
-import { AsignacionTutorResponseDto, CargaTutorActualResponseDto, PagedAsignacionTutorResponseDto, ResultadoAsignacionTutorResponseDto } from './dto/asignacion-tutor-response.dto.js';
+import { AsignacionTutorResponseDto, CargaTutorActualResponseDto, PagedAsignacionTutorResponseDto, PagedCargaTutorialResponseDto, ResultadoAsignacionTutorResponseDto } from './dto/asignacion-tutor-response.dto.js';
 import { PagedTutorPropuestoAsignacionResponseDto } from './dto/tutor-propuesto-asignacion-response.dto.js';
 import { AsignacionesTutorService } from './asignaciones-tutor.service.js';
 
@@ -72,6 +72,15 @@ export class AsignacionesTutorController {
   @ApiNotFoundResponse({ description: 'La asignación no existe o no es visible para el usuario.' })
   getById(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @CurrentUsuario() actor: Usuario) {
     return this.asignaciones.getById(periodoId, id, actor);
+  }
+
+  @Get('carga-tutorial')
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Listar la carga actual y el límite efectivo de cada docente del período' })
+  @ApiOkResponse({ type: PagedCargaTutorialResponseDto, description: 'Docentes paginados por apellidos; los límites específicos inactivos no aplican.' })
+  @ApiNotFoundResponse({ description: 'No existe el período indicado.' })
+  cargaPeriodo(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Query() query: PaginationQueryDto) {
+    return this.asignaciones.cargaDelPeriodo(periodoId, query.page, query.limit);
   }
 
   @Get('carga-tutorial/me')

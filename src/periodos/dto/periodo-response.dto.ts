@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PeriodoEstado } from '../enums/periodo-estado.enum.js';
 
 export class PeriodoResponseDto {
@@ -25,4 +25,10 @@ export class PeriodoResponseDto {
 
   @ApiProperty({ minimum: 1, maximum: 32767 })
   max_integrantes_default: number;
+
+  @ApiPropertyOptional({
+    minimum: 0,
+    description: 'Habilitaciones CONDICIONADO con ingreso PENDIENTE. Solo se incluye en GET /periodos y GET /periodos/:id para ADMIN.',
+  })
+  condicionados_pendientes?: number;
 }

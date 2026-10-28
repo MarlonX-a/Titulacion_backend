@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, In, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.js';
 import { ArchivoLimpiezaService } from '../almacenamiento/archivo-limpieza.service.js';
@@ -15,6 +15,7 @@ import { validatePlantillaFile } from '../plantillas-pat/plantilla-pat-file.vali
 import { CargarDocumentoPatDto } from './dto/cargar-documento-pat.dto.js';
 import { DocumentoPatDownloadDto, DocumentoPatResponseDto, PagedDocumentoPatResponseDto } from './dto/documento-pat-response.dto.js';
 import { DocumentoPat } from './entities/documento-pat.entity.js';
+import { EstadoUltimaPat, ListUltimasPatQueryDto, PagedUltimasPatResponseDto, UltimaPatParticipanteDto } from './dto/ultimas-pat-periodo.dto.js';
 import { DocumentoPatFormato } from './enums/documento-pat-formato.enum.js';
 import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
@@ -124,6 +125,62 @@ export class DocumentosPatService {
     catch (error: unknown) { this.handleError(error); }
     if (!item) throw new NotFoundException('El trabajo todavía no tiene documentos PAT.');
     return this.toResponse(item);
+  }
+
+  /**
+   * Bandeja de revisión (ADMIN): por cada asignación VIGENTE del período, su última versión PAT con
+   * la revisión. Una consulta para la página y otra para los documentos, sin consultas por trabajo.
+   */
+  async ultimasDelPeriodo(periodoId: string, query: ListUltimasPatQueryDto): Promise<PagedUltimasPatResponseDto> {
+    const s = this.schema();
+    let rows: Array<{ asignacion_tema_id: string; tema_id: string; tema_titulo: string; grupo_id: string | null; grupo_nombre: string | null; documento_id: string | null; estado: EstadoUltimaPat; participantes: UltimaPatParticipanteDto[]; total: number }>;
+    try {
+      const period = await this.dataSource.query(`SELECT 1 FROM ${s}."periodo_titulacion" WHERE "id"=$1`, [periodoId]) as unknown[];
+      if (!period.length) throw new NotFoundException('No existe el período indicado.');
+      rows = await this.dataSource.query(
+        `SELECT * FROM (
+           SELECT a."id" AS asignacion_tema_id, t."id" AS tema_id, t."titulo" AS tema_titulo, g."id" AS grupo_id, g."nombre" AS grupo_nombre,
+             ult."id" AS documento_id, ult."fecha_carga",
+             COALESCE(ult."resultado", CASE WHEN ult."id" IS NULL THEN 'SIN_ENTREGA' ELSE 'PENDIENTE' END) AS estado,
+             COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula") ORDER BY u."apellidos",u."nombres",e."id")
+               FROM ${s}."estudiante" e JOIN ${s}."usuario" u ON u."id"=e."usuario_id"
+               WHERE e."id"=a."estudiante_id" OR EXISTS (SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=e."id" AND gi."estado"='ACTIVO')), '[]'::jsonb) AS participantes
+           FROM ${s}."asignacion_tema" a
+           JOIN ${s}."tema" t ON t."id"=a."tema_id"
+           LEFT JOIN ${s}."grupo" g ON g."id"=a."grupo_id"
+           LEFT JOIN LATERAL (
+             SELECT d."id", d."fecha_carga", r."resultado"::text AS resultado FROM ${s}."documento_pat" d
+             LEFT JOIN ${s}."revision_pat" r ON r."documento_pat_id"=d."id"
+             WHERE d."asignacion_tema_id"=a."id" ORDER BY d."version" DESC LIMIT 1
+           ) ult ON true
+           WHERE a."periodo_id"=$1 AND a."estado"='VIGENTE'
+         ) x
+         WHERE ($2::text IS NULL OR x."estado"=$2)
+         ORDER BY x."fecha_carga" ASC NULLS LAST, x."asignacion_tema_id" ASC`,
+        [periodoId, query.estado ?? null],
+      ) as typeof rows;
+    } catch (error: unknown) { this.handleError(error); }
+    const total = rows.length;
+    const page = rows.slice((query.page - 1) * query.limit, query.page * query.limit);
+    const ids = page.flatMap((row) => (row.documento_id ? [row.documento_id] : []));
+    let documents: DocumentoPat[] = [];
+    try { documents = ids.length ? await this.repository.find({ where: { id: In(ids) }, relations }) : []; }
+    catch (error: unknown) { this.handleError(error); }
+    const byId = new Map(documents.map((item) => [item.id, item]));
+    return {
+      data: page.map((row) => {
+        const document = row.documento_id ? byId.get(row.documento_id) : undefined;
+        return {
+          asignacion_tema_id: row.asignacion_tema_id,
+          tema: { id: row.tema_id, titulo: row.tema_titulo },
+          grupo: row.grupo_id ? { id: row.grupo_id, nombre: row.grupo_nombre ?? '' } : null,
+          participantes: row.participantes,
+          estado: row.estado,
+          documento: document ? this.toResponse(document) : null,
+        };
+      }),
+      total, page: query.page, limit: query.limit,
+    };
   }
 
   async porId(periodoId: string, asignacionId: string, id: string, actor: Usuario): Promise<DocumentoPatResponseDto> {
