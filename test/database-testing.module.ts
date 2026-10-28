@@ -644,6 +644,11 @@ export function setPeriodoTestFechas(
   }
 }
 
+export function setTemaTestEstado(id: string, estado: EstadoTema): void {
+  const tema = temaRecords.find((record) => record.id === id);
+  if (tema) tema.estado = estado;
+}
+
 export function setPeriodoTestInicioTitulacion(id: string, inicio: Date): void {
   const periodo = periodoRecords.find((record) => record.id === id);
   if (periodo) periodo.fecha_inicio_titulacion = inicio;

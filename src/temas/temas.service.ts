@@ -10,7 +10,13 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, LessThanOrEqual, MoreThanOrEqual, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
+import { AsignacionTemaEstado } from '../asignaciones-tema/enums/asignacion-tema-estado.enum.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
+import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enum.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudianteHabilitado } from '../habilitados/entities/estudiante-habilitado.entity.js';
@@ -28,6 +34,7 @@ import { TemaHistorialResponseDto } from './dto/tema-historial-response.dto.js';
 import { TemaResponseDto } from './dto/tema-response.dto.js';
 import { UpdateTemaDto } from './dto/update-tema.dto.js';
 import type { PublicarTemaDto } from './dto/publicar-tema.dto.js';
+import type { MotivoTemaDto } from './dto/motivo-tema.dto.js';
 import { TemaHistorial } from './entities/tema-historial.entity.js';
 import { Tema } from './entities/tema.entity.js';
 import { EstadoTema } from './enums/estado-tema.enum.js';
@@ -35,6 +42,12 @@ import { EstadoTema } from './enums/estado-tema.enum.js';
 interface PostgresDriverError { code?: string; }
 export interface PagedTemas { data: TemaResponseDto[]; total: number; page: number; limit: number; }
 export interface PagedTemaHistorial { data: TemaHistorialResponseDto[]; total: number; page: number; limit: number; }
+
+function schemaOf(manager: EntityManager): string {
+  const value = (manager.connection.options as PostgresConnectionOptions).schema ?? 'public';
+  if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
+  return `"${value}"`;
+}
 
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof QueryFailedError && (error.driverError as PostgresDriverError).code === code;
@@ -103,6 +116,7 @@ export class TemasService {
     @InjectRepository(PeriodoTitulacion) private readonly periodoRepository: Repository<PeriodoTitulacion>,
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
+    private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
   async create(periodoId: string, dto: CreateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
@@ -223,6 +237,10 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
+  /**
+   * Publica un tema BORRADOR (dentro del plazo de administración de temas) o reabre un tema
+   * CERRADO (CERRADO → PUBLICADO) si no tiene asignación VIGENTE y el período no está ARCHIVADO.
+   */
   async publish(
     periodoId: string,
     id: string,
@@ -232,17 +250,13 @@ export class TemasService {
   ): Promise<TemaResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        await this.lockWritablePeriod(manager, periodoId);
+        const period = await this.lockPeriod(manager, periodoId);
         const repository = manager.getRepository(Tema);
-        const locked = await repository.findOne({
-          where: { id, periodo: { id: periodoId } },
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (!locked) throw new NotFoundException('No existe el tema en el período indicado.');
-        const tema = await repository.findOne({ where: { id }, relations: temaRelations });
-        if (!tema) throw new NotFoundException('No existe el tema en el período indicado.');
+        const tema = await this.lockTema(manager, periodoId, id);
+        if (tema.estado === EstadoTema.CERRADO) return this.reopen(manager, period, tema, actor, ip);
+        this.assertWritablePeriod(period);
         if (tema.estado !== EstadoTema.BORRADOR) {
-          throw new ConflictException('Solo se pueden publicar temas en estado BORRADOR.');
+          throw new ConflictException('Solo se pueden publicar temas en estado BORRADOR o reabrir temas CERRADOS.');
         }
         await this.references(manager, tema.linea.id, tema.docente_proponente.id);
         this.assertRange(tema.min_integrantes, tema.max_integrantes);
@@ -268,6 +282,16 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
+  /** RF-25: PUBLICADO → CERRADO; rechaza las postulaciones PENDIENTE o EN_CONFLICTO del tema. */
+  async close(periodoId: string, id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+    return this.endTopic(periodoId, id, dto, actor, ip, EstadoTema.CERRADO);
+  }
+
+  /** RF-21: BORRADOR, PUBLICADO o CERRADO → RETIRADO (terminal); rechaza sus postulaciones abiertas. */
+  async withdraw(periodoId: string, id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+    return this.endTopic(periodoId, id, dto, actor, ip, EstadoTema.RETIRADO);
+  }
+
   async history(periodoId: string, id: string, query: ListTemasQueryDto): Promise<PagedTemaHistorial> {
     try {
       const tema = await this.repository.findOneBy({ id, periodo: { id: periodoId } });
@@ -280,10 +304,109 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  private async lockWritablePeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {
+  private async endTopic(
+    periodoId: string,
+    id: string,
+    dto: MotivoTemaDto,
+    actor: Usuario,
+    ip: string | null,
+    destino: EstadoTema.CERRADO | EstadoTema.RETIRADO,
+  ): Promise<TemaResponseDto> {
+    const motivo = dto.motivo.trim();
+    const cierre = destino === EstadoTema.CERRADO;
+    try {
+      return await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+        const period = await this.lockPeriod(manager, periodoId);
+        if (period.estado === PeriodoEstado.ARCHIVADO) throw new ConflictException('No se pueden modificar temas de un período ARCHIVADO.');
+        const tema = await this.lockTema(manager, periodoId, id);
+        if (tema.estado === EstadoTema.ASIGNADO || await this.hasCurrentAssignment(manager, tema.id)) {
+          throw new ConflictException(`El tema tiene una asignación VIGENTE; anúlala antes de ${cierre ? 'cerrarlo' : 'retirarlo'}.`);
+        }
+        const origins = cierre ? [EstadoTema.PUBLICADO] : [EstadoTema.BORRADOR, EstadoTema.PUBLICADO, EstadoTema.CERRADO];
+        if (!origins.includes(tema.estado)) {
+          throw new ConflictException(cierre
+            ? 'Solo se pueden cerrar temas PUBLICADOS.'
+            : 'Solo se pueden retirar temas en BORRADOR, PUBLICADO o CERRADO.');
+        }
+        const previous = temaValues(tema);
+        tema.estado = destino;
+        await manager.getRepository(Tema).save(tema);
+        const loaded = await this.loadForResponse(manager, id, periodoId);
+        await this.writeHistory(manager, loaded, actor, previous, motivo);
+        await this.auditoria.registrar(manager, {
+          actor, accion: cierre ? 'CERRAR_TEMA' : 'RETIRAR_TEMA', entidad_tipo: 'tema', entidad_id: id,
+          valores_anteriores: previous, valores_nuevos: { ...temaValues(loaded), motivo }, ip_origen: ip,
+        });
+        await this.rejectOpenApplications(manager, periodoId, id, `${cierre ? 'Tema cerrado' : 'Tema retirado'}: ${motivo}`, cierre ? 'RECHAZAR_POSTULACION_POR_CIERRE_TEMA' : 'RECHAZAR_POSTULACION_POR_RETIRO_TEMA', actor, ip);
+        return responseFrom(loaded);
+      });
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  private async reopen(manager: EntityManager, period: PeriodoTitulacion, tema: Tema, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+    if (period.estado === PeriodoEstado.ARCHIVADO) throw new ConflictException('No se pueden reabrir temas de un período ARCHIVADO.');
+    if (await this.hasCurrentAssignment(manager, tema.id)) throw new ConflictException('El tema tiene una asignación VIGENTE y no puede reabrirse.');
+    const previous = temaValues(tema);
+    tema.estado = EstadoTema.PUBLICADO;
+    await manager.getRepository(Tema).save(tema);
+    const loaded = await this.loadForResponse(manager, tema.id, period.id);
+    await this.writeHistory(manager, loaded, actor, previous);
+    await this.auditoria.registrar(manager, {
+      actor, accion: 'REABRIR_TEMA', entidad_tipo: 'tema', entidad_id: tema.id,
+      valores_anteriores: previous, valores_nuevos: temaValues(loaded), ip_origen: ip,
+    });
+    return responseFrom(loaded);
+  }
+
+  /** Las postulaciones se bloquean en orden de id después del tema, igual que en la asignación. */
+  private async rejectOpenApplications(manager: EntityManager, periodoId: string, temaId: string, observacion: string, accion: string, actor: Usuario, ip: string | null): Promise<void> {
+    const rows = await manager.query(
+      `SELECT "id" FROM ${schemaOf(manager)}."postulacion" WHERE "periodo_id"=$1 AND "tema_id"=$2 AND "estado" IN ('PENDIENTE','EN_CONFLICTO') ORDER BY "id" FOR UPDATE`,
+      [periodoId, temaId],
+    ) as Array<{ id: string }>;
+    const repository = manager.getRepository(Postulacion);
+    for (const row of rows) {
+      const application = await repository.findOneBy({ id: row.id });
+      if (!application || ![EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(application.estado)) continue;
+      const previous = { estado: application.estado, observacion: application.observacion };
+      application.estado = EstadoPostulacion.RECHAZADA;
+      application.observacion = observacion;
+      await repository.save(application);
+      await this.auditoria.registrar(manager, {
+        actor, accion, entidad_tipo: 'postulacion', entidad_id: application.id,
+        valores_anteriores: previous, valores_nuevos: { estado: application.estado, observacion }, ip_origen: ip,
+      });
+      await this.notificaciones.postulacion(manager, application.id, NotificacionTipo.POSTULACION_RECHAZADA, actor.id);
+    }
+  }
+
+  private async hasCurrentAssignment(manager: EntityManager, temaId: string): Promise<boolean> {
+    return manager.getRepository(AsignacionTema).exist({ where: { tema_id: temaId, estado: AsignacionTemaEstado.VIGENTE } });
+  }
+
+  private async lockTema(manager: EntityManager, periodoId: string, id: string): Promise<Tema> {
+    const repository = manager.getRepository(Tema);
+    const locked = await repository.findOne({ where: { id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
+    if (!locked) throw new NotFoundException('No existe el tema en el período indicado.');
+    const tema = await repository.findOne({ where: { id: locked.id }, relations: temaRelations });
+    if (!tema) throw new NotFoundException('No existe el tema en el período indicado.');
+    return tema;
+  }
+
+  private async lockPeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {
     const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
     if (!period) throw new NotFoundException('No existe el período indicado.');
-    if (period.estado === PeriodoEstado.BORRADOR) return period;
+    return period;
+  }
+
+  private async lockWritablePeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {
+    const period = await this.lockPeriod(manager, id);
+    this.assertWritablePeriod(period);
+    return period;
+  }
+
+  private assertWritablePeriod(period: PeriodoTitulacion): void {
+    if (period.estado === PeriodoEstado.BORRADOR) return;
     if (period.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
       throw new ConflictException('Los temas solo se administran en períodos BORRADOR o POSTULACION_ABIERTA.');
     }
@@ -291,7 +414,6 @@ export class TemasService {
     if (now < period.fecha_inicio_postulacion || now >= period.fecha_fin_postulacion) {
       throw new ConflictException('Los temas solo se administran durante el plazo de postulación.');
     }
-    return period;
   }
 
   private async references(manager: EntityManager, lineaId: string, docenteId: string): Promise<{ linea: LineaInvestigacion; docente: Docente }> {
@@ -349,11 +471,11 @@ export class TemasService {
     return responses.map((item) => ({ ...item, disponible: byId.get(item.id)?.disponible ?? false, postulaciones_abiertas: Number(byId.get(item.id)?.postulaciones_abiertas ?? 0) }));
   }
 
-  private async writeHistory(manager: EntityManager, tema: Tema, actor: Usuario, previous: Record<string, unknown> | null): Promise<void> {
+  private async writeHistory(manager: EntityManager, tema: Tema, actor: Usuario, previous: Record<string, unknown> | null, motivo?: string): Promise<void> {
     const repository = manager.getRepository(TemaHistorial);
     await repository.save(repository.create({
       tema, usuario: actor, estado_anterior: previous ? previous.estado as EstadoTema : null, estado_nuevo: tema.estado,
-      cambios: { anteriores: previous, nuevos: temaValues(tema) }, fecha: new Date(),
+      cambios: { anteriores: previous, nuevos: temaValues(tema), ...(motivo ? { motivo } : {}) }, fecha: new Date(),
     }));
   }
 
@@ -365,6 +487,7 @@ export class TemasService {
     if (error instanceof HttpException) throw error;
     if (hasCode(error, '23503')) throw new ConflictException('Una referencia relacionada no es compatible con el tema.');
     if (hasCode(error, '23514')) throw new BadRequestException('Los datos incumplen una regla de tema.');
+    if (hasCode(error, '40001') || hasCode(error, '40P01')) throw new ConflictException('La operación coincidió con otro cambio simultáneo. Vuelve a intentarlo.');
     throw new ServiceUnavailableException('No se pudo completar la operación de temas en PostgreSQL.', { cause: error });
   }
 }

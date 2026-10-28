@@ -482,6 +482,29 @@ max_integrantes >= min_integrantes
 
 Los cambios relevantes del tema deben conservarse en el historial.
 
+Cierre, retiro y reapertura (RF-21/RF-25), solo ADMIN y con motivo obligatorio
+(`POST /periodos/:periodoId/temas/:id/cerrar` y `/retirar`, cuerpo `{ motivo }`):
+
+- CERRAR: PUBLICADO → CERRADO. RETIRAR: BORRADOR, PUBLICADO o CERRADO → RETIRADO
+  (terminal).
+- Se rechazan con 409 si el período está ARCHIVADO o el tema tiene asignación
+  VIGENTE (estado ASIGNADO); no aplica la ventana de plazo de administración de
+  temas.
+- En la misma transacción SERIALIZABLE (período → tema → postulaciones en orden
+  de id, `FOR UPDATE`), las postulaciones PENDIENTE o EN_CONFLICTO del tema pasan
+  a RECHAZADA con observación «Tema cerrado|retirado: motivo», auditoría
+  `RECHAZAR_POSTULACION_POR_CIERRE_TEMA` / `..._POR_RETIRO_TEMA` y aviso
+  `POSTULACION_RECHAZADA`. El tema registra historial (con `cambios.motivo`) y
+  auditoría `CERRAR_TEMA` / `RETIRAR_TEMA`.
+- Reabrir: `POST .../temas/:id/publicar` sobre un tema CERRADO lo devuelve a
+  PUBLICADO (auditoría `REABRIR_TEMA`, historial) si no tiene asignación VIGENTE
+  y el período no está ARCHIVADO; las postulaciones rechazadas no se reactivan.
+  Publicar un BORRADOR conserva sus reglas de plazo y referencias activas.
+
+Ningún trigger de PostgreSQL restringe estas transiciones de tema; las de
+postulación (PENDIENTE/EN_CONFLICTO → RECHAZADA con observación) ya estaban
+permitidas.
+
 ---
 
 ## Postulaciones

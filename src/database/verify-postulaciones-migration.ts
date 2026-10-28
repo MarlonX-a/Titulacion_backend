@@ -124,7 +124,7 @@ async function verify(): Promise<void> {
   const persistence = new PostulacionPersistenciaService(audit, notifications);
   const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
   const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence, notifications, persistence, groupMembership);
-  const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit);
+  const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit, notifications);
   const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);
   const invitePersistence = new InvitacionPersistenciaService(audit, notifications);
   const groups = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), studentRepo, isolated, habilitados, audit, persistence);
@@ -264,6 +264,20 @@ async function verify(): Promise<void> {
   const admittedStillBlocked = await retireRaw(students[1]!.id);
   if (admittedStillBlocked !== '23514') throw new Error(`Tras el retiro NO_ADMITIDO, el trigger dejó de proteger al integrante ADMITIDO (${admittedStillBlocked}).`);
 
+  step = 'cierre, reapertura y retiro de tema con postulaciones abiertas';
+  const openBeforeClose = await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: EstadoPostulacion.PENDIENTE } });
+  if (openBeforeClose < 1) throw new Error('La verificación de cierre de tema requiere al menos una postulación PENDIENTE.');
+  const closedTopic = await temasService.close(period.id, topic.id, { motivo: 'Cierre de verificación' }, adminUser, null);
+  const rejectedByClose = await isolated.getRepository(Postulacion).findOneByOrFail({ id: groupRetry.id });
+  if (closedTopic.estado !== EstadoTema.CERRADO || rejectedByClose.estado !== EstadoPostulacion.RECHAZADA || rejectedByClose.observacion !== 'Tema cerrado: Cierre de verificación') throw new Error('El cierre del tema no rechazó sus postulaciones PENDIENTE en PostgreSQL.');
+  if (await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: EstadoPostulacion.PENDIENTE } }) !== 0) throw new Error('El cierre del tema dejó postulaciones PENDIENTE.');
+  const reopenedTopic = await temasService.publish(period.id, topic.id, {}, adminUser, null);
+  if (reopenedTopic.estado !== EstadoTema.PUBLICADO || rejectedByClose.estado !== EstadoPostulacion.RECHAZADA) throw new Error('La reapertura del tema no lo devolvió a PUBLICADO.');
+  const withdrawnTopic = await temasService.withdraw(period.id, topic.id, { motivo: 'Retiro de verificación' }, adminUser, null);
+  if (withdrawnTopic.estado !== EstadoTema.RETIRADO) throw new Error('El retiro del tema no lo dejó RETIRADO.');
+  const retiredTerminal = await temasService.publish(period.id, topic.id, {}, adminUser, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  if (!retiredTerminal) throw new Error('Un tema RETIRADO pudo volver a publicarse.');
+
   step = 'reversión protegida y auditoría';
   const auditCount = await isolated.getRepository(Auditoria).count();
   if (auditCount < 5) throw new Error('Faltan auditorías de altas/cancelaciones de postulaciones e invitaciones.');
@@ -273,7 +287,7 @@ async function verify(): Promise<void> {
   const revertRejected = await migration.down(revertRunner).then(() => false, async (error: unknown) => { await revertRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('contiene registros'); });
   if (revertRunner.isTransactionActive) await revertRunner.rollbackTransaction(); await revertRunner.release();
   if (!revertRejected) throw new Error('La migración permitió eliminar postulaciones con historial.');
-  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, retiro NO_ADMITIDO con postulación, restricciones de tutores y reversión protegida.');
+  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, retiro NO_ADMITIDO con postulación, cierre/reapertura/retiro de temas con rechazo de postulaciones abiertas, restricciones de tutores y reversión protegida.');
 }
 
 try { await verify(); }

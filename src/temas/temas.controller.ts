@@ -11,6 +11,7 @@ import { TemaHistorialResponseDto } from './dto/tema-historial-response.dto.js';
 import { TemaResponseDto } from './dto/tema-response.dto.js';
 import { UpdateTemaDto } from './dto/update-tema.dto.js';
 import { PublicarTemaDto } from './dto/publicar-tema.dto.js';
+import { MotivoTemaDto } from './dto/motivo-tema.dto.js';
 import { TemasService } from './temas.service.js';
 
 @ApiTags('Temas de titulación')
@@ -37,14 +38,40 @@ export class TemasController {
   @Post(':id/publicar')
   @HttpCode(HttpStatus.OK)
   @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Publicar un tema en borrador' })
+  @ApiOperation({ summary: 'Publicar un tema en borrador o reabrir un tema CERRADO' })
   @ApiOkResponse({ type: TemaResponseDto })
   @ApiBadRequestResponse({ description: 'El cuerpo debe estar vacío o los datos del tema son inválidos.' })
   @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
   @ApiNotFoundResponse({ description: 'No existe el período o tema indicado.' })
-  @ApiConflictResponse({ description: 'El período está fuera de plazo, el tema no está en BORRADOR o una referencia no está activa.' })
+  @ApiConflictResponse({ description: 'BORRADOR: período fuera de plazo o referencia inactiva. CERRADO: período ARCHIVADO o asignación VIGENTE. Otros estados no se publican.' })
   publish(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: PublicarTemaDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
     return this.temas.publish(periodoId, id, dto, actor, request.ip || null);
+  }
+
+  @Post(':id/cerrar')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Cerrar un tema PUBLICADO y rechazar sus postulaciones abiertas' })
+  @ApiOkResponse({ type: TemaResponseDto })
+  @ApiBadRequestResponse({ description: 'El motivo es obligatorio y admite hasta 1000 caracteres.' })
+  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
+  @ApiNotFoundResponse({ description: 'No existe el período o tema indicado.' })
+  @ApiConflictResponse({ description: 'El período está ARCHIVADO, el tema tiene asignación VIGENTE o no está PUBLICADO.' })
+  close(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: MotivoTemaDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
+    return this.temas.close(periodoId, id, dto, actor, request.ip || null);
+  }
+
+  @Post(':id/retirar')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Retirar definitivamente un tema y rechazar sus postulaciones abiertas' })
+  @ApiOkResponse({ type: TemaResponseDto })
+  @ApiBadRequestResponse({ description: 'El motivo es obligatorio y admite hasta 1000 caracteres.' })
+  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
+  @ApiNotFoundResponse({ description: 'No existe el período o tema indicado.' })
+  @ApiConflictResponse({ description: 'El período está ARCHIVADO, el tema tiene asignación VIGENTE o ya está RETIRADO.' })
+  withdraw(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: MotivoTemaDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
+    return this.temas.withdraw(periodoId, id, dto, actor, request.ip || null);
   }
 
   @Get()

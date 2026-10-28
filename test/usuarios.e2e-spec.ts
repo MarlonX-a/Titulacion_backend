@@ -24,6 +24,7 @@ import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
 import { CondicionIngreso } from '../src/habilitados/enums/condicion-ingreso.enum.js';
 import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { EstadoTema } from '../src/temas/enums/estado-tema.enum.js';
 import { vi } from 'vitest';
 import { NotificacionesPersistenciaService } from '../src/notificaciones/notificaciones-persistencia.service.js';
 import { AsignacionTemaPersistenciaService } from '../src/asignaciones-tema/asignacion-tema-persistencia.service.js';
@@ -37,6 +38,7 @@ import {
   auditoriaTestRecords,
   habilitadosTestRecords,
   setPeriodoTestInicioTitulacion,
+  setTemaTestEstado,
   findUsuarioTestIdByExternalId,
   DatabaseTestingModule,
 } from './database-testing.module.js';
@@ -1084,6 +1086,8 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/cerrar-postulacion'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/cerrar'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/retirar'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/iniciar-titulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/conflictos'].get).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{temaId}/conflicto/resolver'].post).toBeDefined();
@@ -1208,6 +1212,67 @@ describe('Usuarios (e2e)', () => {
       linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Fuera de plazo', descripcion: 'No debe crearse', min_integrantes: 1, max_integrantes: 2,
     }).expect(409);
     await authenticated('post', `/periodos/${period.body.id}/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
+  });
+
+  async function createOpenTopic(code: string) {
+    const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: `${code}-L`, nombre: 'Línea de prueba' }).expect(201);
+    const period = await createPeriod(code);
+    const start = new Date(Date.now() - 60_000);
+    const end = new Date(Date.now() + 60 * 60_000);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
+      fecha_inicio_postulacion: start.toISOString(),
+      fecha_fin_postulacion: end.toISOString(),
+      fecha_inicio_titulacion: new Date(end.getTime() + 60 * 60_000).toISOString(),
+    }).expect(200);
+    const themesPath = `/periodos/${period.body.id}/temas`;
+    const topic = await authenticated('post', themesPath, 'admin-sub').send({
+      linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
+      titulo: 'Tema administrable', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 3,
+    }).expect(201);
+    return { period, themesPath, topic };
+  }
+
+  it('cierra, reabre y retira temas con motivo, historial y auditoría (RF-21/RF-25)', async () => {
+    addAdmin();
+    const { period, themesPath, topic } = await createOpenTopic('TEMAS-CIERRE');
+    const topicPath = `${themesPath}/${topic.body.id}`;
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Borrador' }).expect(409);
+    await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(200);
+
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({}).expect(400);
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: '   ' }).expect(400);
+    await authenticated('post', `${topicPath}/cerrar`, 'docente-sub').send({ motivo: 'Sin permiso' }).expect(403);
+    const closed = await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Cupo cubierto' }).expect(200);
+    expect(closed.body.estado).toBe(EstadoTema.CERRADO);
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Otra vez' }).expect(409);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    const reopened = await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(200);
+    expect(reopened.body.estado).toBe(EstadoTema.PUBLICADO);
+
+    setTemaTestEstado(topic.body.id, EstadoTema.ASIGNADO);
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Asignado' }).expect(409);
+    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Asignado' }).expect(409);
+    setTemaTestEstado(topic.body.id, EstadoTema.PUBLICADO);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Archivado' }).expect(409);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+
+    const withdrawn = await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Docente no disponible' }).expect(200);
+    expect(withdrawn.body.estado).toBe(EstadoTema.RETIRADO);
+    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Otra vez' }).expect(409);
+    await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(409);
+
+    await authenticated('get', `${topicPath}/historial`, 'admin-sub').expect(200).then((response) => {
+      expect(response.body.data.map((item: { estado_anterior: string | null; estado_nuevo: string }) => [item.estado_anterior, item.estado_nuevo])).toEqual([
+        [null, 'BORRADOR'], ['BORRADOR', 'PUBLICADO'], ['PUBLICADO', 'CERRADO'], ['CERRADO', 'PUBLICADO'], ['PUBLICADO', 'RETIRADO'],
+      ]);
+      expect(response.body.data[2].cambios.motivo).toBe('Cupo cubierto');
+    });
+    expect(auditoriaTestRecords().map((entry) => entry.accion)).toEqual(expect.arrayContaining(['CERRAR_TEMA', 'REABRIR_TEMA', 'RETIRAR_TEMA']));
   });
 
   it('inicia la titulación desde POSTULACION_CERRADA en fecha y suspende a los condicionados pendientes', async () => {
