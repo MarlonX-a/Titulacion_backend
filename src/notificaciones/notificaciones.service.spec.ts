@@ -33,6 +33,16 @@ describe('NotificacionesService', () => {
     expect(repository.update).toHaveBeenCalledWith({ id: base.id, usuario_id: user.id, canal: NotificacionCanal.EN_APP }, { leida: true });
   });
 
+  it('marca todas como leídas en un único UPDATE limitado al usuario actual y al canal de aplicación', async () => {
+    const { service, repository } = setup();
+    repository.update.mockResolvedValueOnce({ affected: 3 });
+    expect(await service.marcarTodasLeidas(user)).toEqual({ actualizadas: 3 });
+    expect(repository.update).toHaveBeenCalledTimes(1);
+    expect(repository.update).toHaveBeenCalledWith({ usuario_id: user.id, canal: NotificacionCanal.EN_APP, leida: false }, { leida: true });
+    repository.update.mockResolvedValueOnce({ affected: undefined as unknown as number });
+    expect(await service.marcarTodasLeidas(user)).toEqual({ actualizadas: 0 });
+  });
+
   it('oculta registros ajenos y las copias del canal correo', async () => {
     const { service } = setup();
     await expect(service.porId('other-user', user)).rejects.toMatchObject({ status: 404 });

@@ -3,7 +3,7 @@ import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperat
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { NotificacionQueryDto } from './dto/notificacion-query.dto.js';
-import { NotificacionCountDto, NotificacionPageDto, NotificacionResponseDto } from './dto/notificacion-response.dto.js';
+import { NotificacionCountDto, NotificacionesLeidasDto, NotificacionPageDto, NotificacionResponseDto } from './dto/notificacion-response.dto.js';
 import { NotificacionesService } from './notificaciones.service.js';
 
 class EmptyBodyDto {}
@@ -17,6 +17,12 @@ export class NotificacionesController {
   listar(@CurrentUsuario() actor: Usuario, @Query() query: NotificacionQueryDto) { return this.service.listar(actor, query); }
   @Get('no-leidas/contador') @ApiOperation({ summary: 'Contar notificaciones propias sin leer' }) @ApiOkResponse({ type: NotificacionCountDto })
   contador(@CurrentUsuario() actor: Usuario) { return this.service.contador(actor); }
+  @Post('leer-todas') @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Marcar como leídas todas las notificaciones propias', description: 'Un único UPDATE limitado al usuario autenticado y al canal EN_APP.' })
+  @ApiBody({ required: false, schema: { type: 'object', additionalProperties: false, maxProperties: 0 } })
+  @ApiOkResponse({ type: NotificacionesLeidasDto })
+  @ApiBadRequestResponse({ description: 'El endpoint no admite campos de entrada.' })
+  leerTodas(@CurrentUsuario() actor: Usuario, @Body() _body: EmptyBodyDto) { return this.service.marcarTodasLeidas(actor); }
   @Get(':id') @ApiOperation({ summary: 'Consultar una notificación propia' }) @ApiOkResponse({ type: NotificacionResponseDto })
   porId(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUsuario() actor: Usuario) { return this.service.porId(id, actor); }
   @Post(':id/leer') @HttpCode(HttpStatus.OK)

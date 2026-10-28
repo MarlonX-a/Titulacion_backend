@@ -988,7 +988,9 @@ temporales. Índices `IDX_auditoria_fecha_hora` e `IDX_auditoria_usuario` (migra
 
 Historial de importaciones (ADMIN): `GET /periodos/:periodoId/importaciones/estudiantes` y
 `GET /importaciones/docentes` listan preparaciones (con su lote si se completó), más recientes
-primero y paginadas; las vencidas se listan con `expirada: true` (no 410).
+primero y paginadas; las vencidas se listan con `expirada: true` (no 410). `POST
+/notificaciones/leer-todas` marca en un único UPDATE solo las notificaciones EN_APP del usuario
+autenticado.
 
 No confundir:
 

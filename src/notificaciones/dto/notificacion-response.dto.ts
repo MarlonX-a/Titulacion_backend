@@ -29,3 +29,4 @@ export class NotificacionPageDto {
   @ApiProperty() limit: number;
 }
 export class NotificacionCountDto { @ApiProperty() total: number }
+export class NotificacionesLeidasDto { @ApiProperty({ description: 'Cantidad de notificaciones propias marcadas como leídas.' }) actualizadas: number }

@@ -42,6 +42,14 @@ export class NotificacionesService {
     } catch (error: unknown) { this.handleError(error); }
   }
 
+  /** Marca como leídas, en un único UPDATE, solo las notificaciones EN_APP no leídas del usuario actual. */
+  async marcarTodasLeidas(actor: Usuario): Promise<{ actualizadas: number }> {
+    try {
+      const result = await this.repository.update({ usuario_id: actor.id, canal: NotificacionCanal.EN_APP, leida: false }, { leida: true });
+      return { actualizadas: result.affected ?? 0 };
+    } catch (error: unknown) { this.handleError(error); }
+  }
+
   private toResponse(item: Notificacion): NotificacionResponseDto {
     return { id: item.id, tipo: item.tipo, titulo: item.titulo, mensaje: item.mensaje, entidad_tipo: item.entidad_tipo, entidad_id: item.entidad_id, canal: item.canal, leida: item.leida, fecha_creacion: item.fecha_creacion, fecha_envio: item.fecha_envio };
   }
