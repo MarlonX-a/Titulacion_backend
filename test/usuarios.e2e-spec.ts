@@ -24,7 +24,11 @@ import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
 import { CondicionIngreso } from '../src/habilitados/enums/condicion-ingreso.enum.js';
 import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { vi } from 'vitest';
 import { NotificacionesPersistenciaService } from '../src/notificaciones/notificaciones-persistencia.service.js';
+import { AsignacionTemaPersistenciaService } from '../src/asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { PostulacionPersistenciaService } from '../src/postulaciones/postulacion-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../src/grupos/grupo-integrante-persistencia.service.js';
 import {
   addUsuarioTestRecord,
   clearUsuarioTestRecords,
@@ -44,6 +48,7 @@ describe('Usuarios (e2e)', () => {
   let privateKey: CryptoKey;
   let publicJwk: JWK;
   const tokens = new Map<string, string>();
+  const avisosIngreso: Array<{ id: string; actorId: string; aviso: string }> = [];
 
   async function createToken(subject: string, roleClaim?: string) {
     return new SignJWT(roleClaim ? { role: roleClaim } : {})
@@ -125,14 +130,18 @@ describe('Usuarios (e2e)', () => {
         return { subject: findUsuarioTestIdByExternalId(externalSubject) ?? externalSubject, issuer: 'http://127.0.0.1:3000', firstAccess: false };
       } })
       .overrideProvider(NotificacionesPersistenciaService)
-      .useValue({ ingreso: async () => undefined })
+      .useValue({ ingreso: async (_manager: unknown, id: string, actorId: string, aviso = 'RESOLUCION') => { avisosIngreso.push({ id, actorId, aviso }); } })
       .compile();
     app = moduleFixture.createNestApplication<INestApplication<App>>();
     configureApplication(app);
     await app.init();
   });
 
-  beforeEach(() => clearUsuarioTestRecords());
+  beforeEach(() => {
+    clearUsuarioTestRecords();
+    avisosIngreso.length = 0;
+    vi.restoreAllMocks();
+  });
 
   afterAll(async () => {
     await app?.close();
@@ -851,6 +860,9 @@ describe('Usuarios (e2e)', () => {
   });
 
   it('resuelve condicionados una sola vez, conserva el requisito y registra auditoría atómica', async () => {
+    const anular = vi.spyOn(app.get(AsignacionTemaPersistenciaService), 'anularPorIncumplimiento');
+    const cancelarPostulaciones = vi.spyOn(app.get(PostulacionPersistenciaService), 'cancelarPendientesPorNoAdmision');
+    const retirarGrupo = vi.spyOn(app.get(GrupoIntegrantePersistenciaService), 'retirarPorNoAdmision');
     addAdmin();
     const { profile } = await createStudentProfile();
     const period = await createPeriod();
@@ -890,6 +902,22 @@ describe('Usuarios (e2e)', () => {
       estado: 'HABILITADO',
     });
     expect(auditoriaTestRecords()).toHaveLength(4);
+    expect(anular).toHaveBeenCalledTimes(1);
+    expect(anular).toHaveBeenCalledWith(
+      expect.anything(), period.body.id, secondProfile.body.id, expect.objectContaining({ rol: UsuarioRol.ADMIN }), 'No completó el requisito.', expect.any(String),
+    );
+    // La NO_ADMISIÓN también cancela postulaciones pendientes y retira del grupo activo, en la misma transacción y en orden.
+    for (const effect of [cancelarPostulaciones, retirarGrupo]) {
+      expect(effect).toHaveBeenCalledTimes(1);
+      expect(effect).toHaveBeenCalledWith(
+        anular.mock.calls[0]![0], period.body.id, secondProfile.body.id, expect.objectContaining({ rol: UsuarioRol.ADMIN }), 'No completó el requisito.', expect.any(String),
+      );
+    }
+    expect(anular.mock.invocationCallOrder[0]).toBeLessThan(cancelarPostulaciones.mock.invocationCallOrder[0]!);
+    expect(cancelarPostulaciones.mock.invocationCallOrder[0]).toBeLessThan(retirarGrupo.mock.invocationCallOrder[0]!);
+    await expect(cancelarPostulaciones.mock.results[0]!.value).resolves.toEqual([]);
+    await expect(retirarGrupo.mock.results[0]!.value).resolves.toEqual({ resultado: 'SIN_GRUPO' });
+    expect(avisosIngreso).toContainEqual({ id: second.body.id, actorId: expect.any(String), aviso: 'RESOLUCION' });
   });
 
   it('requiere períodos BORRADOR para altas y resoluciones, y refleja la API en Swagger', async () => {
@@ -1182,7 +1210,10 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', `/periodos/${period.body.id}/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
   });
 
-  it('inicia la titulación solo desde POSTULACION_CERRADA, en fecha y sin condicionados pendientes', async () => {
+  it('inicia la titulación desde POSTULACION_CERRADA en fecha y suspende a los condicionados pendientes', async () => {
+    const anular = vi.spyOn(app.get(AsignacionTemaPersistenciaService), 'anularPorIncumplimiento');
+    const cancelarPostulaciones = vi.spyOn(app.get(PostulacionPersistenciaService), 'cancelarPendientesPorNoAdmision');
+    const retirarGrupo = vi.spyOn(app.get(GrupoIntegrantePersistenciaService), 'retirarPorNoAdmision');
     const admin = addAdmin();
     const period = await createPeriod('INICIO-TITULACION');
     const first = await createStudentProfile('student-sub', '0102030400', 'START-1');
@@ -1216,18 +1247,92 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'docente-sub').expect(403);
 
     setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() - 1_000));
-    const blocked = await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
-    expect(blocked.body.message).toContain('2 estudiantes condicionados pendientes');
-
-    await authenticated('post', `/periodos/${period.body.id}/habilitados/${firstPending.body.id}/resolver-ingreso`, 'admin-sub')
-      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No cumple el requisito' }).expect(200);
-    await authenticated('post', `/periodos/${period.body.id}/habilitados/${secondPending.body.id}/resolver-ingreso`, 'admin-sub')
-      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No cumple el requisito' }).expect(200);
-
     const started = await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(200);
     expect(started.body.estado).toBe(PeriodoEstado.EN_CURSO);
-    expect(auditoriaTestRecords().map((entry) => entry.accion)).toContain('INICIAR_TITULACION');
+
+    for (const row of [firstRow, secondRow]) {
+      const stored = habilitadosTestRecords().find((candidate) => candidate.id === row.id);
+      expect(stored).toMatchObject({
+        estado: HabilitadoEstado.SUSPENDIDO,
+        condicion_ingreso: CondicionIngreso.CONDICIONADO,
+        situacion_ingreso: SituacionIngreso.NO_ADMITIDO,
+        observacion_ingreso: 'Requisito no resuelto antes del inicio de titulación.',
+        fecha_resolucion_ingreso: expect.any(Date),
+      });
+      expect(stored?.requisito_pendiente).toBe(row.id === firstRow.id ? 'Requisito A' : 'Requisito B');
+      expect(stored?.resuelto_por?.id).toBe(admin.id);
+    }
+    const suspensions = auditoriaTestRecords().filter((entry) => entry.accion === 'SUSPENDER_HABILITACION_INICIO');
+    expect(suspensions.map((entry) => entry.entidad_id).sort()).toEqual([firstRow.id, secondRow.id].sort());
+    expect(suspensions.find((entry) => entry.entidad_id === secondRow.id)).toMatchObject({
+      valores_anteriores: { estado: HabilitadoEstado.HABILITADO, situacion_ingreso: SituacionIngreso.PENDIENTE },
+      valores_nuevos: { estado: HabilitadoEstado.SUSPENDIDO, situacion_ingreso: SituacionIngreso.NO_ADMITIDO },
+    });
+    const startAudit = auditoriaTestRecords().find((entry) => entry.accion === 'INICIAR_TITULACION');
+    expect(startAudit?.valores_nuevos).toMatchObject({ estado: PeriodoEstado.EN_CURSO, condicionados_suspendidos: 2 });
+    // Mismos efectos que la NO_ADMISIÓN manual: anulación de la asignación vigente y aviso al estudiante.
+    expect(anular).toHaveBeenCalledTimes(2);
+    for (const student of [first, second]) {
+      expect(anular).toHaveBeenCalledWith(
+        expect.anything(), period.body.id, student.profile.body.id, expect.objectContaining({ id: admin.id }),
+        'Requisito no resuelto antes del inicio de titulación.', expect.any(String),
+      );
+    }
+    // Cada suspendido pierde además sus postulaciones pendientes y su pertenencia al grupo activo.
+    for (const effect of [cancelarPostulaciones, retirarGrupo]) {
+      expect(effect).toHaveBeenCalledTimes(2);
+      for (const student of [first, second]) {
+        expect(effect).toHaveBeenCalledWith(
+          expect.anything(), period.body.id, student.profile.body.id, expect.objectContaining({ id: admin.id }),
+          'Requisito no resuelto antes del inicio de titulación.', expect.any(String),
+        );
+      }
+    }
+    expect(cancelarPostulaciones.mock.invocationCallOrder.every((order, index) =>
+      order > anular.mock.invocationCallOrder[index]! && order < retirarGrupo.mock.invocationCallOrder[index]!)).toBe(true);
+    expect(avisosIngreso).toEqual(expect.arrayContaining([
+      { id: firstRow.id, actorId: admin.id, aviso: 'SUSPENSION_INICIO' },
+      { id: secondRow.id, actorId: admin.id, aviso: 'SUSPENSION_INICIO' },
+    ]));
+    expect(avisosIngreso.filter((entry) => entry.aviso === 'SUSPENSION_INICIO')).toHaveLength(2);
     await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
+  });
+
+  it('resuelve condicionados en BORRADOR, POSTULACION_ABIERTA y POSTULACION_CERRADA, pero no en EN_CURSO ni ARCHIVADO', async () => {
+    addAdmin();
+    const period = await createPeriod('RESOLVER-ESTADOS');
+    setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() + 60 * 60_000));
+    const students = [
+      await createStudentProfile('student-sub', '0102030400', 'RES-1'),
+      await createStudentProfile('other-student-sub', '0102030418', 'RES-2'),
+      await createStudentProfile('bootstrap-sub', '0102030426', 'RES-3'),
+      await createStudentProfile('inactive-sub', '0102030434', 'RES-4'),
+    ];
+    const pending = [];
+    for (const student of students) {
+      pending.push(await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+        .send({ estudiante_id: student.profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito' })
+        .expect(201));
+    }
+    const resolver = (id: string) => authenticated('post', `/periodos/${period.body.id}/habilitados/${id}/resolver-ingreso`, 'admin-sub');
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_ABIERTA);
+    await resolver(pending[0].body.id).send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    await resolver(pending[1].body.id).send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.EN_CURSO);
+    const enCurso = await resolver(pending[2].body.id).send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(409);
+    expect(enCurso.body.message).toContain('EN_CURSO');
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    const archivado = await resolver(pending[3].body.id)
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'Fuera de plazo' }).expect(409);
+    expect(archivado.body.message).toContain('ARCHIVADO');
+    expect(habilitadosTestRecords().filter((row) => row.situacion_ingreso === SituacionIngreso.PENDIENTE)).toHaveLength(2);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: students[0].profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR }).expect(409);
   });
 
   it('permite iniciar cuando todos los condicionados fueron admitidos antes de la fecha', async () => {

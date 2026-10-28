@@ -160,12 +160,15 @@ export class HabilitadosController {
   @Post(':id/resolver-ingreso')
   @HttpCode(200)
   @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Resolver el ingreso de un estudiante condicionado pendiente' })
+  @ApiOperation({
+    summary: 'Resolver el ingreso de un estudiante condicionado pendiente',
+    description: 'Permitido en BORRADOR, POSTULACION_ABIERTA y POSTULACION_CERRADA. ADMITIDO solo antes de la fecha de inicio de titulación; NO_ADMITIDO tardío requiere POSTULACION_CERRADA.',
+  })
   @ApiOkResponse({ type: HabilitadoResponseDto })
   @ApiBadRequestResponse({ description: 'Situación u observación inválida.' })
   @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
   @ApiNotFoundResponse({ description: 'No existe la habilitación en el período indicado.' })
-  @ApiConflictResponse({ description: 'El período no está en BORRADOR o el ingreso ya fue resuelto.' })
+  @ApiConflictResponse({ description: 'El período ya inició la titulación (EN_CURSO) o está ARCHIVADO, la fecha de inicio impide la resolución o el ingreso ya fue resuelto.' })
   resolve(
     @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
     @Param('id', new ParseUUIDPipe()) id: string,

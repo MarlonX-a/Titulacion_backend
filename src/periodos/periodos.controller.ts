@@ -160,11 +160,14 @@ export class PeriodosController {
 
   @Post(':id/iniciar-titulacion')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Iniciar formalmente la titulación tras resolver los condicionados' })
+  @ApiOperation({
+    summary: 'Iniciar formalmente la titulación',
+    description: 'Los condicionados que sigan pendientes quedan SUSPENDIDO y NO_ADMITIDO en la misma transacción, con auditoría individual.',
+  })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({ description: 'El identificador es inválido o el cuerpo tiene propiedades no permitidas.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El estado, la fecha o los condicionados pendientes impiden iniciar.' })
+  @ApiConflictResponse({ description: 'El período no está en POSTULACION_CERRADA, la fecha de inicio no ha llegado o hubo una actualización concurrente.' })
   iniciarTitulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: AbrirPostulacionDto,

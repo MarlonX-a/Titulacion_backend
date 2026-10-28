@@ -5,6 +5,7 @@ import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { InicioTitulacionService } from '../periodos/inicio-titulacion.service.js';
+import type { HabilitadosService } from '../habilitados/habilitados.service.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
@@ -179,7 +180,9 @@ async function verify(): Promise<void> {
   const failingAudit = {
     registrar: async () => { throw new Error('fallo de auditoría provocado'); },
   } as unknown as AuditoriaService;
-  const startService = new InicioTitulacionService(isolatedDataSource, failingAudit);
+  // Este esquema temporal no instala asignaciones ni notificaciones; la verificación se centra en el rollback.
+  const noAdmisionSinEfectos = { aplicarNoAdmision: async () => undefined } as unknown as HabilitadosService;
+  const startService = new InicioTitulacionService(isolatedDataSource, failingAudit, noAdmisionSinEfectos);
   try {
     await startService.iniciar(rollbackPeriod, { id: adminRows[0].id } as Usuario, null);
     throw new Error('El inicio persistió a pesar del fallo de auditoría.');

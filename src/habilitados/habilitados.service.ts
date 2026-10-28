@@ -29,9 +29,18 @@ import { HabilitadoEstado } from './enums/habilitado-estado.enum.js';
 import { HabilitadoOrigen } from './enums/habilitado-origen.enum.js';
 import { SituacionIngreso } from './enums/situacion-ingreso.enum.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
-import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionesPersistenciaService, type AvisoIngreso } from '../notificaciones/notificaciones-persistencia.service.js';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 
 interface PostgresDriverError { code?: string; }
+
+/** Identificadores de una habilitación que acaba de quedar NO_ADMITIDO. */
+export interface HabilitacionNoAdmitida {
+  id: string;
+  periodoId: string;
+  estudianteId: string;
+}
 
 export interface PagedHabilitados {
   data: HabilitadoResponseDto[];
@@ -79,6 +88,8 @@ export class HabilitadosService {
     private readonly auditoria: AuditoriaService,
     private readonly asignaciones: AsignacionTemaPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
+    private readonly postulaciones: PostulacionPersistenciaService,
+    private readonly grupos: GrupoIntegrantePersistenciaService,
   ) {}
 
   /** Comprueba y bloquea una habilitación para una operación de grupo dentro de la transacción actual. */
@@ -272,7 +283,7 @@ export class HabilitadosService {
         });
         if (!period) throw new NotFoundException('No existe el período indicado.');
         if (period.estado !== PeriodoEstado.BORRADOR && period.estado !== PeriodoEstado.POSTULACION_ABIERTA && period.estado !== PeriodoEstado.POSTULACION_CERRADA) {
-          throw new ConflictException('Solo se pueden resolver condicionados antes de iniciar la titulación.');
+          throw new ConflictException(`No se pueden resolver condicionados en un período ${period.estado}: solo se permite en BORRADOR, POSTULACION_ABIERTA o POSTULACION_CERRADA.`);
         }
         const now = new Date();
         const lateNoAdmission = dto.situacion_ingreso === SituacionIngreso.NO_ADMITIDO && period.estado === PeriodoEstado.POSTULACION_CERRADA;
@@ -302,21 +313,49 @@ export class HabilitadosService {
         record.resuelto_por = actor;
         record.observacion_ingreso = dto.observacion_ingreso?.trim() || null;
         const updated = await repository.save(record);
-        if (updated.situacion_ingreso === SituacionIngreso.NO_ADMITIDO) {
-          await this.asignaciones.anularPorIncumplimiento(manager, periodoId, updated.estudiante.id, actor, updated.observacion_ingreso!, ip);
-        }
         await this.auditoria.registrar(manager, { actor, accion: 'RESOLVER_INGRESO', entidad_tipo: 'estudiante_habilitado', entidad_id: record.id, valores_anteriores: previous, valores_nuevos: {
           situacion_ingreso: updated.situacion_ingreso,
           fecha_resolucion_ingreso: updated.fecha_resolucion_ingreso,
           resuelto_por_id: actor.id,
           observacion_ingreso: updated.observacion_ingreso,
         }, ip_origen: ip });
-        await this.notificaciones.ingreso(manager, record.id, actor.id);
+        if (updated.situacion_ingreso === SituacionIngreso.NO_ADMITIDO) {
+          await this.aplicarNoAdmision(manager, { id: updated.id, periodoId, estudianteId: updated.estudiante.id }, actor, ip, updated.observacion_ingreso!, 'RESOLUCION');
+        } else {
+          await this.notificaciones.ingreso(manager, record.id, actor.id);
+        }
         return responseFrom(updated);
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
+  }
+
+  /**
+   * Efectos de una habilitación que ya quedó NO_ADMITIDO dentro de la transacción del llamador, en
+   * este orden:
+   * 1. anula la asignación de tema vigente del estudiante (tutor, postulación ACEPTADA y tema);
+   * 2. cancela sus postulaciones PENDIENTE del período, individual y del grupo al que pertenece
+   *    (los participantes activos reciben POSTULACION_CANCELADA antes del retiro);
+   * 3. lo retira de su grupo activo (traspaso de representación o disolución incluidos), salvo que
+   *    la composición del grupo esté cerrada por una postulación;
+   * 4. registra la notificación de ingreso, cuyo correo se entrega de forma asíncrona.
+   * Lo comparten la resolución manual y la suspensión automática al iniciar la titulación.
+   * El llamador debe haber bloqueado antes el período y la habilitación; el bloqueo del período
+   * serializa estos efectos con la gestión de grupos y postulaciones.
+   */
+  async aplicarNoAdmision(
+    manager: EntityManager,
+    habilitacion: HabilitacionNoAdmitida,
+    actor: Usuario,
+    ip: string | null,
+    motivo: string,
+    aviso: AvisoIngreso,
+  ): Promise<void> {
+    await this.asignaciones.anularPorIncumplimiento(manager, habilitacion.periodoId, habilitacion.estudianteId, actor, motivo, ip);
+    await this.postulaciones.cancelarPendientesPorNoAdmision(manager, habilitacion.periodoId, habilitacion.estudianteId, actor, motivo, ip);
+    await this.grupos.retirarPorNoAdmision(manager, habilitacion.periodoId, habilitacion.estudianteId, actor, motivo, ip);
+    await this.notificaciones.ingreso(manager, habilitacion.id, actor.id, aviso);
   }
 
   /**

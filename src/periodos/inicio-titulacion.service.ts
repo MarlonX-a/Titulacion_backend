@@ -7,11 +7,16 @@ import {
 } from '@nestjs/common';
 import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { HabilitadosService } from '../habilitados/habilitados.service.js';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+import { HabilitadoEstado } from '../habilitados/enums/habilitado-estado.enum.js';
+import { SituacionIngreso } from '../habilitados/enums/situacion-ingreso.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
+
+const OBSERVACION_SUSPENSION_INICIO = 'Requisito no resuelto antes del inicio de titulación.';
 
 interface PostgresError { code?: string; }
 
@@ -44,6 +49,7 @@ export class InicioTitulacionService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
+    private readonly habilitados: HabilitadosService,
   ) {}
 
   async iniciar(
@@ -73,17 +79,58 @@ export class InicioTitulacionService {
         // Las consultas crudas no heredan el esquema de las entidades; se califica explícitamente.
         const schema = schemaOf(manager);
         const pendingRows = await manager.query(
-          `SELECT "id" FROM ${schema}."estudiante_habilitado"
+          `SELECT "id", "estado", "estudiante_id" FROM ${schema}."estudiante_habilitado"
            WHERE "periodo_id" = $1
              AND "condicion_ingreso" = 'CONDICIONADO'
              AND "situacion_ingreso" = 'PENDIENTE'
-           ORDER BY "id" ASC`,
+           ORDER BY "id" ASC
+           FOR UPDATE`,
           [id],
-        ) as Array<{ id: string }>;
+        ) as Array<{ id: string; estado: string; estudiante_id: string }>;
+
+        // Los condicionados sin resolver al inicio quedan suspendidos y no admitidos;
+        // se actualizan antes del cambio de estado para cumplir el trigger del período.
+        // Cada uno recibe los mismos efectos que una NO_ADMISIÓN manual (anulación de su
+        // asignación vigente y notificación) mientras el período sigue en POSTULACION_CERRADA.
         if (pendingRows.length > 0) {
-          throw new ConflictException(
-            `No se puede iniciar el período: existen ${pendingRows.length} estudiantes condicionados pendientes de resolución.`,
+          await manager.query(
+            `UPDATE ${schema}."estudiante_habilitado"
+             SET "estado" = 'SUSPENDIDO',
+                 "situacion_ingreso" = 'NO_ADMITIDO',
+                 "fecha_resolucion_ingreso" = $2,
+                 "resuelto_por_id" = $3,
+                 "observacion_ingreso" = $4
+             WHERE "id" = ANY($1::uuid[])
+               AND "periodo_id" = $5
+               AND "condicion_ingreso" = 'CONDICIONADO'
+               AND "situacion_ingreso" = 'PENDIENTE'`,
+            [pendingRows.map((row) => row.id), now, actor.id, OBSERVACION_SUSPENSION_INICIO, id],
           );
+          for (const row of pendingRows) {
+            await this.auditoria.registrar(manager, {
+              actor,
+              accion: 'SUSPENDER_HABILITACION_INICIO',
+              entidad_tipo: 'estudiante_habilitado',
+              entidad_id: row.id,
+              valores_anteriores: { estado: row.estado, situacion_ingreso: SituacionIngreso.PENDIENTE },
+              valores_nuevos: {
+                estado: HabilitadoEstado.SUSPENDIDO,
+                situacion_ingreso: SituacionIngreso.NO_ADMITIDO,
+                fecha_resolucion_ingreso: now,
+                resuelto_por_id: actor.id,
+                observacion_ingreso: OBSERVACION_SUSPENSION_INICIO,
+              },
+              ip_origen: ip,
+            });
+            await this.habilitados.aplicarNoAdmision(
+              manager,
+              { id: row.id, periodoId: id, estudianteId: row.estudiante_id },
+              actor,
+              ip,
+              OBSERVACION_SUSPENSION_INICIO,
+              'SUSPENSION_INICIO',
+            );
+          }
         }
 
         current.estado = PeriodoEstado.EN_CURSO;
@@ -94,7 +141,11 @@ export class InicioTitulacionService {
           entidad_tipo: 'periodo_titulacion',
           entidad_id: current.id,
           valores_anteriores: { estado: PeriodoEstado.POSTULACION_CERRADA },
-          valores_nuevos: { estado: PeriodoEstado.EN_CURSO, fecha_inicio_titulacion: now },
+          valores_nuevos: {
+            estado: PeriodoEstado.EN_CURSO,
+            fecha_inicio_titulacion: now,
+            condicionados_suspendidos: pendingRows.length,
+          },
           ip_origen: ip,
         });
         return updated;

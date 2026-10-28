@@ -16,6 +16,7 @@ import { GrupoEstado } from './enums/grupo-estado.enum.js';
 import { GrupoIntegranteEstado } from './enums/grupo-integrante-estado.enum.js';
 import { GrupoIntegranteRol } from './enums/grupo-integrante-rol.enum.js';
 import { GruposService } from './grupos.service.js';
+import { GrupoIntegrantePersistenciaService } from './grupo-integrante-persistencia.service.js';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
 
 interface DriverError { code?: string; }
@@ -29,6 +30,7 @@ export class GrupoGestionService {
     private readonly auditoria: AuditoriaService,
     private readonly invitaciones: InvitacionPersistenciaService,
     private readonly postulaciones: PostulacionPersistenciaService,
+    private readonly pertenencia: GrupoIntegrantePersistenciaService,
   ) {}
 
   async salir(periodoId: string, grupoId: string, actor: Usuario, dto: MotivoGrupoDto, ip: string | null): Promise<GrupoResponseDto> {
@@ -47,7 +49,7 @@ export class GrupoGestionService {
         const now = new Date();
         this.assertPeriodWindow(period, false, now);
         await this.retireMember(manager, member, dto.motivo, now);
-        const nextState = members.length === 1 ? GrupoEstado.DISUELTO : members.length === 2 ? GrupoEstado.EN_CONFORMACION : group.estado;
+        const nextState = this.pertenencia.nextStateAfterLeaving(group, members.length - 1);
         await this.updateGroupState(manager, group, nextState, actor, ip, 'SALIR_GRUPO', dto.motivo);
         await this.auditMember(manager, actor, 'SALIR_GRUPO', member, GrupoIntegranteEstado.ACTIVO, ip, dto.motivo);
         if (nextState === GrupoEstado.DISUELTO) await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, dto.motivo, ip, 'DISOLVER_GRUPO');
@@ -118,7 +120,7 @@ export class GrupoGestionService {
         }
         await this.retireMember(manager, target, dto.motivo, now);
         const remaining = members.length - 1;
-        const nextState = remaining === 0 ? GrupoEstado.DISUELTO : remaining === 1 ? GrupoEstado.EN_CONFORMACION : group.estado;
+        const nextState = this.pertenencia.nextStateAfterLeaving(group, remaining);
         await this.updateGroupState(manager, group, nextState, actor, ip, 'RETIRAR_INTEGRANTE_GRUPO', dto.motivo);
         await this.auditMember(manager, actor, 'RETIRAR_INTEGRANTE_GRUPO', target, GrupoIntegranteEstado.ACTIVO, ip, dto.motivo, previousRole);
         if (nextState === GrupoEstado.DISUELTO) await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, dto.motivo, ip, 'DISOLVER_GRUPO');
@@ -177,28 +179,19 @@ export class GrupoGestionService {
   }
 
   private lockActiveMembers(manager: EntityManager, groupId: string): Promise<GrupoIntegrante[]> {
-    return manager.getRepository(GrupoIntegrante).createQueryBuilder('m').innerJoinAndSelect('m.estudiante', 'e')
-      .where('m.grupo_id = :groupId AND m.estado = :state', { groupId, state: GrupoIntegranteEstado.ACTIVO })
-      .orderBy('m.estudiante_id', 'ASC').addOrderBy('m.id', 'ASC').setLock('pessimistic_write').getMany();
+    return this.pertenencia.lockActiveMembers(manager, groupId);
   }
 
-  private async retireMember(manager: EntityManager, member: GrupoIntegrante, reason: string, at: Date): Promise<void> {
-    member.estado = GrupoIntegranteEstado.RETIRADO;
-    member.fecha_salida = at;
-    member.motivo_salida = reason.trim();
-    await manager.getRepository(GrupoIntegrante).save(member);
+  private retireMember(manager: EntityManager, member: GrupoIntegrante, reason: string, at: Date): Promise<void> {
+    return this.pertenencia.retireMember(manager, member, reason, at);
   }
 
-  private async updateGroupState(manager: EntityManager, group: Grupo, state: GrupoEstado, actor: Usuario, ip: string | null, action: string, reason: string): Promise<void> {
-    if (group.estado === state) return;
-    const previous = group.estado;
-    group.estado = state;
-    await manager.getRepository(Grupo).save(group);
-    await this.auditoria.registrar(manager, { actor, accion: action, entidad_tipo: 'grupo', entidad_id: group.id, valores_anteriores: { estado: previous }, valores_nuevos: { estado: state, motivo: reason.trim() }, ip_origen: ip });
+  private updateGroupState(manager: EntityManager, group: Grupo, state: GrupoEstado, actor: Usuario, ip: string | null, action: string, reason: string): Promise<void> {
+    return this.pertenencia.updateGroupState(manager, group, state, actor, ip, action, reason);
   }
 
-  private async auditMember(manager: EntityManager, actor: Usuario, action: string, member: GrupoIntegrante, previousState: GrupoIntegranteEstado, ip: string | null, reason: string, previousRole: GrupoIntegranteRol = member.rol_en_grupo): Promise<void> {
-    await this.auditoria.registrar(manager, { actor, accion: action, entidad_tipo: 'grupo_integrante', entidad_id: member.id, valores_anteriores: { estado: previousState, rol_en_grupo: previousRole }, valores_nuevos: { estado: member.estado, rol_en_grupo: member.rol_en_grupo, fecha_salida: member.fecha_salida, motivo_salida: member.motivo_salida ?? reason.trim() }, ip_origen: ip });
+  private auditMember(manager: EntityManager, actor: Usuario, action: string, member: GrupoIntegrante, previousState: GrupoIntegranteEstado, ip: string | null, reason: string, previousRole: GrupoIntegranteRol = member.rol_en_grupo): Promise<void> {
+    return this.pertenencia.auditMember(manager, actor, action, member, previousState, ip, reason, previousRole);
   }
 
   private handleDatabaseError(error: unknown): never {

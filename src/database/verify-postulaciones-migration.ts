@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { HttpException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
@@ -18,6 +19,9 @@ import { LoteImportacion } from '../importaciones/entities/lote-importacion.enti
 import { LineaInvestigacion } from '../lineas-investigacion/entities/linea-investigacion.entity.js';
 import { Grupo } from '../grupos/entities/grupo.entity.js';
 import { GrupoIntegrante } from '../grupos/entities/grupo-integrante.entity.js';
+import { GrupoEstado } from '../grupos/enums/grupo-estado.enum.js';
+import { GrupoIntegranteEstado } from '../grupos/enums/grupo-integrante-estado.enum.js';
+import { GrupoIntegranteRol } from '../grupos/enums/grupo-integrante-rol.enum.js';
 import { GruposService } from '../grupos/grupos.service.js';
 import { GrupoGestionService } from '../grupos/grupo-gestion.service.js';
 import { CreateGrupoDto } from '../grupos/dto/create-grupo.dto.js';
@@ -31,6 +35,7 @@ import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-C
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { CreateTutoresPropuestos20261002090000 } from './migrations/20261002090000-CreateTutoresPropuestos.js';
 import { CreateAsignacionesTema20261002110000 } from './migrations/20261002110000-CreateAsignacionesTema.js';
+import { AllowRetiroNoAdmitidoConPostulacion20261019100000 } from './migrations/20261019100000-AllowRetiroNoAdmitidoConPostulacion.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { CreateGruposInvitaciones20261002060000 } from './migrations/20261002060000-CreateGruposInvitaciones.js';
 import { GroupIntegrityLifecycle20261002070000 } from './migrations/20261002070000-GroupIntegrityLifecycle.js';
@@ -81,13 +86,13 @@ async function verify(): Promise<void> {
   await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`);
   createdSchema = true;
-  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, Grupo, GrupoIntegrante, Invitacion, Postulacion, TutorPropuesto, AsignacionTema], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateAsignacionesTema20261002110000] });
+  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, TemaHistorial, Grupo, GrupoIntegrante, Invitacion, Postulacion, TutorPropuesto, AsignacionTema], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateAsignacionesTema20261002110000, AllowRetiroNoAdmitidoConPostulacion20261019100000] });
   await isolated.initialize();
   await isolated.runMigrations({ transaction: 'all' });
 
   step = 'preparación de identidades elegibles';
   const userRepo = isolated.getRepository(Usuario);
-  await userRepo.save(userRepo.create({ email: 'admin@postulaciones.verify', nombres: 'Admin', apellidos: 'Verificador', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-admin', ultimo_acceso: null }));
+  const adminUser = await userRepo.save(userRepo.create({ email: 'admin@postulaciones.verify', nombres: 'Admin', apellidos: 'Verificador', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-admin', ultimo_acceso: null }));
   const teacherUser = await userRepo.save(userRepo.create({ email: 'docente@postulaciones.verify', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente', ultimo_acceso: null }));
   const teacherRepo = isolated.getRepository(Docente);
   const teacher = await teacherRepo.save(teacherRepo.create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true }));
@@ -116,15 +121,16 @@ async function verify(): Promise<void> {
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
   const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications);
-  const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence, notifications);
+  const persistence = new PostulacionPersistenciaService(audit, notifications);
+  const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
+  const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence, notifications, persistence, groupMembership);
   const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit);
   const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);
-  const persistence = new PostulacionPersistenciaService();
   const invitePersistence = new InvitacionPersistenciaService(audit, notifications);
   const groups = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), studentRepo, isolated, habilitados, audit, persistence);
-  const groupManagement = new GrupoGestionService(isolated, groups, habilitados, audit, invitePersistence, persistence);
+  const groupManagement = new GrupoGestionService(isolated, groups, habilitados, audit, invitePersistence, persistence, groupMembership);
   const invitations = new InvitacionesService(isolated.getRepository(Invitacion), studentRepo, isolated, groups, habilitados, audit, persistence, notifications);
-  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence, notifications);
+  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence, notifications, persistence);
 
   step = 'postulación antigua sin preferencias y carga única';
   await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" DISABLE TRIGGER "TRG_postulacion_requiere_tutores"`);
@@ -234,6 +240,30 @@ async function verify(): Promise<void> {
   const outsideRange = await isolated.query(`INSERT INTO ${schemaSql()}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id") VALUES ($1,$2,$3,2,$4)`, [topic.id, period.id, students[0]!.id, studentUsers[0]!.id]).then(() => false, (error: unknown) => code(error) === '23505' || code(error) === '23514');
   if (!outsideRange) throw new Error('Una inserción incompatible evadió las restricciones de postulaciones.');
 
+  step = 'retiro por no admisión con la composición cerrada';
+  const resolveIngreso = (studentId: string, situacion: SituacionIngreso) => isolated!.query(`UPDATE ${schemaSql()}."estudiante_habilitado" SET "situacion_ingreso"=$3, "fecha_resolucion_ingreso"=CURRENT_TIMESTAMP, "resuelto_por_id"=$4 WHERE "periodo_id"=$1 AND "estudiante_id"=$2`, [period.id, studentId, situacion, adminUser.id]);
+  const retireRaw = (studentId: string, extra = '') => isolated!.query(`UPDATE ${schemaSql()}."grupo_integrante" SET "estado"='RETIRADO', "fecha_salida"=CURRENT_TIMESTAMP, "motivo_salida"='verificación'${extra} WHERE "grupo_id"=$1 AND "estudiante_id"=$2`, [group.id, studentId]).then(() => 'ok', (error: unknown) => code(error) ?? 'error');
+  await resolveIngreso(students[1]!.id, SituacionIngreso.ADMITIDO);
+  const admittedRetire = await retireRaw(students[1]!.id);
+  if (admittedRetire !== '23514') throw new Error(`El trigger permitió retirar a un integrante ADMITIDO de un grupo con postulación (${admittedRetire}).`);
+  await resolveIngreso(students[0]!.id, SituacionIngreso.NO_ADMITIDO);
+  const otherFieldsRetire = await retireRaw(students[0]!.id, `, "fecha_ingreso"="fecha_ingreso" - interval '1 day'`);
+  if (otherFieldsRetire !== '23514') throw new Error(`El trigger permitió cambiar otros campos al retirar a un integrante NO_ADMITIDO (${otherFieldsRetire}).`);
+  const deleteNoAdmitido = await isolated.query(`DELETE FROM ${schemaSql()}."grupo_integrante" WHERE "grupo_id"=$1 AND "estudiante_id"=$2`, [group.id, students[0]!.id]).then(() => 'ok', (error: unknown) => code(error) ?? 'error');
+  if (deleteNoAdmitido !== '23514') throw new Error(`El trigger permitió eliminar la pertenencia de un integrante NO_ADMITIDO (${deleteNoAdmitido}).`);
+  const activeBefore = await isolated.getRepository(GrupoIntegrante).count({ where: { grupo: { id: group.id }, estado: GrupoIntegranteEstado.ACTIVO } });
+  const withdrawal = await isolated.transaction((manager) => groupMembership.retirarPorNoAdmision(manager, period.id, students[0]!.id, adminUser, 'No admitido en verificación', null));
+  if (withdrawal.resultado !== 'RETIRADO' || withdrawal.nuevoRepresentanteId !== students[1]!.id) throw new Error('El retiro por no admisión no se completó con el traspaso de representación esperado.');
+  const expectedState = activeBefore - 1 === 1 ? GrupoEstado.EN_CONFORMACION : GrupoEstado.ACTIVO;
+  if (withdrawal.grupoEstado !== expectedState || (await isolated.getRepository(Grupo).findOneByOrFail({ id: group.id })).estado !== expectedState) throw new Error('El grupo no quedó en el estado esperado tras el retiro por no admisión.');
+  const withdrawnRows = await isolated.query(`SELECT "estudiante_id", "estado", "rol_en_grupo", "fecha_salida" FROM ${schemaSql()}."grupo_integrante" WHERE "grupo_id"=$1 AND "estudiante_id" IN ($2,$3)`, [group.id, students[0]!.id, students[1]!.id]) as Array<{ estudiante_id: string; estado: string; rol_en_grupo: string; fecha_salida: Date | null }>;
+  const withdrawn = withdrawnRows.find((row) => row.estudiante_id === students[0]!.id);
+  const promoted = withdrawnRows.find((row) => row.estudiante_id === students[1]!.id);
+  if (withdrawn?.estado !== GrupoIntegranteEstado.RETIRADO || !withdrawn.fecha_salida || promoted?.estado !== GrupoIntegranteEstado.ACTIVO || promoted.rol_en_grupo !== GrupoIntegranteRol.REPRESENTANTE) throw new Error('La pertenencia no refleja el retiro NO_ADMITIDO ni el nuevo representante.');
+  if (!(await persistence.grupoTienePostulaciones(isolated.manager, group.id))) throw new Error('El retiro por no admisión se verificó sin postulaciones en el grupo.');
+  const admittedStillBlocked = await retireRaw(students[1]!.id);
+  if (admittedStillBlocked !== '23514') throw new Error(`Tras el retiro NO_ADMITIDO, el trigger dejó de proteger al integrante ADMITIDO (${admittedStillBlocked}).`);
+
   step = 'reversión protegida y auditoría';
   const auditCount = await isolated.getRepository(Auditoria).count();
   if (auditCount < 5) throw new Error('Faltan auditorías de altas/cancelaciones de postulaciones e invitaciones.');
@@ -243,7 +273,7 @@ async function verify(): Promise<void> {
   const revertRejected = await migration.down(revertRunner).then(() => false, async (error: unknown) => { await revertRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('contiene registros'); });
   if (revertRunner.isTransactionActive) await revertRunner.rollbackTransaction(); await revertRunner.release();
   if (!revertRejected) throw new Error('La migración permitió eliminar postulaciones con historial.');
-  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, restricciones de tutores y reversión protegida.');
+  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, retiro NO_ADMITIDO con postulación, restricciones de tutores y reversión protegida.');
 }
 
 try { await verify(); }

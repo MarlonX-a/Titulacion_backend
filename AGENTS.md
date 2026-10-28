@@ -366,7 +366,64 @@ Estados de situación de ingreso:
 - ADMITIDO
 - NO_ADMITIDO
 
-No iniciar el período de titulación mientras existan condicionados pendientes cuando la regla correspondiente lo impida.
+La resolución del ingreso de un condicionado (`resolver-ingreso`) se permite con el
+período en BORRADOR, POSTULACION_ABIERTA o POSTULACION_CERRADA y se rechaza en
+EN_CURSO y ARCHIVADO. Se conserva la regla de fecha: ADMITIDO solo antes de
+`fecha_inicio_titulacion`; un NO_ADMITIDO posterior a esa fecha requiere
+POSTULACION_CERRADA. Las altas de habilitaciones siguen limitadas a BORRADOR.
+
+Los condicionados pendientes no bloquean el inicio de titulación. Al iniciar,
+en la misma transacción SERIALIZABLE y antes de pasar el período a EN_CURSO,
+cada habilitación CONDICIONADO/PENDIENTE del período (bloqueada con
+`ORDER BY id FOR UPDATE`) queda SUSPENDIDO/NO_ADMITIDO, con
+`fecha_resolucion_ingreso`, `resuelto_por` del actor y la observación
+«Requisito no resuelto antes del inicio de titulación.»; se conservan la
+condición y el requisito. Cada suspensión se audita como
+`SUSPENDER_HABILITACION_INICIO` y la auditoría `INICIAR_TITULACION` incluye
+`condicionados_suspendidos`. Cada suspendido recibe además los mismos efectos que
+una NO_ADMISIÓN manual (`HabilitadosService.aplicarNoAdmision`) y notificación
+`INGRESO_RESUELTO` en app y correo asíncrono que explica la suspensión. El trigger de PostgreSQL sigue impidiendo un
+período EN_CURSO con condicionados pendientes.
+
+Efectos de toda NO_ADMISIÓN (manual o al iniciar), en la transacción que ya
+bloqueó período y habilitación y en este orden:
+
+1. `AsignacionTemaPersistenciaService.anularPorIncumplimiento`: asignación
+   VIGENTE → ANULADA, tutor terminado, postulación ACEPTADA → ANULADA, tema
+   republicado y aviso `TEMA_ANULADO`.
+2. `PostulacionPersistenciaService.cancelarPendientesPorNoAdmision`: bloquea el
+   grupo activo del estudiante y luego sus postulaciones; las PENDIENTE
+   individuales y del grupo pasan a CANCELADA con el motivo como observación,
+   auditoría `CANCELAR_POSTULACION_NO_ADMISION` y aviso
+   `POSTULACION_CANCELADA` a los participantes activos. Una postulación grupal
+   se cancela aunque el tema admita el nuevo tamaño, porque congela
+   `num_integrantes` y exige participantes elegibles. EN_CONFLICTO no tiene
+   transición a CANCELADA en PostgreSQL y hoy ningún flujo la produce; ACEPTADA
+   la resuelve el paso 1.
+3. `GrupoIntegrantePersistenciaService.retirarPorNoAdmision`: su pertenencia
+   ACTIVO pasa a RETIRADO con `fecha_salida` y `motivo_salida` (auditoría
+   `RETIRAR_INTEGRANTE_NO_ADMISION`). Si era representante, el cargo pasa a otro
+   integrante activo (elegibles primero, ADMITIDO antes que PENDIENTE, luego
+   antigüedad) con auditoría `CAMBIAR_REPRESENTANTE` y resolución de las
+   invitaciones pendientes del grupo; el grupo queda EN_CONFORMACION con un
+   integrante o DISUELTO sin integrantes (invitaciones pendientes resueltas).
+   Es una acción administrativa: no aplica la ventana de plazo de
+   `GrupoGestionService`. También aplica si el grupo ya tiene postulaciones
+   (incluso CANCELADA): desde la migración `20261019100000` el trigger
+   `proteger_composicion_postulacion` admite, como única excepción a la
+   composición cerrada, el UPDATE ACTIVO → RETIRADO con `fecha_salida` que no
+   cambia `grupo_id`, `periodo_id`, `estudiante_id` ni `fecha_ingreso`, cuando la
+   habilitación del integrante está NO_ADMITIDO. El traspaso de representante
+   (solo `rol_en_grupo`) ya era admitido porque no altera la composición; los
+   cambios de estado del grupo y de invitaciones no están sujetos a ese trigger.
+   Cualquier otro cambio (retirar a un ADMITIDO/PENDIENTE, altas, bajas físicas o
+   alterar otros campos) sigue rechazado con 23514.
+4. Notificación `INGRESO_RESUELTO`.
+
+No existe un tipo de notificación propio para «integrante retirado»; los demás
+integrantes se enteran por `POSTULACION_CANCELADA` e invitaciones canceladas.
+Las invitaciones pendientes dirigidas al estudiante en otros grupos no se
+cancelan (la aceptación ya exige una habilitación elegible).
 
 ---
 

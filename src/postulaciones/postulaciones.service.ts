@@ -28,6 +28,7 @@ import { TutoresPropuestosService } from './tutores-propuestos.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
+import { PostulacionPersistenciaService } from './postulacion-persistencia.service.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, tema: { linea: true, docente_proponente: { usuario: true } }, grupo: true, estudiante: { usuario: true }, registrada_por: true } as const;
@@ -45,6 +46,7 @@ export class PostulacionesService {
     private readonly tutores: TutoresPropuestosService,
     private readonly asignaciones: AsignacionTemaPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
+    private readonly persistencia: PostulacionPersistenciaService,
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreatePostulacionDto, ip: string | null): Promise<PostulacionResponseDto> {
@@ -164,11 +166,7 @@ export class PostulacionesService {
             if (!representative) throw new NotFoundException('No existe esa postulación visible para el usuario.');
           }
         }
-        const before = { estado: item.estado, observacion: item.observacion };
-        item.estado = EstadoPostulacion.CANCELADA; item.observacion = dto.motivo.trim();
-        await repo.save(item);
-        await this.auditoria.registrar(manager, { actor, accion: 'CANCELAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: before, valores_nuevos: { estado: item.estado, observacion: item.observacion }, ip_origen: ip });
-        await this.notificaciones.postulacion(manager, item.id, NotificacionTipo.POSTULACION_CANCELADA, actor.id);
+        await this.persistencia.cancelar(manager, item, actor, dto.motivo, ip);
       });
       return this.getRecord(periodoId, id);
     } catch (error: unknown) { this.handleDatabaseError(error); }

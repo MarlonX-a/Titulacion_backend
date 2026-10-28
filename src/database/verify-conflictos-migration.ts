@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
+import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { HttpException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QueryFailedError } from 'typeorm';
@@ -21,6 +24,7 @@ import { CreateRevisionesPat20261012100000 } from './migrations/20261012100000-C
 import { CreateNotificaciones20261013100000 } from './migrations/20261013100000-CreateNotificaciones.js';
 import { EnforceNotificationEmailDelivery20261014100000 } from './migrations/20261014100000-EnforceNotificationEmailDelivery.js';
 import { ExtendProcessNotifications20261015100000 } from './migrations/20261015100000-ExtendProcessNotifications.js';
+import { AllowRetiroNoAdmitidoConPostulacion20261019100000 } from './migrations/20261019100000-AllowRetiroNoAdmitidoConPostulacion.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { Notificacion } from '../notificaciones/entities/notificacion.entity.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
@@ -99,7 +103,7 @@ async function verify(): Promise<void> {
   const options = createDatabaseOptions(loadEnvironment());
   admin = new DatabaseDataSource({ ...options, schema: 'public', entities: [], migrations: [] }); await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`); createdSchema = true;
-  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000, CreateNotificaciones20261013100000, EnforceNotificationEmailDelivery20261014100000, ExtendProcessNotifications20261015100000];
+  const migrations = [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateConflictos20261002100000, CreateAsignacionesTema20261002110000, StrengthenAsignacionTemaIntegrity20261002120000, CreateCargaTutorial20261007100000, CreateAsignacionesTutor20261008100000, CreatePlantillasPat20261009100000, CreateDocumentosPat20261010100000, AlignDocumentosPatLockOrder20261011100000, CreateNotificaciones20261013100000, EnforceNotificationEmailDelivery20261014100000, ExtendProcessNotifications20261015100000, AllowRetiroNoAdmitidoConPostulacion20261019100000];
   isolated = new DatabaseDataSource({ ...options, schema, migrations }); await isolated.initialize(); await isolated.runMigrations({ transaction: 'all' });
 
   step = 'preparación de postulaciones concurrentes';
@@ -189,7 +193,7 @@ async function verify(): Promise<void> {
   const rejectedInvitationNotices = await isolated.query(`SELECT DISTINCT "usuario_id" FROM ${schemaSql()}."notificacion" WHERE "tipo"='INVITACION_RECHAZADA' AND "entidad_id"=$1`, [invitationForNotices.id]) as Array<{ usuario_id: string }>;
   if (rejectedInvitationNotices.length !== 1 || rejectedInvitationNotices[0]?.usuario_id !== students[3]!.usuario.id) throw new Error('El aviso de rechazo de invitación no llegó únicamente al emisor.');
   const assignmentPersistence = new AsignacionTemaPersistenciaService(assignmentAudit, new AsignacionTutorPersistenciaService(assignmentAudit), notificationPersistence);
-  const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence, notificationPersistence);
+  const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence, notificationPersistence, new PostulacionPersistenciaService(audit, notificationPersistence), new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notificationPersistence)));
   const assignmentsService = new AsignacionesTemaService(isolated.getRepository(AsignacionTema), isolated.getRepository(Estudiante), isolated, habilitadosService, audit, assignmentPersistence, notificationPersistence);
   const assignDto = { motivo: 'La comisión confirmó la evaluación y seleccionó la candidatura ganadora.' };
   const attempts = await Promise.allSettled([
@@ -427,7 +431,12 @@ async function verify(): Promise<void> {
   step = 'anulación completa de grupo condicionado';
   const groupHabilitation = await isolated.getRepository(EstudianteHabilitado).findOneByOrFail({ periodo: { id: period.id }, estudiante: { id: students[3]!.id } });
   await habilitadosService.resolve(period.id, groupHabilitation.id, adminUser, { situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'Incumplió la condición de ingreso.' }, null);
-  if (await isolated.getRepository(AsignacionTema).findOneByOrFail({ id: groupAssignment.id }).then((item) => item.estado) !== 'ANULADA' || await appRepo.findOneByOrFail({ id: groupApplication.id }).then((item) => item.estado) !== EstadoPostulacion.ANULADA || await isolated.getRepository(Tema).findOneByOrFail({ id: groupTopic.id }).then((item) => item.estado) !== EstadoTema.PUBLICADO || await isolated.getRepository(Grupo).findOneByOrFail({ id: group.id }).then((item) => item.estado) !== GrupoEstado.ACTIVO || await isolated.getRepository(GrupoIntegrante).countBy({ grupo: { id: group.id }, estado: GrupoIntegranteEstado.ACTIVO }) !== 2) throw new Error('NO_ADMITIDO no anuló toda la asignación grupal o alteró el historial de integrantes.');
+  if (await isolated.getRepository(AsignacionTema).findOneByOrFail({ id: groupAssignment.id }).then((item) => item.estado) !== 'ANULADA' || await appRepo.findOneByOrFail({ id: groupApplication.id }).then((item) => item.estado) !== EstadoPostulacion.ANULADA || await isolated.getRepository(Tema).findOneByOrFail({ id: groupTopic.id }).then((item) => item.estado) !== EstadoTema.PUBLICADO) throw new Error('NO_ADMITIDO no anuló toda la asignación grupal.');
+  // Aunque el grupo tiene postulaciones, el integrante NO_ADMITIDO se retira y el cargo pasa al que queda.
+  const groupMembersAfter = await isolated.getRepository(GrupoIntegrante).find({ where: { grupo: { id: group.id } }, relations: { estudiante: true } });
+  const retiredMember = groupMembersAfter.find((item) => item.estudiante.id === students[3]!.id);
+  const remainingMember = groupMembersAfter.find((item) => item.estudiante.id === students[4]!.id);
+  if (await isolated.getRepository(Grupo).findOneByOrFail({ id: group.id }).then((item) => item.estado) !== GrupoEstado.EN_CONFORMACION || retiredMember?.estado !== GrupoIntegranteEstado.RETIRADO || !retiredMember.fecha_salida || remainingMember?.estado !== GrupoIntegranteEstado.ACTIVO || remainingMember.rol_en_grupo !== GrupoIntegranteRol.REPRESENTANTE) throw new Error('NO_ADMITIDO no retiró al integrante del grupo con postulaciones ni traspasó la representación.');
   const historicalStudentAssignments = await assignmentsService.listMine(period.id, students[4]!.usuario, { page: 1, limit: 20, estado: AsignacionTemaEstado.ANULADA });
   if (historicalStudentAssignments.total !== 1 || historicalStudentAssignments.data[0]?.estado !== 'ANULADA') throw new Error('El estudiante no puede consultar la asignación grupal anulada como historial.');
 

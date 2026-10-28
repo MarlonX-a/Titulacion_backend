@@ -10,6 +10,7 @@ import { PeriodoTitulacion } from '../src/periodos/entities/periodo-titulacion.e
 import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
 import { EstudianteHabilitado } from '../src/habilitados/entities/estudiante-habilitado.entity.js';
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import { Auditoria } from '../src/auditoria/entities/auditoria.entity.js';
 import { HabilitadoOrigen } from '../src/habilitados/enums/habilitado-origen.enum.js';
 import { LineaInvestigacion } from '../src/lineas-investigacion/entities/linea-investigacion.entity.js';
@@ -529,11 +530,26 @@ export const usuarioTestDataSource = {
           }
           if (sql.includes('asignacion_tema')) return [];
           if (sql.includes('pg_advisory_xact_lock')) return [];
+          if (/UPDATE (?:"[a-z0-9_]+"\.)?"estudiante_habilitado"/.test(sql) && sql.includes('"estado" = \'SUSPENDIDO\'')) {
+            const [ids, fecha, actorId, observacion, periodoId] = parameters as [string[], Date, string, string, string];
+            const actor = records.find((record) => record.id === actorId) ?? ({ id: actorId } as Usuario);
+            for (const record of habilitadoRecords) {
+              if (!ids.includes(record.id) || record.periodo.id !== periodoId ||
+                record.condicion_ingreso !== 'CONDICIONADO' || record.situacion_ingreso !== 'PENDIENTE') continue;
+              record.estado = HabilitadoEstado.SUSPENDIDO;
+              record.situacion_ingreso = SituacionIngreso.NO_ADMITIDO;
+              record.fecha_resolucion_ingreso = fecha;
+              record.resuelto_por = actor;
+              record.observacion_ingreso = observacion;
+            }
+            return [];
+          }
           if (/FROM (?:"[a-z0-9_]+"\.)?"estudiante_habilitado"/.test(sql) && sql.includes('"situacion_ingreso" = \'PENDIENTE\'')) {
             return habilitadoRecords
               .filter((record) => record.periodo.id === parameters?.[0] &&
                 record.condicion_ingreso === 'CONDICIONADO' && record.situacion_ingreso === 'PENDIENTE')
-              .map((record) => ({ id: record.id }));
+              .sort((left, right) => left.id.localeCompare(right.id))
+              .map((record) => ({ id: record.id, estado: record.estado, estudiante_id: record.estudiante.id }));
           }
           return [];
         },
