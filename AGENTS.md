@@ -977,6 +977,15 @@ La auditoría contempla:
 - IP;
 - fecha/hora.
 
+Consulta: `GET /auditoria` (solo ADMIN, `AuditoriaConsultaService`, SQL parametrizado y
+calificado por esquema) pagina por `fecha_hora DESC, id DESC` con filtros `entidad_tipo`,
+`entidad_id`, `accion`, `usuario_id`, `desde`/`hasta` (una fecha sin hora en `hasta` incluye
+todo el día UTC) y `q` (ILIKE con comodines escapados sobre acción, tipo de entidad y correo del
+actor). Devuelve el `id` bigint como texto, IP y valores completos; como defensa en profundidad
+oculta claves con nombres de credenciales. Nunca auditar contraseñas, hashes, tokens ni claves
+temporales. Índices `IDX_auditoria_fecha_hora` e `IDX_auditoria_usuario` (migración
+`20261027100000`, `db:verify-auditoria`).
+
 No confundir:
 
 logs técnicos
