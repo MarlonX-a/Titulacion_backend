@@ -62,6 +62,7 @@ import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
 import { TutorPropuesto } from '../postulaciones/entities/tutor-propuesto.entity.js';
 import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enum.js';
+import { AsignacionTemaCausa } from '../asignaciones-tema/enums/asignacion-tema-causa.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
@@ -457,6 +458,14 @@ async function verify(): Promise<void> {
   } finally {
     await strengthenRunner.release();
   }
+
+  step = 'anulación manual de asignación vigente';
+  await assignmentsService.anular(period.id, directAssignment.id, { causa: AsignacionTemaCausa.OTRA, motivo: 'Desistimiento registrado en verificación' }, adminUser, null);
+  const manuallyAnnulled = await isolated.getRepository(AsignacionTema).findOneByOrFail({ id: directAssignment.id });
+  if (manuallyAnnulled.estado !== 'ANULADA' || manuallyAnnulled.causa_anulacion !== AsignacionTemaCausa.OTRA || manuallyAnnulled.motivo_anulacion !== 'Desistimiento registrado en verificación' || await appRepo.findOneByOrFail({ id: directApplication.id }).then((item) => item.estado) !== EstadoPostulacion.ANULADA || await isolated.getRepository(Tema).findOneByOrFail({ id: singleTopic.id }).then((item) => item.estado) !== EstadoTema.PUBLICADO) throw new Error('La anulación manual no anuló la asignación y postulación ni republicó el tema.');
+  if (await isolated.query(`SELECT 1 FROM ${schemaSql()}."asignacion_tutor" WHERE "asignacion_tema_id"=$1 AND "estado"='VIGENTE'`, [directAssignment.id]).then((rows: unknown[]) => rows.length) !== 0) throw new Error('La anulación manual dejó un tutor VIGENTE.');
+  const secondAnnulRejected = await assignmentsService.anular(period.id, directAssignment.id, { causa: AsignacionTemaCausa.OTRA, motivo: 'Repetida' }, adminUser, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  if (!secondAnnulRejected) throw new Error('Se permitió anular dos veces la misma asignación.');
 
   step = 'reversión protegida de documentos PAT';
   const documentMigration = new CreateDocumentosPat20261010100000();

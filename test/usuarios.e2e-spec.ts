@@ -1088,6 +1088,7 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/periodos/{id}/cerrar-postulacion'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/cerrar'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/retirar'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/asignaciones-tema/{id}/anular'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/iniciar-titulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/conflictos'].get).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{temaId}/conflicto/resolver'].post).toBeDefined();
@@ -1273,6 +1274,19 @@ describe('Usuarios (e2e)', () => {
       expect(response.body.data[2].cambios.motivo).toBe('Cupo cubierto');
     });
     expect(auditoriaTestRecords().map((entry) => entry.accion)).toEqual(expect.arrayContaining(['CERRAR_TEMA', 'REABRIR_TEMA', 'RETIRAR_TEMA']));
+  });
+
+  it('valida la anulación manual de asignaciones: DTO, rol, existencia y período ARCHIVADO', async () => {
+    addAdmin();
+    addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
+    const period = await createPeriod('ANULAR-1');
+    const annulPath = `/periodos/${period.body.id}/asignaciones-tema/00000000-0000-4000-8000-000000000001/anular`;
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'DESCONOCIDA', motivo: 'Motivo' }).expect(400);
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: '  ' }).expect(400);
+    await authenticated('post', annulPath, 'docente-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(403);
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(404);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(409);
   });
 
   it('inicia la titulación desde POSTULACION_CERRADA en fecha y suspende a los condicionados pendientes', async () => {

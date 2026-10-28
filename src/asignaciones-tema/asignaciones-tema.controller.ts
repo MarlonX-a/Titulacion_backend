@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiServiceUnavailableResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Roles } from '../common/roles.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
+import { AnularAsignacionTemaDto } from './dto/anular-asignacion-tema.dto.js';
 import { AsignarTemaDto } from './dto/asignar-tema.dto.js';
 import { ListAsignacionesTemaQueryDto } from './dto/list-asignaciones-tema-query.dto.js';
 import { AsignacionTemaResponseDto, PagedAsignacionesTemaResponseDto } from './dto/asignacion-tema-response.dto.js';
@@ -28,6 +29,19 @@ export class AsignacionesTemaController {
   @ApiConflictResponse({ description: 'Período, candidatura, conflicto, elegibilidad o disponibilidad incompatibles.' })
   assign(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: AsignarTemaDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
     return this.asignaciones.assign(periodoId, id, dto, actor, request.ip ?? null);
+  }
+
+  @Post('asignaciones-tema/:id/anular')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Anular manualmente una asignación vigente y republicar su tema' })
+  @ApiOkResponse({ type: AsignacionTemaResponseDto })
+  @ApiBadRequestResponse({ description: 'La causa no es válida o el motivo está vacío o excede 1000 caracteres.' })
+  @ApiForbiddenResponse({ description: 'Se requiere ADMIN activo.' })
+  @ApiNotFoundResponse({ description: 'No existe el período o la asignación indicada.' })
+  @ApiConflictResponse({ description: 'El período está ARCHIVADO o la asignación no está VIGENTE.' })
+  annul(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Param('id', new ParseUUIDPipe()) id: string, @Body() dto: AnularAsignacionTemaDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
+    return this.asignaciones.anular(periodoId, id, dto, actor, request.ip ?? null);
   }
 
   @Get('asignaciones-tema')

@@ -602,6 +602,17 @@ Cuando un tema queda asignado:
 
 Las anulaciones NO eliminan físicamente la asignación.
 
+Anulación manual: `POST /periodos/:periodoId/asignaciones-tema/:id/anular` (solo
+ADMIN, cuerpo `{ causa: OTRA | INCUMPLIMIENTO_CONDICION, motivo }`). Transacción
+SERIALIZABLE que bloquea el período (409 si está ARCHIVADO) y luego tema,
+postulación y asignación (409 si no está VIGENTE). Los efectos los aplica
+`AsignacionTemaPersistenciaService.anularBloqueada`, el mismo flujo que usa
+`anularPorIncumplimiento`: asignación ANULADA con causa/motivo/responsable/fecha,
+tutor vigente terminado, postulación ACEPTADA → ANULADA, tema ASIGNADO →
+PUBLICADO con historial, auditorías y aviso `TEMA_ANULADO`. Con causa OTRA las
+auditorías son `ANULAR_POSTULACION_MANUAL` y `REPUBLICAR_TEMA_ANULACION`. Las
+postulaciones rechazadas previamente no se reactivan.
+
 ---
 
 ## Asignación de tutor

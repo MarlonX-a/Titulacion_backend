@@ -27,6 +27,8 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaPersistenciaService } from './asignacion-tema-persistencia.service.js';
 import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
+import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
+import { AnularAsignacionTemaDto } from './dto/anular-asignacion-tema.dto.js';
 import { AsignarTemaDto } from './dto/asignar-tema.dto.js';
 import { ListAsignacionesTemaQueryDto } from './dto/list-asignaciones-tema-query.dto.js';
 import { AsignacionTemaResponseDto, PagedAsignacionesTemaResponseDto } from './dto/asignacion-tema-response.dto.js';
@@ -132,6 +134,32 @@ export class AsignacionesTemaService {
         return assignment.id;
       });
       return this.getById(periodoId, id, actor, true);
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  /**
+   * Anulación manual por ADMIN: mismos efectos que la anulación por incumplimiento, con la
+   * causa y el motivo indicados. No se permite en períodos ARCHIVADOS ni sobre asignaciones
+   * que ya no están VIGENTES.
+   */
+  async anular(periodoId: string, asignacionId: string, dto: AnularAsignacionTemaDto, actor: Usuario, ip: string | null): Promise<AsignacionTemaResponseDto> {
+    try {
+      await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+        const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodoId }, lock: { mode: 'pessimistic_write' } });
+        if (!period) throw new NotFoundException('No existe el período indicado.');
+        if (period.estado === PeriodoEstado.ARCHIVADO) throw new ConflictException('No se pueden anular asignaciones de un período ARCHIVADO.');
+        const estado = await this.persistencia.bloquearParaAnulacion(manager, periodoId, asignacionId);
+        if (!estado) throw new NotFoundException('No existe esa asignación en el período indicado.');
+        if (estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('Solo se pueden anular asignaciones VIGENTES.');
+        const manual = dto.causa === AsignacionTemaCausa.OTRA;
+        await this.persistencia.anularBloqueada(manager, asignacionId, {
+          causa: dto.causa,
+          motivo: dto.motivo,
+          accionPostulacion: manual ? 'ANULAR_POSTULACION_MANUAL' : 'ANULAR_POSTULACION_INCUMPLIMIENTO',
+          accionTema: manual ? 'REPUBLICAR_TEMA_ANULACION' : 'REPUBLICAR_TEMA_INCUMPLIMIENTO',
+        }, actor, ip);
+      });
+      return this.getById(periodoId, asignacionId, actor, true);
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
