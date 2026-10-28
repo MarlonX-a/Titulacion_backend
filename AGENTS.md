@@ -986,6 +986,10 @@ oculta claves con nombres de credenciales. Nunca auditar contraseñas, hashes, t
 temporales. Índices `IDX_auditoria_fecha_hora` e `IDX_auditoria_usuario` (migración
 `20261027100000`, `db:verify-auditoria`).
 
+Historial de importaciones (ADMIN): `GET /periodos/:periodoId/importaciones/estudiantes` y
+`GET /importaciones/docentes` listan preparaciones (con su lote si se completó), más recientes
+primero y paginadas; las vencidas se listan con `expirada: true` (no 410).
+
 No confundir:
 
 logs técnicos

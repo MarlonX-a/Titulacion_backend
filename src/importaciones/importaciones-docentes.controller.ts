@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiAcceptedResponse, ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiConsumes, ApiForbiddenResponse, ApiGoneResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
@@ -11,6 +11,9 @@ import { ConfirmarImportacionDto } from './confirmar-importacion.dto.js';
 import { buildTeachersTemplate } from './docentes-excel.template.js';
 import { ImportacionesDocentesService } from './importaciones-docentes.service.js';
 import { XLSX_MIME, XLSX_UPLOAD_OPTIONS } from './importaciones.controller.js';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { ImportacionHistorialPageDto } from './dto/importacion-historial.dto.js';
+import { ImportacionesHistorialService } from './importaciones-historial.service.js';
 
 @ApiTags('Importaciones')
 @ApiBearerAuth('bearer')
@@ -18,7 +21,15 @@ import { XLSX_MIME, XLSX_UPLOAD_OPTIONS } from './importaciones.controller.js';
 @Controller('importaciones/docentes')
 @Roles(UsuarioRol.ADMIN)
 export class ImportacionesDocentesController {
-  constructor(private readonly service: ImportacionesDocentesService) {}
+  constructor(private readonly service: ImportacionesDocentesService, private readonly historial: ImportacionesHistorialService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Historial de importaciones de docentes (más recientes primero)', description: 'Incluye preparaciones vencidas (expirada = true) y el lote cuando la importación se completó.' })
+  @ApiOkResponse({ type: ImportacionHistorialPageDto })
+  @ApiBadRequestResponse({ description: 'Paginación inválida.' })
+  listHistorial(@Query() query: PaginationQueryDto) {
+    return this.historial.listarDocentes(query);
+  }
 
   @Get('plantilla')
   @ApiOperation({ summary: 'Descargar la plantilla XLSX de docentes' })

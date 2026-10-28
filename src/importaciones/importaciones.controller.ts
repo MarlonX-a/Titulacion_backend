@@ -1,6 +1,6 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiAcceptedResponse, ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiAcceptedResponse, ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import 'multer';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
@@ -10,6 +10,9 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { ImportacionesService } from './importaciones.service.js';
 import { ConfirmarImportacionDto } from './confirmar-importacion.dto.js';
 import { buildStudentsTemplate } from './estudiantes-excel.template.js';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { ImportacionHistorialPageDto } from './dto/importacion-historial.dto.js';
+import { ImportacionesHistorialService } from './importaciones-historial.service.js';
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -28,7 +31,7 @@ export const XLSX_UPLOAD_OPTIONS = {
 @Controller()
 @Roles(UsuarioRol.ADMIN)
 export class ImportacionesController {
-  constructor(private readonly service: ImportacionesService) {}
+  constructor(private readonly service: ImportacionesService, private readonly historial: ImportacionesHistorialService) {}
 
   @Get('importaciones/estudiantes/plantilla')
   @ApiOperation({ summary: 'Descargar plantilla para estudiantes habilitados' })
@@ -56,6 +59,16 @@ export class ImportacionesController {
   ) {
     if (!file) throw new BadRequestException('Adjunta un archivo XLSX en el campo archivo.');
     return this.service.submit(periodId, actor, file.originalname, file.buffer, request.ip ?? null);
+  }
+
+  @Get('periodos/:periodoId/importaciones/estudiantes')
+  @ApiOperation({ summary: 'Historial de importaciones de estudiantes del período (más recientes primero)', description: 'Incluye preparaciones vencidas (expirada = true) y el lote cuando la importación se completó.' })
+  @ApiOkResponse({ type: ImportacionHistorialPageDto })
+  @ApiBadRequestResponse({ description: 'Identificador o paginación inválidos.' })
+  @ApiForbiddenResponse({ description: 'Solo ADMIN puede consultar el historial.' })
+  @ApiNotFoundResponse({ description: 'No existe el período indicado.' })
+  listHistorial(@Param('periodoId', new ParseUUIDPipe()) periodId: string, @Query() query: PaginationQueryDto) {
+    return this.historial.listarEstudiantes(periodId, query);
   }
 
   @Get('periodos/:periodoId/importaciones/estudiantes/:id')
