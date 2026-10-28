@@ -296,14 +296,19 @@ valida en segundo plano; consulta su progreso y vista previa mediante
 sin errores puede confirmarse con `POST
 /periodos/:periodoId/importaciones/estudiantes/:id/confirmar`.
 
-La hoja debe llamarse `Estudiantes`; sus columnas, en este orden, son:
-`email`, `nombres`, `apellidos`, `cedula`, `matricula`, `carrera`, `nivel`,
-`condicion_ingreso`, `requisito_pendiente`. Se aceptan `.xlsx` de hasta 5 MiB y
-1000 filas. Cédula y matrícula deben guardarse como texto para preservar ceros.
-La confirmación crea cuentas ESTUDIANTE, perfiles y habilitaciones, genera una
-clave temporal individual y la pone en cola para correo. Las filas regulares
-quedan admitidas; las condicionadas quedan pendientes. Las reimportaciones no
-cambian claves, estados ni decisiones previas.
+Se usa el formato institucional y se lee la primera hoja. Sobre los
+encabezados debe existir una celda `CARRERA <NOMBRE>` (por ejemplo, `CARRERA
+SOFTWARE`). La fila de encabezados se busca en las primeras 20 filas y debe
+contener `Identificación`, `Apellidos`, `Nombres`, `nivel`, `ACADEMICO` e
+`INGLES`; otras columnas se ignoran y se admiten filas ocultas. ACADEMICO e
+INGLES aceptan SI o NO. Se aceptan `.xlsx` de hasta 5 MiB y 1000 filas. Una
+cédula numérica sin el cero inicial se completa a 10 dígitos.
+La confirmación crea cuentas ESTUDIANTE con correo `e{cedula}@live.uleam.edu.ec`,
+perfiles (matrícula igual a la cédula) y habilitaciones; la clave temporal
+inicial es la cédula, exige cambio en el primer acceso y se pone en cola para
+correo. SI/SI queda `HABILITADO` y `ADMITIDO`; cualquier otra combinación queda
+`SUSPENDIDO` y `NO_ADMITIDO`. Las reimportaciones no cambian claves, estados ni
+decisiones previas.
 
 Los mensajes de desarrollo se pueden leer en Mailpit en
 [http://localhost:8025](http://localhost:8025). Las claves temporales vencen

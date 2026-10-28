@@ -9,7 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { ListConfigCargaTutorialQueryDto } from './dto/list-config-carga-tutorial-query.dto.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
@@ -33,6 +33,7 @@ function response(config: ConfigCargaTutorial): ConfigCargaTutorialResponseDto {
     docente_id: config.docente_id,
     max_trabajos: config.max_trabajos,
     bloquear_al_superar: config.bloquear_al_superar,
+    activa: config.activa,
   };
 }
 
@@ -85,11 +86,13 @@ export class CargaTutorialService {
     }
   }
 
-  async list(periodoId: string, query: PaginationQueryDto): Promise<PagedConfig> {
+  async list(periodoId: string, query: ListConfigCargaTutorialQueryDto): Promise<PagedConfig> {
     try {
       await this.assertPeriodExists(this.periodos, periodoId);
       const qb = this.configs.createQueryBuilder('config')
-        .where('config.periodo_id = :periodoId', { periodoId })
+        .where('config.periodo_id = :periodoId', { periodoId });
+      if (!query.incluir_inactivas) qb.andWhere('config.activa = true');
+      qb
         .orderBy('CASE WHEN config.docente_id IS NULL THEN 0 ELSE 1 END', 'ASC')
         .addOrderBy('config.docente_id', 'ASC')
         .addOrderBy('config.id', 'ASC')
@@ -114,6 +117,7 @@ export class CargaTutorialService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!config) throw new NotFoundException('No existe esa configuración en el período indicado.');
+        if (!config.activa) throw new ConflictException('El límite específico está desactivado y se conserva como historial; crea uno nuevo.');
         const previous = this.auditValues(config);
         const changed = (dto.max_trabajos !== undefined && dto.max_trabajos !== config.max_trabajos)
           || (dto.bloquear_al_superar !== undefined && dto.bloquear_al_superar !== config.bloquear_al_superar);
@@ -133,6 +137,45 @@ export class CargaTutorialService {
         return saved;
       });
       return response(updated);
+    } catch (error: unknown) {
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Desactiva un límite específico sin borrarlo: deja de aplicarse y la resolución efectiva vuelve
+   * al límite global del período. El límite global no se desactiva (se modifica).
+   */
+  async deactivate(periodoId: string, id: string, actor: Usuario, ip: string | null) {
+    try {
+      const deactivated = await this.dataSource.transaction(async (manager) => {
+        const periodo = await this.lockPeriod(manager, periodoId);
+        this.assertEditable(periodo);
+        const repository = manager.getRepository(ConfigCargaTutorial);
+        const config = await repository.findOne({
+          where: { id, periodo_id: periodoId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!config) throw new NotFoundException('No existe esa configuración en el período indicado.');
+        if (config.docente_id === null) {
+          throw new ConflictException('El límite global del período no se desactiva; modifica su máximo o modalidad.');
+        }
+        if (!config.activa) throw new ConflictException('El límite específico ya estaba desactivado.');
+        const previous = this.auditValues(config);
+        config.activa = false;
+        const saved = await repository.save(config);
+        await this.auditoria.registrar(manager, {
+          actor,
+          accion: 'DESACTIVAR_CONFIG_CARGA_TUTORIAL',
+          entidad_tipo: 'config_carga_tutorial',
+          entidad_id: saved.id,
+          valores_anteriores: previous,
+          valores_nuevos: this.auditValues(saved),
+          ip_origen: ip,
+        });
+        return saved;
+      });
+      return response(deactivated);
     } catch (error: unknown) {
       this.handleError(error);
     }
@@ -212,13 +255,15 @@ export class CargaTutorialService {
       docente_id: config.docente_id,
       max_trabajos: config.max_trabajos,
       bloquear_al_superar: config.bloquear_al_superar,
+      activa: config.activa,
     };
   }
 
   private handleError(error: unknown): never {
     if (error instanceof HttpException) throw error;
     const code = pgCode(error);
-    if (code === '23505') throw new ConflictException('Ya existe una configuración para ese ámbito en el período.');
+    if (code === '23505') throw new ConflictException('Ya existe una configuración activa para ese ámbito en el período.');
+    if (code === '23514') throw new ConflictException('La configuración no admite ese cambio: un límite desactivado o de un período archivado no se modifica.');
     if (code === '23503') throw new ConflictException('El período o docente indicado no existe o no puede modificarse.');
     throw new ServiceUnavailableException('No fue posible completar la operación de carga tutorial.');
   }

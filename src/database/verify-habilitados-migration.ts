@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
+import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { ConflictException, HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { loadEnvironment } from '../config/load-environment.js';
@@ -117,6 +120,8 @@ async function verify(): Promise<void> {
     audit,
     new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications),
     notifications,
+    new PostulacionPersistenciaService(audit, notifications),
+    new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications)),
   );
   const conditional = {
     estudiante_id: studentProfiles[0].id,

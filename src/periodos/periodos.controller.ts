@@ -41,6 +41,8 @@ import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodosService } from './periodos.service.js';
 import { InicioTitulacionService } from './inicio-titulacion.service.js';
 import { ArchivoPeriodoService } from './archivo-periodo.service.js';
+import { ResumenPeriodoService } from './resumen-periodo.service.js';
+import { ResumenPeriodoResponseDto } from './dto/resumen-periodo-response.dto.js';
 
 @ApiTags('Períodos de titulación')
 @ApiBearerAuth('bearer')
@@ -55,6 +57,7 @@ export class PeriodosController {
     private readonly periodos: PeriodosService,
     private readonly inicioTitulacion: InicioTitulacionService,
     private readonly archivoPeriodo: ArchivoPeriodoService,
+    private readonly resumenPeriodo: ResumenPeriodoService,
   ) {}
 
   @Post()
@@ -95,8 +98,8 @@ export class PeriodosController {
       },
     },
   })
-  list(@Query() query: PaginationQueryDto) {
-    return this.periodos.list(query);
+  list(@Query() query: PaginationQueryDto, @CurrentUsuario() actor: Usuario) {
+    return this.periodos.list(query, actor.rol === UsuarioRol.ADMIN);
   }
 
   @Get(':id')
@@ -107,18 +110,28 @@ export class PeriodosController {
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
   getById(
     @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUsuario() actor: Usuario,
   ): Promise<PeriodoResponseDto> {
-    return this.periodos.getById(id);
+    return this.periodos.getById(id, actor.rol === UsuarioRol.ADMIN);
+  }
+
+  @Get(':id/resumen')
+  @ApiOperation({ summary: 'Indicadores agregados del período para el panel administrativo' })
+  @ApiOkResponse({ type: ResumenPeriodoResponseDto })
+  @ApiBadRequestResponse({ description: 'El identificador debe ser un UUID válido.' })
+  @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
+  resumen(@Param('id', new ParseUUIDPipe()) id: string): Promise<ResumenPeriodoResponseDto> {
+    return this.resumenPeriodo.obtener(id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Editar un período que siga en estado BORRADOR' })
+  @ApiOperation({ summary: 'Editar un período en BORRADOR o la fecha fin de postulación en POSTULACION_CERRADA' })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({
     description: 'Cuerpo vacío, entrada inválida o cronología incompatible.',
   })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El período ya no está en BORRADOR o el código está duplicado.' })
+  @ApiConflictResponse({ description: 'El estado no permite la edición solicitada (en POSTULACION_CERRADA solo la fecha fin de postulación) o el código está duplicado.' })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdatePeriodoDto,
@@ -128,11 +141,11 @@ export class PeriodosController {
 
   @Post(':id/abrir-postulacion')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Abrir el período dentro del plazo de postulación' })
+  @ApiOperation({ summary: 'Abrir (desde BORRADOR) o reabrir (desde POSTULACION_CERRADA) la postulación dentro de su plazo' })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({ description: 'No se admiten propiedades en el cuerpo.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El estado o las fechas no permiten abrir el período.' })
+  @ApiConflictResponse({ description: 'El estado no es BORRADOR ni POSTULACION_CERRADA, o la fecha actual está fuera del plazo de postulación.' })
   abrirPostulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: AbrirPostulacionDto,
@@ -160,11 +173,14 @@ export class PeriodosController {
 
   @Post(':id/iniciar-titulacion')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Iniciar formalmente la titulación tras resolver los condicionados' })
+  @ApiOperation({
+    summary: 'Iniciar formalmente la titulación',
+    description: 'Los condicionados que sigan pendientes quedan SUSPENDIDO y NO_ADMITIDO en la misma transacción, con auditoría individual.',
+  })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({ description: 'El identificador es inválido o el cuerpo tiene propiedades no permitidas.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El estado, la fecha o los condicionados pendientes impiden iniciar.' })
+  @ApiConflictResponse({ description: 'El período no está en POSTULACION_CERRADA, la fecha de inicio no ha llegado o hubo una actualización concurrente.' })
   iniciarTitulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: AbrirPostulacionDto,

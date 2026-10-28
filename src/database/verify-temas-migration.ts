@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
+import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -76,6 +77,7 @@ async function verify(): Promise<void> {
     isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), docentes,
     isolated.getRepository(Estudiante), isolated.getRepository(EstudianteHabilitado),
     isolated.getRepository(PeriodoTitulacion), isolated, auditoria,
+    { postulacion: () => Promise.resolve() } as unknown as NotificacionesPersistenciaService,
   );
   const periodosService = new PeriodosService(periodos, isolated, auditoria);
   const dto = { linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;

@@ -50,6 +50,27 @@ export class CargaTutorActualResponseDto {
   } | null;
 }
 
+export class CargaDocenteResumenDto {
+  @ApiProperty({ format: 'uuid' }) id: string;
+  @ApiProperty() nombres: string;
+  @ApiProperty() apellidos: string;
+  @ApiProperty() email: string;
+  @ApiProperty() cedula: string;
+  @ApiProperty() habilitado_tutoria: boolean;
+  @ApiProperty({ enum: ['ACTIVO', 'INACTIVO'] }) estado: string;
+}
+
+export class CargaTutorialDocenteResponseDto extends CargaTutorActualResponseDto {
+  @ApiProperty({ type: CargaDocenteResumenDto }) docente: CargaDocenteResumenDto;
+}
+
+export class PagedCargaTutorialResponseDto {
+  @ApiProperty({ type: [CargaTutorialDocenteResponseDto] }) data: CargaTutorialDocenteResponseDto[];
+  @ApiProperty() total: number;
+  @ApiProperty() page: number;
+  @ApiProperty() limit: number;
+}
+
 export class CargaProyectadaResponseDto {
   @ApiProperty() actual: number;
   @ApiProperty() proyectada: number;

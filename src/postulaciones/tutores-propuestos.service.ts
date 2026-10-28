@@ -1,6 +1,6 @@
 import { ConflictException, HttpException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, QueryFailedError, Repository } from 'typeorm';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
@@ -76,14 +76,35 @@ export class TutoresPropuestosService {
         where: { postulacion: { id: postulacionId } }, relations: { docente: { usuario: true } },
         order: { orden_prioridad: 'ASC', id: 'ASC' }, skip: (page - 1) * limit, take: limit,
       });
-      return { data: records.map((record) => ({
-        id: record.id, postulacion_id: postulacionId, docente_id: record.docente.id,
-        orden_prioridad: record.orden_prioridad,
-        docente: { id: record.docente.id, nombres: record.docente.usuario.nombres, apellidos: record.docente.usuario.apellidos, titulo_academico: record.docente.titulo_academico, departamento: record.docente.departamento },
-        es_proponente_tema: record.docente.id === tema.docente_proponente.id,
-        elegible_actualmente: record.docente.habilitado_tutoria && record.docente.usuario.estado === UsuarioEstado.ACTIVO && record.docente.usuario.rol === UsuarioRol.DOCENTE,
-      })), total, page, limit };
+      return { data: records.map((record) => this.toResponse(record, postulacionId, tema.docente_proponente.id)), total, page, limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  /** Tutores propuestos de varias postulaciones en una sola consulta, ordenados por prioridad. */
+  async porPostulaciones(items: Array<{ id: string; proponenteId: string | null }>): Promise<Map<string, TutorPropuestoResponseDto[]>> {
+    const result = new Map<string, TutorPropuestoResponseDto[]>(items.map((item) => [item.id, []]));
+    if (!items.length) return result;
+    const proponent = new Map(items.map((item) => [item.id, item.proponenteId]));
+    try {
+      const records = await this.repository.find({
+        where: { postulacion: { id: In(items.map((item) => item.id)) } }, relations: { postulacion: true, docente: { usuario: true } },
+        order: { orden_prioridad: 'ASC', id: 'ASC' },
+      });
+      for (const record of records) {
+        result.get(record.postulacion.id)?.push(this.toResponse(record, record.postulacion.id, proponent.get(record.postulacion.id) ?? null));
+      }
+      return result;
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  private toResponse(record: TutorPropuesto, postulacionId: string, proponenteId: string | null): TutorPropuestoResponseDto {
+    return {
+      id: record.id, postulacion_id: postulacionId, docente_id: record.docente.id,
+      orden_prioridad: record.orden_prioridad,
+      docente: { id: record.docente.id, nombres: record.docente.usuario.nombres, apellidos: record.docente.usuario.apellidos, titulo_academico: record.docente.titulo_academico, departamento: record.docente.departamento },
+      es_proponente_tema: record.docente.id === proponenteId,
+      elegible_actualmente: record.docente.habilitado_tutoria && record.docente.usuario.estado === UsuarioEstado.ACTIVO && record.docente.usuario.rol === UsuarioRol.DOCENTE,
+    };
   }
 
   async listarDePostulacion(periodoId: string, postulacionId: string, page: number, limit: number) {

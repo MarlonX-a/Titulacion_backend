@@ -22,15 +22,25 @@ import { HabilitadoResponseDto } from './dto/habilitado-response.dto.js';
 import { ListHabilitadosQueryDto } from './dto/list-habilitados-query.dto.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ResolveIngresoDto } from './dto/resolve-ingreso.dto.js';
+import { UpdateHabilitacionDto } from './dto/update-habilitacion.dto.js';
 import { EstudianteHabilitado } from './entities/estudiante-habilitado.entity.js';
 import { CondicionIngreso } from './enums/condicion-ingreso.enum.js';
 import { HabilitadoEstado } from './enums/habilitado-estado.enum.js';
 import { HabilitadoOrigen } from './enums/habilitado-origen.enum.js';
 import { SituacionIngreso } from './enums/situacion-ingreso.enum.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
-import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { NotificacionesPersistenciaService, type AvisoIngreso } from '../notificaciones/notificaciones-persistencia.service.js';
+import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 
 interface PostgresDriverError { code?: string; }
+
+/** Identificadores de una habilitación que acaba de quedar NO_ADMITIDO. */
+export interface HabilitacionNoAdmitida {
+  id: string;
+  periodoId: string;
+  estudianteId: string;
+}
 
 export interface PagedHabilitados {
   data: HabilitadoResponseDto[];
@@ -39,7 +49,13 @@ export interface PagedHabilitados {
   limit: number;
 }
 
-function responseFrom(record: EstudianteHabilitado): HabilitadoResponseDto {
+/**
+ * `detallado` agrega correo institucional, cédula, carrera, nivel y el responsable de la
+ * resolución. Solo se usa en respuestas para ADMIN o para el propio estudiante; los
+ * candidatos de invitación (vistos por otros estudiantes) no exponen esos datos.
+ */
+function responseFrom(record: EstudianteHabilitado, detallado = true): HabilitadoResponseDto {
+  const resuelto = record.resuelto_por;
   return {
     id: record.id,
     periodo_id: record.periodo.id,
@@ -49,7 +65,14 @@ function responseFrom(record: EstudianteHabilitado): HabilitadoResponseDto {
       nombres: record.estudiante.usuario.nombres,
       apellidos: record.estudiante.usuario.apellidos,
       matricula: record.estudiante.matricula,
+      ...(detallado ? {
+        email: record.estudiante.usuario.email,
+        cedula: record.estudiante.cedula,
+        carrera: record.estudiante.carrera,
+        nivel: record.estudiante.nivel,
+      } : {}),
     },
+    ...(detallado ? { resuelto_por: resuelto ? { id: resuelto.id, nombres: resuelto.nombres, apellidos: resuelto.apellidos } : null } : {}),
     origen: record.origen,
     lote_importacion_id: record.lote_importacion?.id ?? null,
     estado: record.estado,
@@ -78,6 +101,8 @@ export class HabilitadosService {
     private readonly auditoria: AuditoriaService,
     private readonly asignaciones: AsignacionTemaPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
+    private readonly postulaciones: PostulacionPersistenciaService,
+    private readonly grupos: GrupoIntegrantePersistenciaService,
   ) {}
 
   /** Comprueba y bloquea una habilitación para una operación de grupo dentro de la transacción actual. */
@@ -128,6 +153,24 @@ export class HabilitadosService {
           throw new BadRequestException('Una habilitación REGULAR no admite requisito pendiente.');
         }
         const recordRepository = manager.getRepository(EstudianteHabilitado);
+        // Un estudiante SUSPENDIDO en el período (p. ej. importado sin inglés) se vuelve a habilitar
+        // sobre su registro existente; uno ya HABILITADO sigue rechazándose.
+        const existing = await recordRepository.findOne({
+          where: { periodo: { id: periodo.id }, estudiante: { id: estudiante.id } },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (existing) {
+          if (existing.estado !== HabilitadoEstado.SUSPENDIDO) {
+            throw new ConflictException('El estudiante ya está habilitado en este período.');
+          }
+          const current = await recordRepository.findOne({
+            where: { id: existing.id },
+            relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
+          });
+          if (!current) throw new NotFoundException('No existe esa habilitación en el período indicado.');
+          const requisito = isRegular ? null : dto.requisito_pendiente!.trim();
+          return responseFrom(await this.aplicarCondicion(manager, current, dto.condicion_ingreso, requisito, actor, ip, 'REACTIVAR_HABILITACION'));
+        }
         const record = await recordRepository.save(recordRepository.create({
           periodo,
           estudiante,
@@ -172,7 +215,7 @@ export class HabilitadosService {
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
-      return { data: records.map(responseFrom), total, page: query.page, limit: query.limit };
+      return { data: records.map((record) => responseFrom(record)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -219,7 +262,7 @@ export class HabilitadosService {
         .skip((query.page - 1) * query.limit)
         .take(query.limit)
         .getManyAndCount();
-      return { data: records.map(responseFrom), total, page: query.page, limit: query.limit };
+      return { data: records.map((record) => responseFrom(record, false)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -253,7 +296,7 @@ export class HabilitadosService {
         });
         if (!period) throw new NotFoundException('No existe el período indicado.');
         if (period.estado !== PeriodoEstado.BORRADOR && period.estado !== PeriodoEstado.POSTULACION_ABIERTA && period.estado !== PeriodoEstado.POSTULACION_CERRADA) {
-          throw new ConflictException('Solo se pueden resolver condicionados antes de iniciar la titulación.');
+          throw new ConflictException(`No se pueden resolver condicionados en un período ${period.estado}: solo se permite en BORRADOR, POSTULACION_ABIERTA o POSTULACION_CERRADA.`);
         }
         const now = new Date();
         const lateNoAdmission = dto.situacion_ingreso === SituacionIngreso.NO_ADMITIDO && period.estado === PeriodoEstado.POSTULACION_CERRADA;
@@ -283,21 +326,136 @@ export class HabilitadosService {
         record.resuelto_por = actor;
         record.observacion_ingreso = dto.observacion_ingreso?.trim() || null;
         const updated = await repository.save(record);
-        if (updated.situacion_ingreso === SituacionIngreso.NO_ADMITIDO) {
-          await this.asignaciones.anularPorIncumplimiento(manager, periodoId, updated.estudiante.id, actor, updated.observacion_ingreso!, ip);
-        }
         await this.auditoria.registrar(manager, { actor, accion: 'RESOLVER_INGRESO', entidad_tipo: 'estudiante_habilitado', entidad_id: record.id, valores_anteriores: previous, valores_nuevos: {
           situacion_ingreso: updated.situacion_ingreso,
           fecha_resolucion_ingreso: updated.fecha_resolucion_ingreso,
           resuelto_por_id: actor.id,
           observacion_ingreso: updated.observacion_ingreso,
         }, ip_origen: ip });
-        await this.notificaciones.ingreso(manager, record.id, actor.id);
+        if (updated.situacion_ingreso === SituacionIngreso.NO_ADMITIDO) {
+          await this.aplicarNoAdmision(manager, { id: updated.id, periodoId, estudianteId: updated.estudiante.id }, actor, ip, updated.observacion_ingreso!, 'RESOLUCION');
+        } else {
+          await this.notificaciones.ingreso(manager, record.id, actor.id);
+        }
         return responseFrom(updated);
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
+  }
+
+  /**
+   * Efectos de una habilitación que ya quedó NO_ADMITIDO dentro de la transacción del llamador, en
+   * este orden:
+   * 1. anula la asignación de tema vigente del estudiante (tutor, postulación ACEPTADA y tema);
+   * 2. cancela sus postulaciones PENDIENTE del período, individual y del grupo al que pertenece
+   *    (los participantes activos reciben POSTULACION_CANCELADA antes del retiro);
+   * 3. lo retira de su grupo activo (traspaso de representación o disolución incluidos), salvo que
+   *    la composición del grupo esté cerrada por una postulación;
+   * 4. registra la notificación de ingreso, cuyo correo se entrega de forma asíncrona.
+   * Lo comparten la resolución manual y la suspensión automática al iniciar la titulación.
+   * El llamador debe haber bloqueado antes el período y la habilitación; el bloqueo del período
+   * serializa estos efectos con la gestión de grupos y postulaciones.
+   */
+  async aplicarNoAdmision(
+    manager: EntityManager,
+    habilitacion: HabilitacionNoAdmitida,
+    actor: Usuario,
+    ip: string | null,
+    motivo: string,
+    aviso: AvisoIngreso,
+  ): Promise<void> {
+    await this.asignaciones.anularPorIncumplimiento(manager, habilitacion.periodoId, habilitacion.estudianteId, actor, motivo, ip);
+    await this.postulaciones.cancelarPendientesPorNoAdmision(manager, habilitacion.periodoId, habilitacion.estudianteId, actor, motivo, ip);
+    await this.grupos.retirarPorNoAdmision(manager, habilitacion.periodoId, habilitacion.estudianteId, actor, motivo, ip);
+    await this.notificaciones.ingreso(manager, habilitacion.id, actor.id, aviso);
+  }
+
+  /**
+   * Corrige la condición de ingreso de una habilitación existente y la vuelve a dejar HABILITADO.
+   * REGULAR queda ADMITIDO y resuelto por el actor; CONDICIONADO queda PENDIENTE sin resolución.
+   */
+  async actualizarCondicion(
+    periodoId: string,
+    id: string,
+    actor: Usuario,
+    dto: UpdateHabilitacionDto,
+    ip: string | null,
+  ): Promise<HabilitadoResponseDto> {
+    const isRegular = dto.condicion_ingreso === CondicionIngreso.REGULAR;
+    const requisito = typeof dto.requisito_pendiente === 'string' ? dto.requisito_pendiente.trim() : null;
+    if (isRegular && dto.requisito_pendiente != null) {
+      throw new BadRequestException('Una habilitación REGULAR no admite requisito pendiente.');
+    }
+    if (!isRegular && !requisito) {
+      throw new BadRequestException('Una habilitación CONDICIONADO requiere un requisito pendiente.');
+    }
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const period = await manager.getRepository(PeriodoTitulacion).findOne({
+          where: { id: periodoId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!period) throw new NotFoundException('No existe el período indicado.');
+        if (period.estado === PeriodoEstado.ARCHIVADO) {
+          throw new ConflictException('No se pueden editar habilitaciones de un período ARCHIVADO.');
+        }
+        if (!isRegular && period.estado === PeriodoEstado.EN_CURSO) {
+          throw new ConflictException('No se pueden registrar condicionados pendientes en un período EN_CURSO.');
+        }
+        const repository = manager.getRepository(EstudianteHabilitado);
+        const locked = await repository.findOne({
+          where: { id, periodo: { id: periodoId } },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!locked) throw new NotFoundException('No existe esa habilitación en el período indicado.');
+        const record = await repository.findOne({
+          where: { id: locked.id },
+          relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
+        });
+        if (!record) throw new NotFoundException('No existe esa habilitación en el período indicado.');
+        return responseFrom(await this.aplicarCondicion(manager, record, dto.condicion_ingreso, requisito, actor, ip, 'ACTUALIZAR_HABILITACION'));
+      });
+    } catch (error: unknown) {
+      if (isCode(error, '23514')) {
+        throw new ConflictException('La habilitación editada incumple una regla del período: no se admiten condicionados pendientes una vez iniciada la titulación.');
+      }
+      this.handleDatabaseError(error);
+    }
+  }
+
+  /** Deja la habilitación HABILITADO con la condición indicada y audita el cambio. */
+  private async aplicarCondicion(
+    manager: EntityManager,
+    record: EstudianteHabilitado,
+    condicion: CondicionIngreso,
+    requisito: string | null,
+    actor: Usuario,
+    ip: string | null,
+    accion: string,
+  ): Promise<EstudianteHabilitado> {
+    const isRegular = condicion === CondicionIngreso.REGULAR;
+    const previous = {
+      estado: record.estado,
+      condicion_ingreso: record.condicion_ingreso,
+      requisito_pendiente: record.requisito_pendiente,
+      situacion_ingreso: record.situacion_ingreso,
+    };
+    record.estado = HabilitadoEstado.HABILITADO;
+    record.condicion_ingreso = condicion;
+    record.requisito_pendiente = isRegular ? null : requisito;
+    record.situacion_ingreso = isRegular ? SituacionIngreso.ADMITIDO : SituacionIngreso.PENDIENTE;
+    record.fecha_resolucion_ingreso = isRegular ? new Date() : null;
+    record.resuelto_por = isRegular ? actor : null;
+    record.observacion_ingreso = null;
+    const updated = await manager.getRepository(EstudianteHabilitado).save(record);
+    await this.auditoria.registrar(manager, { actor, accion, entidad_tipo: 'estudiante_habilitado', entidad_id: record.id, valores_anteriores: previous, valores_nuevos: {
+      estado: updated.estado,
+      condicion_ingreso: updated.condicion_ingreso,
+      requisito_pendiente: updated.requisito_pendiente,
+      situacion_ingreso: updated.situacion_ingreso,
+    }, ip_origen: ip });
+    return updated;
   }
 
   private async lockDraftPeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {

@@ -10,6 +10,7 @@ import { PeriodoTitulacion } from '../src/periodos/entities/periodo-titulacion.e
 import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
 import { EstudianteHabilitado } from '../src/habilitados/entities/estudiante-habilitado.entity.js';
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import { Auditoria } from '../src/auditoria/entities/auditoria.entity.js';
 import { HabilitadoOrigen } from '../src/habilitados/enums/habilitado-origen.enum.js';
 import { LineaInvestigacion } from '../src/lineas-investigacion/entities/linea-investigacion.entity.js';
@@ -26,6 +27,7 @@ import { ConflictoParticipante } from '../src/conflictos/entities/conflicto-part
 import { AsignacionTema } from '../src/asignaciones-tema/entities/asignacion-tema.entity.js';
 import { CredencialUsuario } from '../src/auth/entities/credencial-usuario.entity.js';
 import { CorreoSalida } from '../src/auth/entities/correo-salida.entity.js';
+import { SesionUsuario } from '../src/auth/entities/sesion-usuario.entity.js';
 import { ConfigCargaTutorial } from '../src/carga-tutorial/entities/config-carga-tutorial.entity.js';
 import { AsignacionTutor } from '../src/asignaciones-tutor/entities/asignacion-tutor.entity.js';
 import { PlantillaPat } from '../src/plantillas-pat/entities/plantilla-pat.entity.js';
@@ -197,14 +199,24 @@ export const docenteTestRepository = {
     ] as const;
   },
   findOne: async (options: {
-    where: { id?: string; usuario?: { id: string } };
+    where: { id?: string; cedula?: string; usuario?: { id: string } };
   }) =>
     docenteRecords.find(
       (record) =>
         (options.where.id !== undefined && record.id === options.where.id) ||
+        (options.where.cedula !== undefined && record.cedula === options.where.cedula) ||
         (options.where.usuario !== undefined &&
           record.usuario.id === options.where.usuario.id),
     ) ?? null,
+  update: (criteria: { id: string }, values: Partial<Docente>) => {
+    if (values.cedula !== undefined &&
+      docenteRecords.some((record) => record.cedula === values.cedula && record.id !== criteria.id)) {
+      return Promise.reject(duplicateError('UPDATE docente'));
+    }
+    const found = docenteRecords.find((record) => record.id === criteria.id);
+    if (found) Object.assign(found, values);
+    return Promise.resolve({ affected: found ? 1 : 0 });
+  },
 };
 
 export const periodoTestRepository = {
@@ -395,7 +407,12 @@ const credencialTestRepository = {
     return value;
   },
   findOneBy: async (criteria: Partial<CredencialUsuario>) => credencialRecords.find((item) => Object.entries(criteria).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
-  update: async () => ({ affected: 1 }),
+  findOne: (options: { where: Partial<CredencialUsuario> }) => Promise.resolve(credencialRecords.find((item) => Object.entries(options.where).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null),
+  update: () => Promise.resolve({ affected: 1 }),
+};
+const sesionRevocations: string[] = [];
+const sesionTestRepository = {
+  update: (criteria: { usuario_id: string }) => { sesionRevocations.push(criteria.usuario_id); return Promise.resolve({ affected: 1 }); },
 };
 const correoTestRepository = {
   create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,
@@ -529,11 +546,26 @@ export const usuarioTestDataSource = {
           }
           if (sql.includes('asignacion_tema')) return [];
           if (sql.includes('pg_advisory_xact_lock')) return [];
-          if (sql.includes('FROM "estudiante_habilitado"') && sql.includes('"situacion_ingreso" = \'PENDIENTE\'')) {
+          if (/UPDATE (?:"[a-z0-9_]+"\.)?"estudiante_habilitado"/.test(sql) && sql.includes('"estado" = \'SUSPENDIDO\'')) {
+            const [ids, fecha, actorId, observacion, periodoId] = parameters as [string[], Date, string, string, string];
+            const actor = records.find((record) => record.id === actorId) ?? ({ id: actorId } as Usuario);
+            for (const record of habilitadoRecords) {
+              if (!ids.includes(record.id) || record.periodo.id !== periodoId ||
+                record.condicion_ingreso !== 'CONDICIONADO' || record.situacion_ingreso !== 'PENDIENTE') continue;
+              record.estado = HabilitadoEstado.SUSPENDIDO;
+              record.situacion_ingreso = SituacionIngreso.NO_ADMITIDO;
+              record.fecha_resolucion_ingreso = fecha;
+              record.resuelto_por = actor;
+              record.observacion_ingreso = observacion;
+            }
+            return [];
+          }
+          if (/FROM (?:"[a-z0-9_]+"\.)?"estudiante_habilitado"/.test(sql) && sql.includes('"situacion_ingreso" = \'PENDIENTE\'')) {
             return habilitadoRecords
               .filter((record) => record.periodo.id === parameters?.[0] &&
                 record.condicion_ingreso === 'CONDICIONADO' && record.situacion_ingreso === 'PENDIENTE')
-              .map((record) => ({ id: record.id }));
+              .sort((left, right) => left.id.localeCompare(right.id))
+              .map((record) => ({ id: record.id, estado: record.estado, estudiante_id: record.estudiante.id }));
           }
           return [];
         },
@@ -556,6 +588,7 @@ export const usuarioTestDataSource = {
           if (entity === AsignacionTema) return assignmentTemaTestRepository;
           if (entity === CredencialUsuario) return credencialTestRepository;
           if (entity === CorreoSalida) return correoTestRepository;
+          if (entity === SesionUsuario) return sesionTestRepository;
           if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
           if (entity === AsignacionTutor) return asignacionTutorTestRepository;
           if (entity === PlantillaPat) return plantillaPatTestRepository;
@@ -588,6 +621,19 @@ export function clearUsuarioTestRecords(): void {
   credencialRecords.length = 0;
   correoRecords.length = 0;
   notificacionRecords.length = 0;
+  sesionRevocations.length = 0;
+}
+
+export function credencialTestRecords(): readonly CredencialUsuario[] {
+  return credencialRecords;
+}
+
+export function correoTestRecords(): readonly CorreoSalida[] {
+  return correoRecords;
+}
+
+export function sesionRevocationsTestRecords(): readonly string[] {
+  return sesionRevocations;
 }
 
 export function habilitadosTestRecords(): readonly EstudianteHabilitado[] {
@@ -626,6 +672,11 @@ export function setPeriodoTestFechas(
     periodo.fecha_inicio_postulacion = inicio;
     periodo.fecha_fin_postulacion = fin;
   }
+}
+
+export function setTemaTestEstado(id: string, estado: EstadoTema): void {
+  const tema = temaRecords.find((record) => record.id === id);
+  if (tema) tema.estado = estado;
 }
 
 export function setPeriodoTestInicioTitulacion(id: string, inicio: Date): void {

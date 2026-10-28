@@ -8,7 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { argon2id, hash } from 'argon2';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { CreateUsuarioDto } from './dto/create-usuario.dto.js';
 import { ListUsuariosQueryDto } from './dto/list-usuarios-query.dto.js';
 import { UsuarioResponseDto } from './dto/usuario-response.dto.js';
@@ -64,25 +64,46 @@ export class UsuariosService {
 
   async create(dto: CreateUsuarioDto, actor?: Usuario, ip: string | null = null): Promise<UsuarioResponseDto> {
     try {
-      const usuario = await this.dataSource.transaction(async (manager) => {
-        const users = manager.getRepository(Usuario);
-        const created = await users.save(users.create({
-          email: dto.email.trim().toLowerCase(), nombres: dto.nombres.trim(), apellidos: dto.apellidos.trim(),
-          rol: dto.rol, id_externo_sso: null, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null,
-        }));
-        const temporaryPassword = generateOneTimeSecret();
-        const encryptionKeyPath = this.config?.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-        if (!encryptionKeyPath) throw new ServiceUnavailableException('El correo de acceso no puede prepararse: falta la clave de cifrado.');
-        const encryptionKey = readEncryptionKey(encryptionKeyPath);
-        const outbox = await setTemporaryPassword(manager, created.id, temporaryPassword, encryptionKey);
-        await manager.getRepository(CorreoSalida).save(outbox);
-        if (actor && this.auditoria) await this.auditoria.registrar(manager, { actor, accion: 'CREAR_USUARIO', entidad_tipo: 'usuario', entidad_id: created.id, valores_anteriores: null, valores_nuevos: { email: created.email, nombres: created.nombres, apellidos: created.apellidos, rol: created.rol, estado: created.estado }, ip_origen: ip });
-        return created;
-      });
+      const usuario = await this.dataSource.transaction((manager) => this.crearCuenta(manager, dto, actor, ip));
       return responseFrom(usuario);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
+  }
+
+  /**
+   * Crea la cuenta ACTIVA con clave temporal aleatoria y su correo ACCESO cifrado dentro de la
+   * transacción del llamador, para que otros módulos (perfil docente) sean atómicos con el alta.
+   */
+  async crearCuenta(manager: EntityManager, dto: CreateUsuarioDto, actor?: Usuario, ip: string | null = null): Promise<Usuario> {
+    const users = manager.getRepository(Usuario);
+    const created = await users.save(users.create({
+      email: dto.email.trim().toLowerCase(), nombres: dto.nombres.trim(), apellidos: dto.apellidos.trim(),
+      rol: dto.rol, id_externo_sso: null, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null,
+    }));
+    const temporaryPassword = generateOneTimeSecret();
+    const encryptionKeyPath = this.config?.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
+    if (!encryptionKeyPath) throw new ServiceUnavailableException('El correo de acceso no puede prepararse: falta la clave de cifrado.');
+    const encryptionKey = readEncryptionKey(encryptionKeyPath);
+    const outbox = await setTemporaryPassword(manager, created.id, temporaryPassword, encryptionKey);
+    await manager.getRepository(CorreoSalida).save(outbox);
+    if (actor && this.auditoria) await this.auditoria.registrar(manager, { actor, accion: 'CREAR_USUARIO', entidad_tipo: 'usuario', entidad_id: created.id, valores_anteriores: null, valores_nuevos: { email: created.email, nombres: created.nombres, apellidos: created.apellidos, rol: created.rol, estado: created.estado }, ip_origen: ip });
+    return created;
+  }
+
+  /**
+   * Revoca las sesiones vigentes de una cuenta (misma regla que un cambio de contraseña):
+   * marca las sesiones como revocadas e incrementa la versión de sesión de la credencial.
+   */
+  async revocarSesiones(manager: EntityManager, usuarioId: string): Promise<void> {
+    const credentials = manager.getRepository(CredencialUsuario);
+    const credential = await credentials.findOne({ where: { usuario_id: usuarioId }, lock: { mode: 'pessimistic_write' } });
+    if (credential) {
+      credential.version_sesion += 1;
+      credential.actualizada_en = new Date();
+      await credentials.save(credential);
+    }
+    await manager.getRepository(SesionUsuario).update({ usuario_id: usuarioId, revocada_en: IsNull() }, { revocada_en: new Date() });
   }
 
   async reissueAccess(id: string, actor: Usuario, ip: string | null): Promise<UsuarioResponseDto> {

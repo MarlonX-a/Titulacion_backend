@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConflictException } from '@nestjs/common';
-import { EntityManager, IsNull } from 'typeorm';
+import { EntityManager, In, IsNull } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { ConfigCargaOrigen } from './enums/config-carga-origen.enum.js';
 import { ConfigCargaTutorial } from './entities/config-carga-tutorial.entity.js';
@@ -19,6 +19,16 @@ export interface EvaluacionCargaTutorial {
   advertencia: string | null;
 }
 
+/** Regla única: el límite específico activo prevalece; si no existe, aplica el global. */
+export function elegirConfiguracion(
+  especifica: ConfigCargaTutorial | null,
+  global: ConfigCargaTutorial | null,
+): ConfiguracionCargaEfectiva {
+  if (especifica) return { origen: ConfigCargaOrigen.DOCENTE, configuracion: especifica };
+  if (global) return { origen: ConfigCargaOrigen.GLOBAL, configuracion: global };
+  return { origen: ConfigCargaOrigen.SIN_CONFIGURACION, configuracion: null };
+}
+
 @Injectable()
 export class CargaTutorialPersistenciaService {
   async resolverConfiguracionEfectiva(
@@ -27,12 +37,47 @@ export class CargaTutorialPersistenciaService {
     docenteId: string,
   ): Promise<ConfiguracionCargaEfectiva> {
     const repository = manager.getRepository(ConfigCargaTutorial);
-    const especifica = await repository.findOneBy({ periodo_id: periodoId, docente_id: docenteId });
-    if (especifica) return { origen: ConfigCargaOrigen.DOCENTE, configuracion: especifica };
-
+    // Un límite específico desactivado se conserva como historial pero ya no aplica.
+    const especifica = await repository.findOneBy({ periodo_id: periodoId, docente_id: docenteId, activa: true });
+    if (especifica) return elegirConfiguracion(especifica, null);
     const global = await repository.findOneBy({ periodo_id: periodoId, docente_id: IsNull() });
-    if (global) return { origen: ConfigCargaOrigen.GLOBAL, configuracion: global };
-    return { origen: ConfigCargaOrigen.SIN_CONFIGURACION, configuracion: null };
+    return elegirConfiguracion(null, global);
+  }
+
+  /**
+   * Carga actual y configuración efectiva de varios docentes con dos consultas (límites activos
+   * del período y conteo agrupado), aplicando la misma regla que `resolverConfiguracionEfectiva`.
+   */
+  async resumirCargaDocentes(
+    manager: EntityManager,
+    periodoId: string,
+    docenteIds: string[],
+  ): Promise<Map<string, ConfiguracionCargaEfectiva & { actual: number }>> {
+    const result = new Map<string, ConfiguracionCargaEfectiva & { actual: number }>();
+    if (!docenteIds.length) return result;
+    const configs = await manager.getRepository(ConfigCargaTutorial).find({
+      where: [
+        { periodo_id: periodoId, docente_id: IsNull() },
+        { periodo_id: periodoId, docente_id: In(docenteIds), activa: true },
+      ],
+    });
+    const global = configs.find((config) => config.docente_id === null) ?? null;
+    const schema = this.schema(manager);
+    const rows = await manager.query(
+      `SELECT tutor."docente_id", count(*)::int AS total
+       FROM ${schema}."asignacion_tutor" tutor
+       JOIN ${schema}."asignacion_tema" trabajo ON trabajo."id" = tutor."asignacion_tema_id"
+       WHERE trabajo."periodo_id" = $1 AND tutor."docente_id" = ANY($2::uuid[])
+         AND tutor."estado" = 'VIGENTE' AND trabajo."estado" = 'VIGENTE'
+       GROUP BY tutor."docente_id"`,
+      [periodoId, docenteIds],
+    ) as Array<{ docente_id: string; total: number }>;
+    const counts = new Map(rows.map((row) => [row.docente_id, Number(row.total)]));
+    for (const docenteId of docenteIds) {
+      const especifica = configs.find((config) => config.docente_id === docenteId && config.activa) ?? null;
+      result.set(docenteId, { ...elegirConfiguracion(especifica, global), actual: counts.get(docenteId) ?? 0 });
+    }
+    return result;
   }
 
   async contarCargaActual(manager: EntityManager, periodoId: string, docenteId: string): Promise<number> {

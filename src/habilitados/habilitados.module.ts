@@ -9,6 +9,8 @@ import { HabilitadosController } from './habilitados.controller.js';
 import { HabilitadosService } from './habilitados.service.js';
 import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacion-tema-persistencia.module.js';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
+import { PostulacionesPersistenciaModule } from '../postulaciones/postulaciones-persistencia.module.js';
+import { GrupoIntegrantePersistenciaModule } from '../grupos/grupo-integrante-persistencia.module.js';
 
 @Module({
   imports: [
@@ -17,6 +19,8 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module.js
     AuditoriaModule,
     AsignacionTemaPersistenciaModule,
     NotificacionesModule,
+    PostulacionesPersistenciaModule,
+    GrupoIntegrantePersistenciaModule,
   ],
   controllers: [HabilitadosController],
   providers: [HabilitadosService],

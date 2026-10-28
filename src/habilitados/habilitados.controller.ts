@@ -5,6 +5,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -35,6 +36,7 @@ import { HabilitadoResponseDto } from './dto/habilitado-response.dto.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ListHabilitadosQueryDto } from './dto/list-habilitados-query.dto.js';
 import { ResolveIngresoDto } from './dto/resolve-ingreso.dto.js';
+import { UpdateHabilitacionDto } from './dto/update-habilitacion.dto.js';
 import { HabilitadosService } from './habilitados.service.js';
 
 @ApiTags('Estudiantes habilitados')
@@ -137,15 +139,36 @@ export class HabilitadosController {
     return this.habilitados.getById(periodoId, id);
   }
 
+  @Patch(':id')
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Editar la condición de ingreso de una habilitación y volver a habilitar al estudiante' })
+  @ApiOkResponse({ type: HabilitadoResponseDto })
+  @ApiBadRequestResponse({ description: 'Condición inválida, requisito pendiente ausente para CONDICIONADO o presente para REGULAR.' })
+  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
+  @ApiNotFoundResponse({ description: 'No existe la habilitación en el período indicado.' })
+  @ApiConflictResponse({ description: 'El período está ARCHIVADO o no admite condicionados pendientes (EN_CURSO).' })
+  actualizarCondicion(
+    @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateHabilitacionDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<HabilitadoResponseDto> {
+    return this.habilitados.actualizarCondicion(periodoId, id, actor, dto, request.ip || null);
+  }
+
   @Post(':id/resolver-ingreso')
   @HttpCode(200)
   @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Resolver el ingreso de un estudiante condicionado pendiente' })
+  @ApiOperation({
+    summary: 'Resolver el ingreso de un estudiante condicionado pendiente',
+    description: 'Permitido en BORRADOR, POSTULACION_ABIERTA y POSTULACION_CERRADA. ADMITIDO solo antes de la fecha de inicio de titulación; NO_ADMITIDO tardío requiere POSTULACION_CERRADA.',
+  })
   @ApiOkResponse({ type: HabilitadoResponseDto })
   @ApiBadRequestResponse({ description: 'Situación u observación inválida.' })
   @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
   @ApiNotFoundResponse({ description: 'No existe la habilitación en el período indicado.' })
-  @ApiConflictResponse({ description: 'El período no está en BORRADOR o el ingreso ya fue resuelto.' })
+  @ApiConflictResponse({ description: 'El período ya inició la titulación (EN_CURSO) o está ARCHIVADO, la fecha de inicio impide la resolución o el ingreso ya fue resuelto.' })
   resolve(
     @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
     @Param('id', new ParseUUIDPipe()) id: string,

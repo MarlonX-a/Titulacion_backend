@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { HttpException } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
@@ -98,12 +99,13 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const students = isolated.getRepository(Estudiante);
-  const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications), notifications);
-  const postulacionPersistence = new PostulacionPersistenciaService();
+  const postulacionPersistence = new PostulacionPersistenciaService(audit, notifications);
+  const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
+  const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications), notifications, postulacionPersistence, groupMembership);
   const groupService = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), students, isolated, habilitadoService, audit, postulacionPersistence);
   const inviteService = new InvitacionesService(isolated.getRepository(Invitacion), students, isolated, groupService, habilitadoService, audit, postulacionPersistence, notifications);
   const invitePersistence = new InvitacionPersistenciaService(audit, notifications);
-  const management = new GrupoGestionService(isolated, groupService, habilitadoService, audit, invitePersistence, postulacionPersistence);
+  const management = new GrupoGestionService(isolated, groupService, habilitadoService, audit, invitePersistence, postulacionPersistence, groupMembership);
   const studentUsers = profiles.map((profile) => profile.usuario);
 
   step = 'creación de grupos y representante';
@@ -196,7 +198,7 @@ async function verify(): Promise<void> {
   step = 'reversión transaccional al fallar auditoría';
   const rollbackGroup = await groupService.create(period.id, studentUsers[1], { nombre: 'Grupo rollback' } as CreateGrupoDto, null);
   const failingAudit = { registrar: async () => { throw new Error('Fallo de auditoría inyectado.'); } } as unknown as AuditoriaService;
-  const rollbackManagement = new GrupoGestionService(isolated, groupService, habilitadoService, failingAudit, invitePersistence, postulacionPersistence);
+  const rollbackManagement = new GrupoGestionService(isolated, groupService, habilitadoService, failingAudit, invitePersistence, postulacionPersistence, new GrupoIntegrantePersistenciaService(failingAudit, invitePersistence));
   const auditFailure = await rollbackManagement.disolver(period.id, rollbackGroup.id, studentUsers[1], false, { motivo: 'Forzar rollback' }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 503);
   const afterAuditFailure = await groupService.getById(period.id, rollbackGroup.id, actor, true);
   if (!auditFailure || afterAuditFailure.estado !== GrupoEstado.EN_CONFORMACION || afterAuditFailure.integrantes[0]?.estado !== GrupoIntegranteEstado.ACTIVO) throw new Error('El fallo de auditoría no revirtió completamente la disolución.');

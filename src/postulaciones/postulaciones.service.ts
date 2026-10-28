@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -28,6 +28,7 @@ import { TutoresPropuestosService } from './tutores-propuestos.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
+import { PostulacionPersistenciaService } from './postulacion-persistencia.service.js';
 
 interface DriverError { code?: string; }
 const relations = { periodo: true, tema: { linea: true, docente_proponente: { usuario: true } }, grupo: true, estudiante: { usuario: true }, registrada_por: true } as const;
@@ -45,6 +46,7 @@ export class PostulacionesService {
     private readonly tutores: TutoresPropuestosService,
     private readonly asignaciones: AsignacionTemaPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
+    private readonly persistencia: PostulacionPersistenciaService,
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreatePostulacionDto, ip: string | null): Promise<PostulacionResponseDto> {
@@ -164,11 +166,7 @@ export class PostulacionesService {
             if (!representative) throw new NotFoundException('No existe esa postulación visible para el usuario.');
           }
         }
-        const before = { estado: item.estado, observacion: item.observacion };
-        item.estado = EstadoPostulacion.CANCELADA; item.observacion = dto.motivo.trim();
-        await repo.save(item);
-        await this.auditoria.registrar(manager, { actor, accion: 'CANCELAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: before, valores_nuevos: { estado: item.estado, observacion: item.observacion }, ip_origen: ip });
-        await this.notificaciones.postulacion(manager, item.id, NotificacionTipo.POSTULACION_CANCELADA, actor.id);
+        await this.persistencia.cancelar(manager, item, actor, dto.motivo, ip);
       });
       return this.getRecord(periodoId, id);
     } catch (error: unknown) { this.handleDatabaseError(error); }
@@ -189,7 +187,7 @@ export class PostulacionesService {
       if (query.modalidad === ModalidadPostulacion.GRUPAL) qb.andWhere('p.grupo_id IS NOT NULL');
       if (!isAdmin) qb.andWhere('teacherUser.id = :actorId', { actorId: actor.id });
       const [items, total] = await qb.orderBy('p.fecha_postulacion', 'DESC').addOrderBy('p.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await Promise.all(items.map((item) => this.toResponse(item))), total, page: query.page, limit: query.limit };
+      return { data: await this.toResponses(items), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -207,7 +205,7 @@ export class PostulacionesService {
       if (query.modalidad === ModalidadPostulacion.INDIVIDUAL) qb.andWhere('p.estudiante_id IS NOT NULL');
       if (query.modalidad === ModalidadPostulacion.GRUPAL) qb.andWhere('p.grupo_id IS NOT NULL');
       const [items, total] = await qb.orderBy('p.fecha_postulacion', 'DESC').addOrderBy('p.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await Promise.all(items.map((item) => this.toResponse(item))), total, page: query.page, limit: query.limit };
+      return { data: await this.toResponses(items), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -237,21 +235,44 @@ export class PostulacionesService {
   }
 
   private async toResponse(item: Postulacion): Promise<PostulacionResponseDto> {
-    let participantIds: string[] = [];
-    if (item.estudiante) participantIds = [item.estudiante.id];
-    else if (item.grupo) participantIds = (await this.members.find({ where: { grupo: { id: item.grupo.id }, estado: GrupoIntegranteEstado.ACTIVO }, relations: { estudiante: { usuario: true } }, order: { fecha_ingreso: 'ASC', id: 'ASC' } })).map((member) => member.estudiante.id);
-    const participants = await Promise.all(participantIds.map(async (participantId) => {
-      const student = await this.students.findOne({ where: { id: participantId }, relations: { usuario: true } });
-      const enabled = await this.dataSource.getRepository(EstudianteHabilitado).findOne({ where: { periodo: { id: item.periodo.id }, estudiante: { id: participantId } } });
-      return student ? { id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula, habilitado: enabled?.estado ?? null, situacion_ingreso: enabled?.situacion_ingreso ?? null } : null;
-    }));
-    return { id: item.id, periodo_id: item.periodo.id, tema_id: item.tema.id,
-      tema: { id: item.tema.id, titulo: item.tema.titulo, min_integrantes: item.tema.min_integrantes, max_integrantes: item.tema.max_integrantes, estado: item.tema.estado },
-      grupo_id: item.grupo?.id ?? null, grupo: item.grupo ? { id: item.grupo.id, nombre: item.grupo.nombre } : null,
-      estudiante_id: item.estudiante?.id ?? null, participantes: participants.filter((person): person is NonNullable<typeof person> => person !== null),
-      num_integrantes: item.num_integrantes, registrada_por_id: item.registrada_por.id,
-      registrada_por: { id: item.registrada_por.id, nombres: item.registrada_por.nombres, apellidos: item.registrada_por.apellidos },
-      estado: item.estado, fecha_postulacion: item.fecha_postulacion, observacion: item.observacion };
+    return (await this.toResponses([item]))[0];
+  }
+
+  /**
+   * Arma las respuestas en lote: integrantes, perfiles, habilitaciones y tutores propuestos se
+   * cargan con una consulta por tipo para toda la página, sin consultas por postulación.
+   */
+  private async toResponses(items: Postulacion[]): Promise<PostulacionResponseDto[]> {
+    if (!items.length) return [];
+    const groupIds = [...new Set(items.flatMap((item) => (!item.estudiante && item.grupo ? [item.grupo.id] : [])))];
+    const members = groupIds.length ? await this.members.find({ where: { grupo: { id: In(groupIds) }, estado: GrupoIntegranteEstado.ACTIVO }, relations: { estudiante: true, grupo: true }, order: { fecha_ingreso: 'ASC', id: 'ASC' } }) : [];
+    const participantIdsOf = (item: Postulacion): string[] => {
+      if (item.estudiante) return [item.estudiante.id];
+      const groupId = item.grupo?.id;
+      return groupId ? members.filter((member) => member.grupo.id === groupId).map((member) => member.estudiante.id) : [];
+    };
+    const studentIds = [...new Set(items.flatMap(participantIdsOf))];
+    const students = studentIds.length ? await this.students.find({ where: { id: In(studentIds) }, relations: { usuario: true } }) : [];
+    const periodIds = [...new Set(items.map((item) => item.periodo.id))];
+    const enabled = studentIds.length ? await this.dataSource.getRepository(EstudianteHabilitado).find({ where: { periodo: { id: In(periodIds) }, estudiante: { id: In(studentIds) } }, relations: { periodo: true, estudiante: true } }) : [];
+    const tutors = await this.tutores.porPostulaciones(items.map((item) => ({ id: item.id, proponenteId: item.tema.docente_proponente?.id ?? null })));
+    const studentById = new Map(students.map((student) => [student.id, student]));
+    return items.map((item) => {
+      const participants = participantIdsOf(item).flatMap((participantId) => {
+        const student = studentById.get(participantId);
+        if (!student) return [];
+        const record = enabled.find((row) => row.periodo?.id === item.periodo.id && row.estudiante?.id === participantId);
+        return [{ id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula, habilitado: record?.estado ?? null, situacion_ingreso: record?.situacion_ingreso ?? null }];
+      });
+      return { id: item.id, periodo_id: item.periodo.id, tema_id: item.tema.id,
+        tema: { id: item.tema.id, titulo: item.tema.titulo, min_integrantes: item.tema.min_integrantes, max_integrantes: item.tema.max_integrantes, estado: item.tema.estado },
+        grupo_id: item.grupo?.id ?? null, grupo: item.grupo ? { id: item.grupo.id, nombre: item.grupo.nombre } : null,
+        estudiante_id: item.estudiante?.id ?? null, participantes: participants,
+        num_integrantes: item.num_integrantes, registrada_por_id: item.registrada_por.id,
+        registrada_por: { id: item.registrada_por.id, nombres: item.registrada_por.nombres, apellidos: item.registrada_por.apellidos },
+        estado: item.estado, fecha_postulacion: item.fecha_postulacion, observacion: item.observacion,
+        tutores_propuestos: tutors.get(item.id) ?? [] };
+    });
   }
 
   private async lockPeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {

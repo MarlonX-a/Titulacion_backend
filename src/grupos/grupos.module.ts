@@ -11,9 +11,10 @@ import { GruposController } from './grupos.controller.js';
 import { GruposService } from './grupos.service.js';
 import { GrupoGestionService } from './grupo-gestion.service.js';
 import { PostulacionesPersistenciaModule } from '../postulaciones/postulaciones-persistencia.module.js';
+import { GrupoIntegrantePersistenciaModule } from './grupo-integrante-persistencia.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Grupo, GrupoIntegrante, Estudiante]), EstudiantesModule, HabilitadosModule, AuditoriaModule, InvitacionPersistenciaModule, PostulacionesPersistenciaModule],
+  imports: [TypeOrmModule.forFeature([Grupo, GrupoIntegrante, Estudiante]), EstudiantesModule, HabilitadosModule, AuditoriaModule, InvitacionPersistenciaModule, PostulacionesPersistenciaModule, GrupoIntegrantePersistenciaModule],
   controllers: [GruposController],
   providers: [GruposService, GrupoGestionService],
   exports: [GruposService, GrupoGestionService],

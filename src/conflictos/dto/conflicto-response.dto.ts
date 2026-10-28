@@ -27,6 +27,7 @@ export class ConflictoPostulacionDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ enum: EstadoPostulacion }) estado!: EstadoPostulacion;
   @ApiPropertyOptional({ format: 'uuid', nullable: true }) grupo_id!: string | null;
+  @ApiPropertyOptional({ nullable: true, description: 'Nombre del grupo en postulaciones grupales.' }) grupo_nombre!: string | null;
   @ApiPropertyOptional({ format: 'uuid', nullable: true }) estudiante_id!: string | null;
   @ApiProperty() num_integrantes!: number;
   @ApiProperty() fecha_postulacion!: Date;
@@ -64,8 +65,13 @@ export class ConflictoDetalleResponseDto {
   @ApiProperty({ type: [ConflictoPostulacionDto] }) postulaciones!: ConflictoPostulacionDto[];
 }
 
+export class ConflictoListadoItemDto extends ConflictoTemaResumenDto {
+  @ApiPropertyOptional({ type: ConflictoResolucionDto, nullable: true }) resolucion!: ConflictoResolucionDto | null;
+  @ApiProperty({ type: [ConflictoPostulacionDto], description: 'Candidaturas del tema (mismo contenido que el detalle).' }) postulaciones!: ConflictoPostulacionDto[];
+}
+
 export class ConflictosPageResponseDto {
-  @ApiProperty({ type: [ConflictoTemaResumenDto] }) data!: ConflictoTemaResumenDto[];
+  @ApiProperty({ type: [ConflictoListadoItemDto] }) data!: ConflictoListadoItemDto[];
   @ApiProperty() total!: number;
   @ApiProperty() page!: number;
   @ApiProperty() limit!: number;

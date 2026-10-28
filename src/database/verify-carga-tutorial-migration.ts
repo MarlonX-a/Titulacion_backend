@@ -17,6 +17,7 @@ import { CreateEstudianteDocente20261002010000 } from './migrations/202610020100
 import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
 import { CreateHabilitados20261002030000 } from './migrations/20261002030000-CreateHabilitados.js';
 import { CreateCargaTutorial20261007100000 } from './migrations/20261007100000-CreateCargaTutorial.js';
+import { DesactivarConfigCargaTutorial20261020100000 } from './migrations/20261020100000-DesactivarConfigCargaTutorial.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
@@ -46,7 +47,7 @@ async function verify(): Promise<void> {
     ...options,
     schema,
     entities: [Usuario, Docente, PeriodoTitulacion, ConfigCargaTutorial, Auditoria],
-    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateCargaTutorial20261007100000],
+    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateCargaTutorial20261007100000, DesactivarConfigCargaTutorial20261020100000],
   });
   await isolated.initialize();
   await isolated.runMigrations({ transaction: 'all' });
@@ -112,6 +113,38 @@ async function verify(): Promise<void> {
   const conflicts = race.filter((item) => item.status === 'rejected' && item.reason instanceof ConflictException).length;
   if (successes !== 1 || conflicts !== 1) throw new Error('UNIQUE NULLS NOT DISTINCT no detuvo configuraciones globales concurrentes.');
 
+  step = 'desactivación de límites específicos';
+  const deactivated = await service.deactivate(period.id, specific.id, actor, null);
+  if (deactivated.activa) throw new Error('El límite específico no quedó desactivado.');
+  const fallback = await service.effectiveForDocente(period.id, teacher.id);
+  if (fallback.origen !== 'GLOBAL' || fallback.configuracion?.id !== global.id) throw new Error('Un límite desactivado siguió aplicándose en lugar del global.');
+  let globalProtected = false;
+  try { await service.deactivate(period.id, global.id, actor, null); }
+  catch (error: unknown) { globalProtected = error instanceof ConflictException; }
+  if (!globalProtected) throw new Error('Se permitió desactivar el límite global.');
+  let inactiveUpdateRejected = false;
+  try { await service.update(period.id, specific.id, { max_trabajos: 9 }, actor, null); }
+  catch (error: unknown) { inactiveUpdateRejected = error instanceof ConflictException; }
+  if (!inactiveUpdateRejected) throw new Error('Se modificó un límite desactivado.');
+  let rawInactiveRejected = false;
+  try { await isolated.query(`UPDATE ${quotedSchema()}."config_carga_tutorial" SET "activa" = true WHERE "id" = $1`, [specific.id]); }
+  catch (error: unknown) { rawInactiveRejected = code(error) === '23514'; }
+  if (!rawInactiveRejected) throw new Error('PostgreSQL permitió reactivar o modificar un límite desactivado.');
+  let rawGlobalRejected = false;
+  try { await isolated.query(`UPDATE ${quotedSchema()}."config_carga_tutorial" SET "activa" = false WHERE "id" = $1`, [global.id]); }
+  catch (error: unknown) { rawGlobalRejected = code(error) === '23514'; }
+  if (!rawGlobalRejected) throw new Error('PostgreSQL permitió desactivar el límite global.');
+  const replacement = await service.create(period.id, { docente_id: teacher.id, max_trabajos: 3, bloquear_al_superar: true }, actor, null);
+  const renewed = await service.effectiveForDocente(period.id, teacher.id);
+  if (renewed.origen !== 'DOCENTE' || renewed.configuracion?.id !== replacement.id) throw new Error('El nuevo límite específico no reemplazó al desactivado.');
+  let secondActiveRejected = false;
+  try { await isolated.query(`INSERT INTO ${quotedSchema()}."config_carga_tutorial" ("periodo_id", "docente_id", "max_trabajos", "bloquear_al_superar") VALUES ($1, $2, 1, true)`, [period.id, teacher.id]); }
+  catch (error: unknown) { secondActiveRejected = code(error) === '23505'; }
+  if (!secondActiveRejected) throw new Error('PostgreSQL aceptó dos límites específicos activos para el mismo docente.');
+  const activeList = await service.list(period.id, { page: 1, limit: 20 });
+  const historyList = await service.list(period.id, { page: 1, limit: 20, incluir_inactivas: true });
+  if (activeList.data.some((item) => !item.activa) || historyList.total !== activeList.total + 1) throw new Error('El listado no separa los límites desactivados.');
+
   step = 'atomicidad de auditoría';
   const fn = `${quotedSchema()}."rechazar_auditoria_carga"`;
   await isolated.query(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo auditoría'; END; $$`);
@@ -124,6 +157,18 @@ async function verify(): Promise<void> {
   const rolledBack = await isolated.getRepository(ConfigCargaTutorial).findOneBy({ periodo_id: secondPeriod.id, docente_id: teacher.id });
   if (!auditFailed || rolledBack) throw new Error('La configuración persistió aunque su auditoría falló.');
 
+  step = 'reversión protegida de la desactivación';
+  let deactivationDownProtected = false;
+  try { await isolated.undoLastMigration(); }
+  catch (error: unknown) { deactivationDownProtected = error instanceof Error && error.message.includes('límites de carga desactivados'); }
+  if (!deactivationDownProtected) throw new Error('La reversión no protegió los límites desactivados.');
+  await isolated.query(`ALTER TABLE ${quotedSchema()}."config_carga_tutorial" DISABLE TRIGGER "TRG_config_carga_inactiva_inmutable"`);
+  await isolated.query(`DELETE FROM ${quotedSchema()}."config_carga_tutorial" WHERE NOT "activa"`);
+  await isolated.query(`ALTER TABLE ${quotedSchema()}."config_carga_tutorial" ENABLE TRIGGER "TRG_config_carga_inactiva_inmutable"`);
+  await isolated.undoLastMigration();
+  const column = await isolated.query(`SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'config_carga_tutorial' AND column_name = 'activa'`, [schema]) as unknown[];
+  if (column.length > 0) throw new Error('La reversión no eliminó la columna activa.');
+
   step = 'reversión protegida con registros';
   let protectedDown = false;
   try { await isolated.undoLastMigration(); }
@@ -132,7 +177,7 @@ async function verify(): Promise<void> {
 
   step = 'reversión segura en tabla vacía';
   await isolated.getRepository(Auditoria).delete({ entidad_tipo: 'config_carga_tutorial' });
-  await isolated.getRepository(ConfigCargaTutorial).clear();
+  await isolated.query(`DELETE FROM ${quotedSchema()}."config_carga_tutorial"`);
   await isolated.undoLastMigration();
   const remaining = await isolated.query(`SELECT to_regclass($1) AS table_name`, [`${schema}.config_carga_tutorial`]) as Array<{ table_name: string | null }>;
   if (remaining[0]?.table_name !== null) throw new Error('La reversión de una tabla vacía no la eliminó.');
@@ -154,4 +199,4 @@ catch (error: unknown) {
   process.exitCode = 1;
 } finally { try { await cleanup(); } catch { console.error('No se pudo limpiar el esquema temporal de carga tutorial.'); process.exitCode = 1; } }
 
-if (verified && process.exitCode !== 1) console.info('Migración, prioridad efectiva, unicidad, auditoría atómica y reversión de carga tutorial verificadas en esquema temporal.');
+if (verified && process.exitCode !== 1) console.info('Migración, prioridad efectiva, unicidad, auditoría atómica, desactivación de límites específicos y reversión de carga tutorial verificadas en esquema temporal.');

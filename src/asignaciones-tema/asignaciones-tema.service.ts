@@ -27,6 +27,8 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaPersistenciaService } from './asignacion-tema-persistencia.service.js';
 import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
+import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
+import { AnularAsignacionTemaDto } from './dto/anular-asignacion-tema.dto.js';
 import { AsignarTemaDto } from './dto/asignar-tema.dto.js';
 import { ListAsignacionesTemaQueryDto } from './dto/list-asignaciones-tema-query.dto.js';
 import { AsignacionTemaResponseDto, PagedAsignacionesTemaResponseDto } from './dto/asignacion-tema-response.dto.js';
@@ -135,6 +137,32 @@ export class AsignacionesTemaService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
+  /**
+   * Anulación manual por ADMIN: mismos efectos que la anulación por incumplimiento, con la
+   * causa y el motivo indicados. No se permite en períodos ARCHIVADOS ni sobre asignaciones
+   * que ya no están VIGENTES.
+   */
+  async anular(periodoId: string, asignacionId: string, dto: AnularAsignacionTemaDto, actor: Usuario, ip: string | null): Promise<AsignacionTemaResponseDto> {
+    try {
+      await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+        const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodoId }, lock: { mode: 'pessimistic_write' } });
+        if (!period) throw new NotFoundException('No existe el período indicado.');
+        if (period.estado === PeriodoEstado.ARCHIVADO) throw new ConflictException('No se pueden anular asignaciones de un período ARCHIVADO.');
+        const estado = await this.persistencia.bloquearParaAnulacion(manager, periodoId, asignacionId);
+        if (!estado) throw new NotFoundException('No existe esa asignación en el período indicado.');
+        if (estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('Solo se pueden anular asignaciones VIGENTES.');
+        const manual = dto.causa === AsignacionTemaCausa.OTRA;
+        await this.persistencia.anularBloqueada(manager, asignacionId, {
+          causa: dto.causa,
+          motivo: dto.motivo,
+          accionPostulacion: manual ? 'ANULAR_POSTULACION_MANUAL' : 'ANULAR_POSTULACION_INCUMPLIMIENTO',
+          accionTema: manual ? 'REPUBLICAR_TEMA_ANULACION' : 'REPUBLICAR_TEMA_INCUMPLIMIENTO',
+        }, actor, ip);
+      });
+      return this.getById(periodoId, asignacionId, actor, true);
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
   async list(periodoId: string, query: ListAsignacionesTemaQueryDto, actor: Usuario, isAdmin: boolean): Promise<PagedAsignacionesTemaResponseDto> {
     try {
       if (!await this.dataSource.getRepository(PeriodoTitulacion).exist({ where: { id: periodoId } })) throw new NotFoundException('No existe el período indicado.');
@@ -227,7 +255,9 @@ export class AsignacionesTemaService {
       estudiante_id: item.estudiante_id, participantes: participantRows,
       aprobada_por_id: item.aprobada_por_id, aprobada_por: { id: item.aprobada_por.id, nombres: item.aprobada_por.nombres, apellidos: item.aprobada_por.apellidos },
       estado: item.estado, fecha_asignacion: item.fecha_asignacion, motivo: item.motivo,
-      causa_anulacion: item.causa_anulacion, motivo_anulacion: item.motivo_anulacion, anulada_por_id: item.anulada_por_id, fecha_anulacion: item.fecha_anulacion,
+      causa_anulacion: item.causa_anulacion, motivo_anulacion: item.motivo_anulacion, anulada_por_id: item.anulada_por_id,
+      anulada_por: item.anulada_por ? { id: item.anulada_por.id, nombres: item.anulada_por.nombres, apellidos: item.anulada_por.apellidos } : null,
+      fecha_anulacion: item.fecha_anulacion,
     };
   }
 

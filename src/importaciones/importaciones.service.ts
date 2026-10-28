@@ -27,9 +27,22 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
-import { createEncryptedOutbox, createTemporaryCredentialHash, generateOneTimeSecret, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
+import { createEncryptedOutbox, createTemporaryCredentialHash, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
 
 const PREPARATION_TTL_MS = 12 * 60 * 60 * 1000;
+
+interface HabilitacionImportada {
+  estado: HabilitadoEstado;
+  condicion_ingreso: CondicionIngreso;
+  requisito_pendiente: null;
+  situacion_ingreso: SituacionIngreso;
+}
+
+function habilitacionImportada(row: EstudianteExcelRow): HabilitacionImportada {
+  return row.habilitado
+    ? { estado: HabilitadoEstado.HABILITADO, condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.ADMITIDO }
+    : { estado: HabilitadoEstado.SUSPENDIDO, condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.NO_ADMITIDO };
+}
 
 export interface ImportacionResumen {
   id: string;
@@ -46,12 +59,19 @@ export interface ImportacionResumen {
 
 function response(record: PreparacionImportacion): ImportacionResumen {
   return {
-    id: record.id, periodo_id: record.periodo.id, nombre_archivo: record.nombre_archivo,
+    id: record.id, periodo_id: record.periodo?.id ?? '', nombre_archivo: record.nombre_archivo,
     estado: record.estado, total_filas: record.total_filas,
     errores: (record.errores as ExcelRowError[] | null) ?? [],
     vista_previa: (record.filas as EstudianteExcelRow[] | null) ?? [],
     lote_id: record.lote?.id ?? null, creada_en: record.creada_en, expira_en: record.expira_en,
   };
+}
+
+/** Nombre del trabajo BullMQ según el tipo de importación y su estado duradero pendiente. */
+export function jobName(tipo: LoteImportacionTipo, estado: EstadoPreparacion): string {
+  const validating = estado === EstadoPreparacion.VALIDANDO;
+  if (tipo === LoteImportacionTipo.DOCENTES) return validating ? 'validar-docentes' : 'importar-docentes';
+  return validating ? 'validar-excel' : 'importar-estudiantes';
 }
 
 @Injectable()
@@ -88,7 +108,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       record = await this.dataSource.transaction(async (manager) => {
         const preparationRepo = manager.getRepository(PreparacionImportacion);
         const created = await preparationRepo.save(preparationRepo.create({
-          periodo: { id: periodId }, solicitada_por: actor, lote: null,
+          periodo: { id: periodId }, tipo: LoteImportacionTipo.ESTUDIANTES, solicitada_por: actor, lote: null,
           nombre_archivo: filename.slice(0, 200), ruta_almacenamiento: key,
           sha256: createHash('sha256').update(buffer).digest('hex'),
           estado: EstadoPreparacion.VALIDANDO, total_filas: 0, filas: null, errores: null,
@@ -111,14 +131,15 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
 
   async validateFile(id: string): Promise<void> {
     const repository = this.dataSource.getRepository(PreparacionImportacion);
-    const record = await repository.findOne({ where: { id }, relations: { periodo: true } });
-    if (!record || record.estado !== EstadoPreparacion.VALIDANDO || record.expira_en <= new Date()) return;
+    const record = await repository.findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES }, relations: { periodo: true } });
+    if (!record?.periodo || record.estado !== EstadoPreparacion.VALIDANDO || record.expira_en <= new Date()) return;
+    const periodo = record.periodo;
     try {
-      await this.assertDraftPeriod(record.periodo.id);
+      await this.assertDraftPeriod(periodo.id);
       const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
       const parsed = await parseStudentsXlsx(buffer);
       if (parsed.sha256 !== record.sha256) throw new ConflictException('El archivo cambió desde que se envió a validar.');
-      const databaseErrors = await this.validateExistingRows(parsed.rows, record.periodo.id);
+      const databaseErrors = await this.validateExistingRows(parsed.rows, periodo.id);
       const errors = [...parsed.errors, ...databaseErrors];
       record.total_filas = parsed.rows.length;
       record.filas = parsed.rows;
@@ -133,7 +154,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   }
 
   async get(periodId: string, id: string): Promise<ImportacionResumen> {
-    const record = await this.dataSource.getRepository(PreparacionImportacion).findOne({ where: { id, periodo: { id: periodId } }, relations: { periodo: true, lote: true } });
+    const record = await this.dataSource.getRepository(PreparacionImportacion).findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES, periodo: { id: periodId } }, relations: { periodo: true, lote: true } });
     if (!record) throw new NotFoundException('No existe la preparación indicada para el período.');
     if (record.expira_en <= new Date() && [EstadoPreparacion.VALIDANDO, EstadoPreparacion.LISTA, EstadoPreparacion.INVALIDA].includes(record.estado)) throw new GoneException('La preparación venció; vuelve a cargar el archivo.');
     return response(record);
@@ -144,7 +165,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodId }, lock: { mode: 'pessimistic_write' } });
       if (!period) throw new NotFoundException('No existe el período indicado.');
       if (period.estado !== PeriodoEstado.BORRADOR) throw new ConflictException('Solo se puede importar en períodos BORRADOR.');
-      const record = await manager.getRepository(PreparacionImportacion).findOne({ where: { id, periodo: { id: periodId } }, relations: { periodo: true }, lock: { mode: 'pessimistic_write' } });
+      const record = await manager.getRepository(PreparacionImportacion).findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES, periodo: { id: periodId } }, relations: { periodo: true }, lock: { mode: 'pessimistic_write' } });
       if (!record) throw new NotFoundException('No existe la preparación indicada para el período.');
       if (record.estado === EstadoPreparacion.COMPLETADA) throw new ConflictException('La importación ya fue completada.');
       if (record.estado === EstadoPreparacion.LISTA) {
@@ -169,18 +190,24 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
 
   async importConfirmed(id: string): Promise<void> {
     const prepRepo = this.dataSource.getRepository(PreparacionImportacion);
-    const record = await prepRepo.findOne({ where: { id }, relations: { periodo: true, solicitada_por: true } });
-    if (!record || record.estado !== EstadoPreparacion.EN_COLA || record.expira_en <= new Date()) return;
+    const record = await prepRepo.findOne({ where: { id, tipo: LoteImportacionTipo.ESTUDIANTES }, relations: { periodo: true, solicitada_por: true } });
+    if (!record?.periodo || record.estado !== EstadoPreparacion.EN_COLA || record.expira_en <= new Date()) return;
+    const periodoId = record.periodo.id;
     if (!Array.isArray(record.filas) || !Array.isArray(record.errores) || record.errores.length > 0) throw new ConflictException('La preparación ya no es válida.');
     const rows = record.filas as EstudianteExcelRow[];
+    if (rows.some((row) => typeof row.habilitado !== 'boolean' || typeof row.cedula !== 'string')) {
+      const message = 'La vista previa usa un formato anterior; vuelve a validar el archivo.';
+      await prepRepo.update({ id }, { estado: EstadoPreparacion.INVALIDA, errores: [{ fila: 0, columna: 'confirmación', mensaje: message }] });
+      throw new ConflictException(message);
+    }
     const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
     if (createHash('sha256').update(buffer).digest('hex') !== record.sha256) throw new ConflictException('El archivo guardado no coincide con la vista previa validada.');
-    const access = await Promise.all(rows.map(async (row) => ({ row, temp: generateOneTimeSecret() })));
+    // La clave temporal inicial es la cédula; la credencial exige cambiarla en el primer acceso.
     const tempHashes = new Map<string, string>();
-    for (const item of access) tempHashes.set(item.row.email, await createTemporaryCredentialHash(item.temp));
+    for (const row of rows) tempHashes.set(row.email, await createTemporaryCredentialHash(row.cedula));
     try {
       const wasImported = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
-        const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: record.periodo.id }, lock: { mode: 'pessimistic_write' } });
+        const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodoId }, lock: { mode: 'pessimistic_write' } });
         if (!period) throw new NotFoundException('No existe el período de la importación.');
         if (period.estado !== PeriodoEstado.BORRADOR) throw new ConflictException('El período dejó de estar en borrador; no se creó ningún registro.');
         const preparation = await manager.getRepository(PreparacionImportacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
@@ -207,26 +234,22 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           if (!profile) profile = await students.save(students.create({ usuario: user, cedula: row.cedula, matricula: row.matricula, carrera: row.carrera, nivel: row.nivel }));
           let habilitation = await enabledRepo.findOne({ where: { periodo: { id: period.id }, estudiante: { id: profile.id } }, lock: { mode: 'pessimistic_write' } });
           if (!habilitation) {
-            const regular = row.condicion_ingreso === CondicionIngreso.REGULAR;
+            const resolution = habilitacionImportada(row);
             habilitation = await enabledRepo.save(enabledRepo.create({
               periodo: period, estudiante: profile, origen: HabilitadoOrigen.IMPORTACION, lote_importacion: lot,
-              estado: HabilitadoEstado.HABILITADO, condicion_ingreso: row.condicion_ingreso,
-              requisito_pendiente: row.requisito_pendiente,
-              situacion_ingreso: regular ? SituacionIngreso.ADMITIDO : SituacionIngreso.PENDIENTE,
-              fecha_habilitacion: now, fecha_resolucion_ingreso: regular ? now : null,
-              resuelto_por: regular ? record.solicitada_por : null, observacion_ingreso: null,
+              ...resolution,
+              fecha_habilitacion: now, fecha_resolucion_ingreso: now,
+              resuelto_por: record.solicitada_por, observacion_ingreso: null,
             }));
-            await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_HABILITACION', entidad_tipo: 'estudiante_habilitado', entidad_id: habilitation.id, valores_anteriores: null, valores_nuevos: { periodo_id: period.id, estudiante_id: profile.id, lote_importacion_id: lot.id, condicion_ingreso: row.condicion_ingreso, situacion_ingreso: habilitation.situacion_ingreso, origen: HabilitadoOrigen.IMPORTACION }, ip_origen: record.ip_origen });
+            await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_HABILITACION', entidad_tipo: 'estudiante_habilitado', entidad_id: habilitation.id, valores_anteriores: null, valores_nuevos: { periodo_id: period.id, estudiante_id: profile.id, lote_importacion_id: lot.id, estado: resolution.estado, condicion_ingreso: resolution.condicion_ingreso, situacion_ingreso: resolution.situacion_ingreso, origen: HabilitadoOrigen.IMPORTACION }, ip_origen: record.ip_origen });
           }
           const credential = await credentials.findOne({ where: { usuario_id: user.id }, lock: { mode: 'pessimistic_write' } });
           if (!credential) {
-            const password = access.find((item) => item.row.email === row.email)?.temp;
-            if (!password) throw new Error('No se pudo generar una clave temporal.');
             const expiry = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
             const hash = tempHashes.get(row.email);
             if (!hash) throw new Error('No se pudo proteger la clave temporal.');
             await credentials.save(credentials.create({ usuario_id: user.id, password_hash: hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));
-            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', password, expiry, this.encryptionKey));
+            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', row.cedula, expiry, this.encryptionKey));
           }
         }
         lot.filas_ok = rows.length;
@@ -263,7 +286,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     try {
       const pending = await this.dataSource.getRepository(PreparacionImportacion).find({ where: [{ estado: EstadoPreparacion.VALIDANDO }, { estado: EstadoPreparacion.EN_COLA }], order: { creada_en: 'ASC' }, take: 25 });
       for (const item of pending) {
-        await this.queue.add(item.estado === EstadoPreparacion.VALIDANDO ? 'validar-excel' : 'importar-estudiantes', { id: item.id }, { jobId: `importacion-${item.estado === EstadoPreparacion.VALIDANDO ? 'validar' : 'confirmar'}-${item.id}`, attempts: 3, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
+        await this.queue.add(jobName(item.tipo, item.estado), { id: item.id }, { jobId: `importacion-${item.estado === EstadoPreparacion.VALIDANDO ? 'validar' : 'confirmar'}-${item.id}`, attempts: 3, backoff: { type: 'exponential', delay: 3000 }, removeOnComplete: true, removeOnFail: false });
       }
     } catch {
       // Los estados duraderos en PostgreSQL permiten retomar el despacho en el siguiente ciclo.
@@ -301,8 +324,9 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
         }
         if (profile) {
           const old = await enabledRepo.findOneBy({ periodo: { id: periodId }, estudiante: { id: profile.id } });
-          if (old && (old.estado !== HabilitadoEstado.HABILITADO || old.condicion_ingreso !== row.condicion_ingreso || old.requisito_pendiente !== row.requisito_pendiente || old.situacion_ingreso !== (row.condicion_ingreso === CondicionIngreso.REGULAR ? SituacionIngreso.ADMITIDO : SituacionIngreso.PENDIENTE))) {
-            errors.push({ fila: row.fila, columna: 'condicion_ingreso', mensaje: 'La habilitación del período existe con datos o una resolución distinta; no se sobrescribirá.' });
+          const expected = habilitacionImportada(row);
+          if (old && (old.estado !== expected.estado || old.condicion_ingreso !== expected.condicion_ingreso || old.requisito_pendiente !== expected.requisito_pendiente || old.situacion_ingreso !== expected.situacion_ingreso)) {
+            errors.push({ fila: row.fila, columna: 'habilitado', mensaje: 'La habilitación del período existe con datos o una resolución distinta; no se sobrescribirá.' });
           }
         }
       }

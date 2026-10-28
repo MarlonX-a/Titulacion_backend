@@ -4,9 +4,12 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -29,6 +32,7 @@ import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CreateDocenteDto } from './dto/create-docente.dto.js';
+import { UpdateDocenteDto } from './dto/update-docente.dto.js';
 import { DocenteResponseDto } from './dto/docente-response.dto.js';
 import { DocentesService } from './docentes.service.js';
 
@@ -44,13 +48,21 @@ export class DocentesController {
 
   @Post()
   @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Crear perfil docente para una cuenta existente' })
-  @ApiBadRequestResponse({ description: 'Los campos del perfil no son válidos.' })
+  @ApiOperation({
+    summary: 'Registrar un docente',
+    description:
+      'Con usuario_id crea el perfil para una cuenta DOCENTE existente. Sin usuario_id crea, en una sola transacción, la cuenta DOCENTE (clave temporal y correo de acceso asíncrono) y su perfil.',
+  })
+  @ApiBadRequestResponse({ description: 'Los campos no son válidos o mezclan usuario_id con datos de cuenta.' })
   @ApiCreatedResponse({ type: DocenteResponseDto })
-  @ApiConflictResponse({ description: 'Cuenta incompatible o perfil duplicado.' })
+  @ApiConflictResponse({ description: 'Cuenta incompatible, correo o cédula duplicados, o perfil duplicado.' })
   @ApiNotFoundResponse({ description: 'La cuenta indicada no existe.' })
-  create(@Body() dto: CreateDocenteDto): Promise<DocenteResponseDto> {
-    return this.docentes.create(dto);
+  create(
+    @Body() dto: CreateDocenteDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<DocenteResponseDto> {
+    return this.docentes.create(dto, actor, request.ip ?? null);
   }
 
   @Get()
@@ -103,5 +115,25 @@ export class DocentesController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<DocenteResponseDto> {
     return this.docentes.getById(id);
+  }
+
+  @Patch(':id')
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({
+    summary: 'Editar un docente',
+    description:
+      'Edita nombres, apellidos y estado (ACTIVO/INACTIVO) de la cuenta, y cédula, título, departamento y habilitación para tutoría del perfil. El correo no es editable. INACTIVO revoca las sesiones vigentes y no altera tutorías ni asignaciones existentes.',
+  })
+  @ApiOkResponse({ type: DocenteResponseDto })
+  @ApiBadRequestResponse({ description: 'Cuerpo vacío, campos inválidos o intento de cambiar el correo.' })
+  @ApiNotFoundResponse({ description: 'No existe el perfil solicitado.' })
+  @ApiConflictResponse({ description: 'La cédula ya está registrada en otro docente.' })
+  update(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateDocenteDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ): Promise<DocenteResponseDto> {
+    return this.docentes.update(id, dto, actor, request.ip ?? null);
   }
 }

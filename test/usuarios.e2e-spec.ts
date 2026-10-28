@@ -24,7 +24,12 @@ import { PeriodoEstado } from '../src/periodos/enums/periodo-estado.enum.js';
 import { CondicionIngreso } from '../src/habilitados/enums/condicion-ingreso.enum.js';
 import { SituacionIngreso } from '../src/habilitados/enums/situacion-ingreso.enum.js';
 import { HabilitadoEstado } from '../src/habilitados/enums/habilitado-estado.enum.js';
+import { EstadoTema } from '../src/temas/enums/estado-tema.enum.js';
+import { vi } from 'vitest';
 import { NotificacionesPersistenciaService } from '../src/notificaciones/notificaciones-persistencia.service.js';
+import { AsignacionTemaPersistenciaService } from '../src/asignaciones-tema/asignacion-tema-persistencia.service.js';
+import { PostulacionPersistenciaService } from '../src/postulaciones/postulacion-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../src/grupos/grupo-integrante-persistencia.service.js';
 import {
   addUsuarioTestRecord,
   clearUsuarioTestRecords,
@@ -33,8 +38,12 @@ import {
   auditoriaTestRecords,
   habilitadosTestRecords,
   setPeriodoTestInicioTitulacion,
+  setTemaTestEstado,
   findUsuarioTestIdByExternalId,
   DatabaseTestingModule,
+  credencialTestRecords,
+  correoTestRecords,
+  sesionRevocationsTestRecords,
 } from './database-testing.module.js';
 
 describe('Usuarios (e2e)', () => {
@@ -44,6 +53,7 @@ describe('Usuarios (e2e)', () => {
   let privateKey: CryptoKey;
   let publicJwk: JWK;
   const tokens = new Map<string, string>();
+  const avisosIngreso: Array<{ id: string; actorId: string; aviso: string }> = [];
 
   async function createToken(subject: string, roleClaim?: string) {
     return new SignJWT(roleClaim ? { role: roleClaim } : {})
@@ -125,14 +135,18 @@ describe('Usuarios (e2e)', () => {
         return { subject: findUsuarioTestIdByExternalId(externalSubject) ?? externalSubject, issuer: 'http://127.0.0.1:3000', firstAccess: false };
       } })
       .overrideProvider(NotificacionesPersistenciaService)
-      .useValue({ ingreso: async () => undefined })
+      .useValue({ ingreso: (_manager: unknown, id: string, actorId: string, aviso = 'RESOLUCION') => { avisosIngreso.push({ id, actorId, aviso }); return Promise.resolve(); } })
       .compile();
     app = moduleFixture.createNestApplication<INestApplication<App>>();
     configureApplication(app);
     await app.init();
   });
 
-  beforeEach(() => clearUsuarioTestRecords());
+  beforeEach(() => {
+    clearUsuarioTestRecords();
+    avisosIngreso.length = 0;
+    vi.restoreAllMocks();
+  });
 
   afterAll(async () => {
     await app?.close();
@@ -851,6 +865,9 @@ describe('Usuarios (e2e)', () => {
   });
 
   it('resuelve condicionados una sola vez, conserva el requisito y registra auditoría atómica', async () => {
+    const anular = vi.spyOn(app.get(AsignacionTemaPersistenciaService), 'anularPorIncumplimiento');
+    const cancelarPostulaciones = vi.spyOn(app.get(PostulacionPersistenciaService), 'cancelarPendientesPorNoAdmision');
+    const retirarGrupo = vi.spyOn(app.get(GrupoIntegrantePersistenciaService), 'retirarPorNoAdmision');
     addAdmin();
     const { profile } = await createStudentProfile();
     const period = await createPeriod();
@@ -890,6 +907,22 @@ describe('Usuarios (e2e)', () => {
       estado: 'HABILITADO',
     });
     expect(auditoriaTestRecords()).toHaveLength(4);
+    expect(anular).toHaveBeenCalledTimes(1);
+    expect(anular).toHaveBeenCalledWith(
+      expect.anything(), period.body.id, secondProfile.body.id, expect.objectContaining({ rol: UsuarioRol.ADMIN }), 'No completó el requisito.', expect.any(String),
+    );
+    // La NO_ADMISIÓN también cancela postulaciones pendientes y retira del grupo activo, en la misma transacción y en orden.
+    for (const effect of [cancelarPostulaciones, retirarGrupo]) {
+      expect(effect).toHaveBeenCalledTimes(1);
+      expect(effect).toHaveBeenCalledWith(
+        anular.mock.calls[0]![0], period.body.id, secondProfile.body.id, expect.objectContaining({ rol: UsuarioRol.ADMIN }), 'No completó el requisito.', expect.any(String),
+      );
+    }
+    expect(anular.mock.invocationCallOrder[0]).toBeLessThan(cancelarPostulaciones.mock.invocationCallOrder[0]!);
+    expect(cancelarPostulaciones.mock.invocationCallOrder[0]).toBeLessThan(retirarGrupo.mock.invocationCallOrder[0]!);
+    await expect(cancelarPostulaciones.mock.results[0]!.value).resolves.toEqual([]);
+    await expect(retirarGrupo.mock.results[0]!.value).resolves.toEqual({ resultado: 'SIN_GRUPO' });
+    expect(avisosIngreso).toContainEqual({ id: second.body.id, actorId: expect.any(String), aviso: 'RESOLUCION' });
   });
 
   it('requiere períodos BORRADOR para altas y resoluciones, y refleja la API en Swagger', async () => {
@@ -909,6 +942,33 @@ describe('Usuarios (e2e)', () => {
     const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
     expect(docs.body.components.schemas.HabilitadoResponseDto).toBeDefined();
     expect(docs.body.paths[`/periodos/{periodoId}/habilitados/me`].get).toBeDefined();
+  });
+
+  it('vuelve a habilitar como condicionado a un estudiante SUSPENDIDO del período', async () => {
+    addAdmin();
+    const { profile } = await createStudentProfile();
+    const period = await createPeriod();
+    const created = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR })
+      .expect(201);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR }).expect(409);
+    const row = habilitadosTestRecords().find((item) => item.id === created.body.id);
+    if (!row) throw new Error('No se creó la habilitación de prueba.');
+    row.estado = HabilitadoEstado.SUSPENDIDO;
+    row.situacion_ingreso = SituacionIngreso.NO_ADMITIDO;
+
+    const reactivated = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Rendir examen de inglés' })
+      .expect(201);
+    expect(reactivated.body).toMatchObject({
+      id: created.body.id,
+      estado: HabilitadoEstado.HABILITADO,
+      condicion_ingreso: CondicionIngreso.CONDICIONADO,
+      requisito_pendiente: 'Rendir examen de inglés',
+      situacion_ingreso: SituacionIngreso.PENDIENTE,
+    });
+    expect(auditoriaTestRecords().map((entry) => entry.accion)).toContain('REACTIVAR_HABILITACION');
   });
 
   it('administra líneas y aplica visibilidad por rol, normalización y auditoría', async () => {
@@ -1029,6 +1089,9 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/cerrar-postulacion'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/cerrar'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/retirar'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/asignaciones-tema/{id}/anular'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/iniciar-titulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/conflictos'].get).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{temaId}/conflicto/resolver'].post).toBeDefined();
@@ -1155,7 +1218,115 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', `/periodos/${period.body.id}/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
   });
 
-  it('inicia la titulación solo desde POSTULACION_CERRADA, en fecha y sin condicionados pendientes', async () => {
+  async function createOpenTopic(code: string) {
+    const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: `${code}-L`, nombre: 'Línea de prueba' }).expect(201);
+    const period = await createPeriod(code);
+    const start = new Date(Date.now() - 60_000);
+    const end = new Date(Date.now() + 60 * 60_000);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
+      fecha_inicio_postulacion: start.toISOString(),
+      fecha_fin_postulacion: end.toISOString(),
+      fecha_inicio_titulacion: new Date(end.getTime() + 60 * 60_000).toISOString(),
+    }).expect(200);
+    const themesPath = `/periodos/${period.body.id}/temas`;
+    const topic = await authenticated('post', themesPath, 'admin-sub').send({
+      linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
+      titulo: 'Tema administrable', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 3,
+    }).expect(201);
+    return { period, themesPath, topic };
+  }
+
+  it('cierra, reabre y retira temas con motivo, historial y auditoría (RF-21/RF-25)', async () => {
+    addAdmin();
+    const { period, themesPath, topic } = await createOpenTopic('TEMAS-CIERRE');
+    const topicPath = `${themesPath}/${topic.body.id}`;
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Borrador' }).expect(409);
+    await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(200);
+
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({}).expect(400);
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: '   ' }).expect(400);
+    await authenticated('post', `${topicPath}/cerrar`, 'docente-sub').send({ motivo: 'Sin permiso' }).expect(403);
+    const closed = await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Cupo cubierto' }).expect(200);
+    expect(closed.body.estado).toBe(EstadoTema.CERRADO);
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Otra vez' }).expect(409);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    const reopened = await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(200);
+    expect(reopened.body.estado).toBe(EstadoTema.PUBLICADO);
+
+    setTemaTestEstado(topic.body.id, EstadoTema.ASIGNADO);
+    await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Asignado' }).expect(409);
+    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Asignado' }).expect(409);
+    setTemaTestEstado(topic.body.id, EstadoTema.PUBLICADO);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Archivado' }).expect(409);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+
+    const withdrawn = await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Docente no disponible' }).expect(200);
+    expect(withdrawn.body.estado).toBe(EstadoTema.RETIRADO);
+    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Otra vez' }).expect(409);
+    await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(409);
+
+    await authenticated('get', `${topicPath}/historial`, 'admin-sub').expect(200).then((response) => {
+      expect(response.body.data.map((item: { estado_anterior: string | null; estado_nuevo: string }) => [item.estado_anterior, item.estado_nuevo])).toEqual([
+        [null, 'BORRADOR'], ['BORRADOR', 'PUBLICADO'], ['PUBLICADO', 'CERRADO'], ['CERRADO', 'PUBLICADO'], ['PUBLICADO', 'RETIRADO'],
+      ]);
+      expect(response.body.data[2].cambios.motivo).toBe('Cupo cubierto');
+    });
+    expect(auditoriaTestRecords().map((entry) => entry.accion)).toEqual(expect.arrayContaining(['CERRAR_TEMA', 'REABRIR_TEMA', 'RETIRAR_TEMA']));
+  });
+
+  it('valida la anulación manual de asignaciones: DTO, rol, existencia y período ARCHIVADO', async () => {
+    addAdmin();
+    addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
+    const period = await createPeriod('ANULAR-1');
+    const annulPath = `/periodos/${period.body.id}/asignaciones-tema/00000000-0000-4000-8000-000000000001/anular`;
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'DESCONOCIDA', motivo: 'Motivo' }).expect(400);
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: '  ' }).expect(400);
+    await authenticated('post', annulPath, 'docente-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(403);
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(404);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    await authenticated('post', annulPath, 'admin-sub').send({ causa: 'OTRA', motivo: 'Motivo' }).expect(409);
+  });
+
+  it('reabre la postulación desde POSTULACION_CERRADA solo dentro del plazo y permite extender la fecha fin', async () => {
+    addAdmin();
+    const period = await createPeriod('REABRIR-1');
+    const start = new Date(Date.now() - 2 * 60 * 60_000);
+    const end = new Date(Date.now() - 60 * 60_000);
+    const titulation = new Date(Date.now() + 24 * 60 * 60_000);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
+      fecha_inicio_postulacion: start.toISOString(), fecha_fin_postulacion: end.toISOString(), fecha_inicio_titulacion: titulation.toISOString(),
+    }).expect(200);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+
+    const expired = await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+    expect(expired.body.message).toContain('Edita primero la fecha fin de postulación');
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({ nombre: 'Otro nombre' }).expect(409);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({ fecha_inicio_titulacion: new Date(titulation.getTime() + 60_000).toISOString() }).expect(409);
+    const newEnd = new Date(Date.now() + 60 * 60_000);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
+      codigo: 'REABRIR-1', nombre: 'Período de prueba', max_integrantes_default: 5,
+      fecha_inicio_postulacion: start.toISOString(), fecha_fin_postulacion: newEnd.toISOString(), fecha_inicio_titulacion: titulation.toISOString(),
+    }).expect(200);
+    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({ fecha_fin_postulacion: new Date(titulation.getTime() + 60_000).toISOString() }).expect(400);
+
+    const reopened = await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(200);
+    expect(reopened.body.estado).toBe(PeriodoEstado.POSTULACION_ABIERTA);
+    const audit = auditoriaTestRecords().find((entry) => entry.accion === 'REABRIR_POSTULACION');
+    expect(audit?.valores_anteriores).toEqual({ estado: PeriodoEstado.POSTULACION_CERRADA });
+    await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.EN_CURSO);
+    await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
+  });
+
+  it('inicia la titulación desde POSTULACION_CERRADA en fecha y suspende a los condicionados pendientes', async () => {
+    const anular = vi.spyOn(app.get(AsignacionTemaPersistenciaService), 'anularPorIncumplimiento');
+    const cancelarPostulaciones = vi.spyOn(app.get(PostulacionPersistenciaService), 'cancelarPendientesPorNoAdmision');
+    const retirarGrupo = vi.spyOn(app.get(GrupoIntegrantePersistenciaService), 'retirarPorNoAdmision');
     const admin = addAdmin();
     const period = await createPeriod('INICIO-TITULACION');
     const first = await createStudentProfile('student-sub', '0102030400', 'START-1');
@@ -1189,18 +1360,92 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'docente-sub').expect(403);
 
     setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() - 1_000));
-    const blocked = await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
-    expect(blocked.body.message).toContain('2 estudiantes condicionados pendientes');
-
-    await authenticated('post', `/periodos/${period.body.id}/habilitados/${firstPending.body.id}/resolver-ingreso`, 'admin-sub')
-      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No cumple el requisito' }).expect(200);
-    await authenticated('post', `/periodos/${period.body.id}/habilitados/${secondPending.body.id}/resolver-ingreso`, 'admin-sub')
-      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'No cumple el requisito' }).expect(200);
-
     const started = await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(200);
     expect(started.body.estado).toBe(PeriodoEstado.EN_CURSO);
-    expect(auditoriaTestRecords().map((entry) => entry.accion)).toContain('INICIAR_TITULACION');
+
+    for (const row of [firstRow, secondRow]) {
+      const stored = habilitadosTestRecords().find((candidate) => candidate.id === row.id);
+      expect(stored).toMatchObject({
+        estado: HabilitadoEstado.SUSPENDIDO,
+        condicion_ingreso: CondicionIngreso.CONDICIONADO,
+        situacion_ingreso: SituacionIngreso.NO_ADMITIDO,
+        observacion_ingreso: 'Requisito no resuelto antes del inicio de titulación.',
+        fecha_resolucion_ingreso: expect.any(Date),
+      });
+      expect(stored?.requisito_pendiente).toBe(row.id === firstRow.id ? 'Requisito A' : 'Requisito B');
+      expect(stored?.resuelto_por?.id).toBe(admin.id);
+    }
+    const suspensions = auditoriaTestRecords().filter((entry) => entry.accion === 'SUSPENDER_HABILITACION_INICIO');
+    expect(suspensions.map((entry) => entry.entidad_id).sort((a, b) => a.localeCompare(b))).toEqual([firstRow.id, secondRow.id].sort((a, b) => a.localeCompare(b)));
+    expect(suspensions.find((entry) => entry.entidad_id === secondRow.id)).toMatchObject({
+      valores_anteriores: { estado: HabilitadoEstado.HABILITADO, situacion_ingreso: SituacionIngreso.PENDIENTE },
+      valores_nuevos: { estado: HabilitadoEstado.SUSPENDIDO, situacion_ingreso: SituacionIngreso.NO_ADMITIDO },
+    });
+    const startAudit = auditoriaTestRecords().find((entry) => entry.accion === 'INICIAR_TITULACION');
+    expect(startAudit?.valores_nuevos).toMatchObject({ estado: PeriodoEstado.EN_CURSO, condicionados_suspendidos: 2 });
+    // Mismos efectos que la NO_ADMISIÓN manual: anulación de la asignación vigente y aviso al estudiante.
+    expect(anular).toHaveBeenCalledTimes(2);
+    for (const student of [first, second]) {
+      expect(anular).toHaveBeenCalledWith(
+        expect.anything(), period.body.id, student.profile.body.id, expect.objectContaining({ id: admin.id }),
+        'Requisito no resuelto antes del inicio de titulación.', expect.any(String),
+      );
+    }
+    // Cada suspendido pierde además sus postulaciones pendientes y su pertenencia al grupo activo.
+    for (const effect of [cancelarPostulaciones, retirarGrupo]) {
+      expect(effect).toHaveBeenCalledTimes(2);
+      for (const student of [first, second]) {
+        expect(effect).toHaveBeenCalledWith(
+          expect.anything(), period.body.id, student.profile.body.id, expect.objectContaining({ id: admin.id }),
+          'Requisito no resuelto antes del inicio de titulación.', expect.any(String),
+        );
+      }
+    }
+    expect(cancelarPostulaciones.mock.invocationCallOrder.every((order, index) =>
+      order > anular.mock.invocationCallOrder[index]! && order < retirarGrupo.mock.invocationCallOrder[index]!)).toBe(true);
+    expect(avisosIngreso).toEqual(expect.arrayContaining([
+      { id: firstRow.id, actorId: admin.id, aviso: 'SUSPENSION_INICIO' },
+      { id: secondRow.id, actorId: admin.id, aviso: 'SUSPENSION_INICIO' },
+    ]));
+    expect(avisosIngreso.filter((entry) => entry.aviso === 'SUSPENSION_INICIO')).toHaveLength(2);
     await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub').expect(409);
+  });
+
+  it('resuelve condicionados en BORRADOR, POSTULACION_ABIERTA y POSTULACION_CERRADA, pero no en EN_CURSO ni ARCHIVADO', async () => {
+    addAdmin();
+    const period = await createPeriod('RESOLVER-ESTADOS');
+    setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() + 60 * 60_000));
+    const students = [
+      await createStudentProfile('student-sub', '0102030400', 'RES-1'),
+      await createStudentProfile('other-student-sub', '0102030418', 'RES-2'),
+      await createStudentProfile('bootstrap-sub', '0102030426', 'RES-3'),
+      await createStudentProfile('inactive-sub', '0102030434', 'RES-4'),
+    ];
+    const pending = [];
+    for (const student of students) {
+      pending.push(await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+        .send({ estudiante_id: student.profile.body.id, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito' })
+        .expect(201));
+    }
+    const resolver = (id: string) => authenticated('post', `/periodos/${period.body.id}/habilitados/${id}/resolver-ingreso`, 'admin-sub');
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_ABIERTA);
+    await resolver(pending[0].body.id).send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    await resolver(pending[1].body.id).send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.EN_CURSO);
+    const enCurso = await resolver(pending[2].body.id).send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(409);
+    expect(enCurso.body.message).toContain('EN_CURSO');
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    const archivado = await resolver(pending[3].body.id)
+      .send({ situacion_ingreso: SituacionIngreso.NO_ADMITIDO, observacion_ingreso: 'Fuera de plazo' }).expect(409);
+    expect(archivado.body.message).toContain('ARCHIVADO');
+    expect(habilitadosTestRecords().filter((row) => row.situacion_ingreso === SituacionIngreso.PENDIENTE)).toHaveLength(2);
+
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
+    await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub')
+      .send({ estudiante_id: students[0].profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR }).expect(409);
   });
 
   it('permite iniciar cuando todos los condicionados fueron admitidos antes de la fecha', async () => {
@@ -1218,5 +1463,88 @@ describe('Usuarios (e2e)', () => {
     setPeriodoTestInicioTitulacion(period.body.id, new Date(Date.now() - 1_000));
     await authenticated('post', `/periodos/${period.body.id}/iniciar-titulacion`, 'admin-sub')
       .expect(200).then((response) => expect(response.body.estado).toBe(PeriodoEstado.EN_CURSO));
+  });
+  it('crea cuenta DOCENTE, credencial temporal, correo de acceso y perfil en una sola operación', async () => {
+    addAdmin();
+    const response = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: ' Nuevo.Docente@ULEAM.edu.ec ', nombres: ' Rosa ', apellidos: 'Mera', cedula: '1316661675', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true })
+      .expect(201);
+    expect(response.body).toMatchObject({
+      usuario: { email: 'nuevo.docente@uleam.edu.ec', nombres: 'Rosa', apellidos: 'Mera', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO },
+      cedula: '1316661675', habilitado_tutoria: true,
+    });
+    const usuarioId = response.body.usuario.id as string;
+    expect(credencialTestRecords().find((item) => item.usuario_id === usuarioId)?.requiere_cambio).toBe(true);
+    expect(correoTestRecords().filter((item) => item.usuario_id === usuarioId && item.tipo === 'ACCESO')).toHaveLength(1);
+    const acciones = auditoriaTestRecords().map((item) => item.accion);
+    expect(acciones).toEqual(expect.arrayContaining(['CREAR_USUARIO', 'CREAR_DOCENTE']));
+
+    // correo o cédula repetidos: 409 claro y sin cuenta huérfana
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'nuevo.docente@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(409).then((r) => expect(r.body.message).toContain('correo'));
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'otro@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '1316661675', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(409).then((r) => expect(r.body.message).toContain('cédula'));
+    await authenticated('get', '/usuarios?limit=100', 'admin-sub').expect(200)
+      .then((r) => expect(r.body.data.map((u: { email: string }) => u.email)).not.toContain('otro@uleam.edu.ec'));
+  });
+
+  it('rechaza altas de docente con dominio inválido, datos incompletos o mezcla de usuario_id y cuenta', async () => {
+    addAdmin();
+    const base = { cedula: '1316661675', titulo_academico: 'Magíster', departamento: 'Sistemas' };
+    await authenticated('post', '/docentes', 'admin-sub').send({ ...base, email: 'd@gmail.com', nombres: 'A', apellidos: 'B' }).expect(400);
+    await authenticated('post', '/docentes', 'admin-sub').send({ ...base, email: 'd@uleam.edu.ec', nombres: 'A' }).expect(400);
+    await authenticated('post', '/docentes', 'admin-sub').send(base).expect(400);
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ ...base, usuario_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', email: 'd@uleam.edu.ec', nombres: 'A', apellidos: 'B' })
+      .expect(400);
+    await authenticated('post', '/docentes', 'student-sub').send({ ...base, email: 'd@uleam.edu.ec', nombres: 'A', apellidos: 'B' }).expect(403);
+  });
+
+  it('ADMIN edita un docente con auditoría, rechaza el correo y revoca sesiones al desactivarlo', async () => {
+    addAdmin();
+    const created = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'editable@uleam.edu.ec', nombres: 'Luis', apellidos: 'Vera', cedula: '1316661675', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(201);
+    const other = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'otro.docente@uleam.edu.ec', nombres: 'Ana', apellidos: 'Loor', cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .expect(201);
+    const id = created.body.id as string;
+
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({}).expect(400);
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ email: 'nuevo@uleam.edu.ec' }).expect(400)
+      .then((r) => expect(JSON.stringify(r.body.message)).toContain('correo'));
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: 'BLOQUEADO' }).expect(400);
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ cedula: other.body.cedula }).expect(409)
+      .then((r) => expect(r.body.message).toContain('cédula'));
+    await authenticated('patch', '/docentes/ffffffff-ffff-4fff-8fff-ffffffffffff', 'admin-sub').send({ nombres: 'X' }).expect(404);
+    await authenticated('patch', `/docentes/${id}`, 'student-sub').send({ nombres: 'X' }).expect(403);
+
+    const edited = await authenticated('patch', `/docentes/${id}`, 'admin-sub')
+      .send({ nombres: ' Luis Alberto ', titulo_academico: 'Magíster', habilitado_tutoria: true, cedula: '0102030418' })
+      .expect(200);
+    expect(edited.body).toMatchObject({ usuario: { nombres: 'Luis Alberto', email: 'editable@uleam.edu.ec' }, titulo_academico: 'Magíster', habilitado_tutoria: true, cedula: '0102030418' });
+    const audit = auditoriaTestRecords().find((item) => item.accion === 'EDITAR_DOCENTE');
+    expect(audit?.valores_anteriores).toMatchObject({ nombres: 'Luis', titulo_academico: 'Ing.', habilitado_tutoria: false });
+    expect(audit?.valores_nuevos).toMatchObject({ nombres: 'Luis Alberto', titulo_academico: 'Magíster', habilitado_tutoria: true });
+
+    const deactivated = await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: UsuarioEstado.INACTIVO }).expect(200);
+    expect(deactivated.body.usuario.estado).toBe(UsuarioEstado.INACTIVO);
+    expect(sesionRevocationsTestRecords()).toContain(created.body.usuario.id);
+    expect(credencialTestRecords().find((item) => item.usuario_id === created.body.usuario.id)?.version_sesion).toBe(1);
+    await authenticated('patch', `/docentes/${id}`, 'admin-sub').send({ estado: UsuarioEstado.ACTIVO }).expect(200)
+      .then((r) => expect(r.body.usuario.estado).toBe(UsuarioEstado.ACTIVO));
+  });
+
+  it('desactiva límites específicos de carga solo como ADMIN y con UUID válidos', async () => {
+    addAdmin();
+    const period = await createPeriod('CARGA-DESACTIVAR');
+    await authenticated('post', `/periodos/${period.body.id}/config-carga-tutorial/no-es-uuid/desactivar`, 'admin-sub').expect(400);
+    await authenticated('post', `/periodos/${period.body.id}/config-carga-tutorial/ffffffff-ffff-4fff-8fff-ffffffffffff/desactivar`, 'student-sub').expect(403);
+    await authenticated('get', `/periodos/${period.body.id}/config-carga-tutorial?incluir_inactivas=quizas`, 'admin-sub').expect(400);
+    const document = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(document.body.paths['/periodos/{periodoId}/config-carga-tutorial/{id}/desactivar'].post).toBeDefined();
+    expect(document.body.paths['/docentes/{id}'].patch).toBeDefined();
   });
 });

@@ -81,9 +81,19 @@ de Sonar al workflow sin cambiar primero esa configuración.
    verificación de dominios relacionados. Confirma que cada comando cubra las
    restricciones que anuncia, en particular perfiles, tutores propuestos y
    revisiones PAT, antes de depender de su nombre como evidencia.
-4. **Ajustar la importación Excel.** El formato implementado es provisional;
-   actualizar sus encabezados y reglas cuando la profesora entregue el archivo
-   real y se confirme su estructura.
+4. **Importación Excel institucional (implementada).** Se usa la primera hoja
+   del libro; la fila de encabezados se detecta en las primeras 20 filas por la
+   celda `Identificación` y se exigen `Identificación`, `Apellidos`, `Nombres`,
+   `nivel`, `ACADEMICO` e `INGLES` (sin importar mayúsculas ni tildes); las
+   demás columnas se ignoran. La carrera se toma del título (`CARRERA
+   SOFTWARE`). El correo es `e{cedula}@live.uleam.edu.ec`, la matrícula es la
+   cédula y la clave temporal inicial es la cédula, con cambio obligatorio en
+   el primer acceso. SI/SI en ACADEMICO/INGLES crea la habilitación
+   `HABILITADO`/`ADMITIDO`; cualquier otra combinación válida crea
+   `SUSPENDIDO`/`NO_ADMITIDO` (ambas REGULAR, resueltas por el ADMIN que
+   importó). Se admiten filas ocultas por autofiltro. La importación sigue
+   permitida solo en períodos BORRADOR. Pendiente: confirmar con la
+   institución si la cédula como clave inicial es aceptable en producción.
 5. **Preparar el despliegue real.** La salida SMTP institucional autorizada,
    secretos de producción, almacenamiento, Redis, PostgreSQL, copias de
    seguridad y operación del entorno deben configurarse con sus responsables;
@@ -331,9 +341,45 @@ las sesiones vigentes.
 Las cuentas se crean por ADMIN o por importación confirmada de Excel. La
 importación solo se admite con un período BORRADOR; validar genera vista previa
 y confirmar vuelve a comprobar los datos dentro de la transacción que crea
-usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso.
+usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso. En la
+importación, la clave temporal inicial de cada estudiante es su cédula y debe
+cambiarse en el primer acceso; las altas manuales conservan claves aleatorias.
 El esquema nuevo de desarrollo es `titulacion_dev`; preservar el esquema
 histórico `local_demo` sin cambios.
+
+Docentes (RF-19): `POST /docentes` sin `usuario_id` crea en una transacción la cuenta
+DOCENTE (clave temporal aleatoria y correo ACCESO cifrado, como `POST /usuarios`) y su
+perfil, con auditoría `CREAR_USUARIO` y `CREAR_DOCENTE`; con `usuario_id` vincula una cuenta
+existente (mezclar ambos es 400). `PATCH /docentes/:id` (ADMIN) edita nombres, apellidos,
+estado ACTIVO/INACTIVO, cédula, título, departamento y `habilitado_tutoria` con auditoría
+`EDITAR_DOCENTE` antes/después; el correo es el usuario de acceso y se rechaza con 400. Una
+cédula repetida responde 409. Pasar a INACTIVO revoca las sesiones (`version_sesion` + 1 y
+sesiones revocadas) y no altera tutorías VIGENTES, asignaciones ni límites de carga: el docente
+inactivo deja de poder ingresar y el trigger de tutor ya impide asignarle tutorías nuevas.
+
+Importación de docentes: plantilla XLSX propia (`GET /importaciones/docentes/plantilla`,
+encabezados `cedula, nombres, apellidos, email, titulo, departamento, habilitado_tutoria` con
+SI/NO sin importar mayúsculas ni tildes). `POST /importaciones/docentes/validar` →
+`GET /importaciones/docentes/:id` → `POST /importaciones/docentes/:id/confirmar` (ADMIN, BullMQ,
+una transacción SERIALIZABLE). No depende de un período: `preparacion_importacion.tipo`
+(migración `20261020110000`) exige período para ESTUDIANTES y lo prohíbe para DOCENTES. Correo
+@uleam.edu.ec o @live.uleam.edu.ec, clave temporal inicial = cédula con cambio obligatorio y
+correo ACCESO cifrado. Conflictos con cuentas o cédulas existentes son errores por fila; los
+registros idénticos se omiten.
+
+---
+
+## Períodos
+
+`POST /periodos/:id/abrir-postulacion` abre desde BORRADOR y reabre desde
+POSTULACION_CERRADA (auditoría `REABRIR_POSTULACION`), en ambos casos solo si la
+fecha actual está en [`fecha_inicio_postulacion`, `fecha_fin_postulacion`); fuera
+de ese plazo responde 409 pidiendo editar primero la fecha fin. Las postulaciones
+existentes se conservan. `PATCH /periodos/:id` edita cualquier campo en BORRADOR;
+en POSTULACION_CERRADA solo puede cambiar `fecha_fin_postulacion` (los demás
+campos se aceptan solo si repiten su valor actual) y se mantiene la cronología
+`fecha_fin_postulacion <= fecha_inicio_titulacion`. En los demás estados la
+edición responde 409. Ningún trigger restringe CERRADA → ABIERTA.
 
 ---
 
@@ -354,7 +400,64 @@ Estados de situación de ingreso:
 - ADMITIDO
 - NO_ADMITIDO
 
-No iniciar el período de titulación mientras existan condicionados pendientes cuando la regla correspondiente lo impida.
+La resolución del ingreso de un condicionado (`resolver-ingreso`) se permite con el
+período en BORRADOR, POSTULACION_ABIERTA o POSTULACION_CERRADA y se rechaza en
+EN_CURSO y ARCHIVADO. Se conserva la regla de fecha: ADMITIDO solo antes de
+`fecha_inicio_titulacion`; un NO_ADMITIDO posterior a esa fecha requiere
+POSTULACION_CERRADA. Las altas de habilitaciones siguen limitadas a BORRADOR.
+
+Los condicionados pendientes no bloquean el inicio de titulación. Al iniciar,
+en la misma transacción SERIALIZABLE y antes de pasar el período a EN_CURSO,
+cada habilitación CONDICIONADO/PENDIENTE del período (bloqueada con
+`ORDER BY id FOR UPDATE`) queda SUSPENDIDO/NO_ADMITIDO, con
+`fecha_resolucion_ingreso`, `resuelto_por` del actor y la observación
+«Requisito no resuelto antes del inicio de titulación.»; se conservan la
+condición y el requisito. Cada suspensión se audita como
+`SUSPENDER_HABILITACION_INICIO` y la auditoría `INICIAR_TITULACION` incluye
+`condicionados_suspendidos`. Cada suspendido recibe además los mismos efectos que
+una NO_ADMISIÓN manual (`HabilitadosService.aplicarNoAdmision`) y notificación
+`INGRESO_RESUELTO` en app y correo asíncrono que explica la suspensión. El trigger de PostgreSQL sigue impidiendo un
+período EN_CURSO con condicionados pendientes.
+
+Efectos de toda NO_ADMISIÓN (manual o al iniciar), en la transacción que ya
+bloqueó período y habilitación y en este orden:
+
+1. `AsignacionTemaPersistenciaService.anularPorIncumplimiento`: asignación
+   VIGENTE → ANULADA, tutor terminado, postulación ACEPTADA → ANULADA, tema
+   republicado y aviso `TEMA_ANULADO`.
+2. `PostulacionPersistenciaService.cancelarPendientesPorNoAdmision`: bloquea el
+   grupo activo del estudiante y luego sus postulaciones; las PENDIENTE
+   individuales y del grupo pasan a CANCELADA con el motivo como observación,
+   auditoría `CANCELAR_POSTULACION_NO_ADMISION` y aviso
+   `POSTULACION_CANCELADA` a los participantes activos. Una postulación grupal
+   se cancela aunque el tema admita el nuevo tamaño, porque congela
+   `num_integrantes` y exige participantes elegibles. EN_CONFLICTO no tiene
+   transición a CANCELADA en PostgreSQL y hoy ningún flujo la produce; ACEPTADA
+   la resuelve el paso 1.
+3. `GrupoIntegrantePersistenciaService.retirarPorNoAdmision`: su pertenencia
+   ACTIVO pasa a RETIRADO con `fecha_salida` y `motivo_salida` (auditoría
+   `RETIRAR_INTEGRANTE_NO_ADMISION`). Si era representante, el cargo pasa a otro
+   integrante activo (elegibles primero, ADMITIDO antes que PENDIENTE, luego
+   antigüedad) con auditoría `CAMBIAR_REPRESENTANTE` y resolución de las
+   invitaciones pendientes del grupo; el grupo queda EN_CONFORMACION con un
+   integrante o DISUELTO sin integrantes (invitaciones pendientes resueltas).
+   Es una acción administrativa: no aplica la ventana de plazo de
+   `GrupoGestionService`. También aplica si el grupo ya tiene postulaciones
+   (incluso CANCELADA): desde la migración `20261019100000` el trigger
+   `proteger_composicion_postulacion` admite, como única excepción a la
+   composición cerrada, el UPDATE ACTIVO → RETIRADO con `fecha_salida` que no
+   cambia `grupo_id`, `periodo_id`, `estudiante_id` ni `fecha_ingreso`, cuando la
+   habilitación del integrante está NO_ADMITIDO. El traspaso de representante
+   (solo `rol_en_grupo`) ya era admitido porque no altera la composición; los
+   cambios de estado del grupo y de invitaciones no están sujetos a ese trigger.
+   Cualquier otro cambio (retirar a un ADMITIDO/PENDIENTE, altas, bajas físicas o
+   alterar otros campos) sigue rechazado con 23514.
+4. Notificación `INGRESO_RESUELTO`.
+
+No existe un tipo de notificación propio para «integrante retirado»; los demás
+integrantes se enteran por `POSTULACION_CANCELADA` e invitaciones canceladas.
+Las invitaciones pendientes dirigidas al estudiante en otros grupos no se
+cancelan (la aceptación ya exige una habilitación elegible).
 
 ---
 
@@ -412,6 +515,29 @@ min_integrantes >= 1
 max_integrantes >= min_integrantes
 
 Los cambios relevantes del tema deben conservarse en el historial.
+
+Cierre, retiro y reapertura (RF-21/RF-25), solo ADMIN y con motivo obligatorio
+(`POST /periodos/:periodoId/temas/:id/cerrar` y `/retirar`, cuerpo `{ motivo }`):
+
+- CERRAR: PUBLICADO → CERRADO. RETIRAR: BORRADOR, PUBLICADO o CERRADO → RETIRADO
+  (terminal).
+- Se rechazan con 409 si el período está ARCHIVADO o el tema tiene asignación
+  VIGENTE (estado ASIGNADO); no aplica la ventana de plazo de administración de
+  temas.
+- En la misma transacción SERIALIZABLE (período → tema → postulaciones en orden
+  de id, `FOR UPDATE`), las postulaciones PENDIENTE o EN_CONFLICTO del tema pasan
+  a RECHAZADA con observación «Tema cerrado|retirado: motivo», auditoría
+  `RECHAZAR_POSTULACION_POR_CIERRE_TEMA` / `..._POR_RETIRO_TEMA` y aviso
+  `POSTULACION_RECHAZADA`. El tema registra historial (con `cambios.motivo`) y
+  auditoría `CERRAR_TEMA` / `RETIRAR_TEMA`.
+- Reabrir: `POST .../temas/:id/publicar` sobre un tema CERRADO lo devuelve a
+  PUBLICADO (auditoría `REABRIR_TEMA`, historial) si no tiene asignación VIGENTE
+  y el período no está ARCHIVADO; las postulaciones rechazadas no se reactivan.
+  Publicar un BORRADOR conserva sus reglas de plazo y referencias activas.
+
+Ningún trigger de PostgreSQL restringe estas transiciones de tema; las de
+postulación (PENDIENTE/EN_CONFLICTO → RECHAZADA con observación) ya estaban
+permitidas.
 
 ---
 
@@ -510,6 +636,17 @@ Cuando un tema queda asignado:
 
 Las anulaciones NO eliminan físicamente la asignación.
 
+Anulación manual: `POST /periodos/:periodoId/asignaciones-tema/:id/anular` (solo
+ADMIN, cuerpo `{ causa: OTRA | INCUMPLIMIENTO_CONDICION, motivo }`). Transacción
+SERIALIZABLE que bloquea el período (409 si está ARCHIVADO) y luego tema,
+postulación y asignación (409 si no está VIGENTE). Los efectos los aplica
+`AsignacionTemaPersistenciaService.anularBloqueada`, el mismo flujo que usa
+`anularPorIncumplimiento`: asignación ANULADA con causa/motivo/responsable/fecha,
+tutor vigente terminado, postulación ACEPTADA → ANULADA, tema ASIGNADO →
+PUBLICADO con historial, auditorías y aviso `TEMA_ANULADO`. Con causa OTRA las
+auditorías son `ANULAR_POSTULACION_MANUAL` y `REPUBLICAR_TEMA_ANULACION`. Las
+postulaciones rechazadas previamente no se reactivan.
+
 ---
 
 ## Asignación de tutor
@@ -540,6 +677,16 @@ La carga tutorial puede tener:
 
 - límite global del período;
 - límite específico por docente.
+
+Un límite específico no se elimina: `POST /periodos/:pid/config-carga-tutorial/:id/desactivar`
+(ADMIN, auditoría `DESACTIVAR_CONFIG_CARGA_TUTORIAL`) lo deja `activa = false` como historial.
+La resolución efectiva (`CargaTutorialPersistenciaService` y el trigger
+`proteger_asignacion_tutor`) ignora los inactivos y vuelve a aplicar el global. Un límite
+inactivo no se modifica (409 en servicio, 23514 en PostgreSQL); el global no se desactiva. La
+unicidad es parcial (`UQ_config_carga_tutorial_global` y
+`UQ_config_carga_tutorial_docente_activa`), por lo que puede crearse un nuevo límite específico
+para el mismo docente. `GET .../config-carga-tutorial` lista solo activos salvo
+`incluir_inactivas=true`. Migración `20261020100000`.
 
 El sistema debe determinar la configuración aplicable.
 
@@ -829,6 +976,21 @@ La auditoría contempla:
 - valores nuevos;
 - IP;
 - fecha/hora.
+
+Consulta: `GET /auditoria` (solo ADMIN, `AuditoriaConsultaService`, SQL parametrizado y
+calificado por esquema) pagina por `fecha_hora DESC, id DESC` con filtros `entidad_tipo`,
+`entidad_id`, `accion`, `usuario_id`, `desde`/`hasta` (una fecha sin hora en `hasta` incluye
+todo el día UTC) y `q` (ILIKE con comodines escapados sobre acción, tipo de entidad y correo del
+actor). Devuelve el `id` bigint como texto, IP y valores completos; como defensa en profundidad
+oculta claves con nombres de credenciales. Nunca auditar contraseñas, hashes, tokens ni claves
+temporales. Índices `IDX_auditoria_fecha_hora` e `IDX_auditoria_usuario` (migración
+`20261027100000`, `db:verify-auditoria`).
+
+Historial de importaciones (ADMIN): `GET /periodos/:periodoId/importaciones/estudiantes` y
+`GET /importaciones/docentes` listan preparaciones (con su lote si se completó), más recientes
+primero y paginadas; las vencidas se listan con `expirada: true` (no 410). `POST
+/notificaciones/leer-todas` marca en un único UPDATE solo las notificaciones EN_APP del usuario
+autenticado.
 
 No confundir:
 

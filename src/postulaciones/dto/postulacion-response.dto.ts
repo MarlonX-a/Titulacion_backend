@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { EstadoPostulacion } from '../enums/estado-postulacion.enum.js';
+import { TutorPropuestoResponseDto } from './tutores-propuestos.dto.js';
 
 export class PagedPostulacionesResponseDto {
   @ApiProperty({ type: [Object] }) data: PostulacionResponseDto[];
@@ -23,4 +24,5 @@ export class PostulacionResponseDto {
   @ApiProperty({ enum: EstadoPostulacion }) estado: EstadoPostulacion;
   @ApiProperty() fecha_postulacion: Date;
   @ApiProperty({ nullable: true }) observacion: string | null;
+  @ApiProperty({ type: [TutorPropuestoResponseDto], description: 'Tutores propuestos ordenados por prioridad (cargados en lote).' }) tutores_propuestos: TutorPropuestoResponseDto[];
 }

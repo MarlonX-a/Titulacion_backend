@@ -16,6 +16,29 @@ export class HabilitadoEstudianteDto {
 
   @ApiProperty()
   matricula: string;
+
+  @ApiPropertyOptional({ description: 'Correo institucional. Solo en respuestas para ADMIN o el propio estudiante.' })
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
+  cedula?: string;
+
+  @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
+  carrera?: string;
+
+  @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
+  nivel?: number;
+}
+
+export class HabilitadoResponsableDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty()
+  nombres: string;
+
+  @ApiProperty()
+  apellidos: string;
 }
 
 export class HabilitadoResponseDto {
@@ -57,6 +80,9 @@ export class HabilitadoResponseDto {
 
   @ApiPropertyOptional({ format: 'uuid', nullable: true })
   resuelto_por_id: string | null;
+
+  @ApiPropertyOptional({ type: HabilitadoResponsableDto, nullable: true, description: 'Responsable de la resolución del ingreso. Se omite en candidatos de invitación.' })
+  resuelto_por?: HabilitadoResponsableDto | null;
 
   @ApiPropertyOptional({ nullable: true })
   observacion_ingreso: string | null;

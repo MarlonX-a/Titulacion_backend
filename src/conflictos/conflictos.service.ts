@@ -1,5 +1,5 @@
 import { ConflictException, HttpException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
+import { DataSource, EntityManager, In, QueryFailedError } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
@@ -16,7 +16,7 @@ import { ResolucionConflicto } from './entities/resolucion-conflicto.entity.js';
 import { ConflictoParticipante } from './entities/conflicto-participante.entity.js';
 
 interface CandidateRow {
-  id: string; estado: EstadoPostulacion; grupo_id: string | null; estudiante_id: string | null;
+  id: string; tema_id: string; grupo_nombre: string | null; estado: EstadoPostulacion; grupo_id: string | null; estudiante_id: string | null;
   num_integrantes: number; fecha_postulacion: Date; elegible: boolean; motivo: string | null;
   participantes: Array<{ id: string; nombres: string; apellidos: string; matricula: string }>;
 }
@@ -37,7 +37,18 @@ export class ConflictosService {
           ? topic.resolucion_id === null && topic.elegibles.length >= 2
           : topic.resolucion_id !== null || topic.elegibles.length >= 2);
       const start = (query.page - 1) * query.limit;
-      return { data: filtered.slice(start, start + query.limit).map((topic) => this.topicResponse(topic)), total: filtered.length, page: query.page, limit: query.limit };
+      const page = filtered.slice(start, start + query.limit);
+      // Las candidaturas y resoluciones de la página se cargan en lote (sin una consulta por tema).
+      const details = await this.details(manager, periodoId, page);
+      return { data: page.map((topic) => ({ ...this.topicResponse(topic), ...details.get(topic.id)! })), total: filtered.length, page: query.page, limit: query.limit };
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  /** Temas con dos o más candidaturas elegibles y sin resolución (criterio de SIN_RESOLVER). */
+  async contarSinResolver(periodoId: string): Promise<number> {
+    try {
+      const topics = await this.topicRows(this.dataSource.manager, periodoId);
+      return topics.filter((topic) => topic.resolucion_id === null && topic.elegibles.length >= 2).length;
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -46,22 +57,44 @@ export class ConflictosService {
       const manager = this.dataSource.manager;
       await this.assertPeriod(manager, periodoId);
       const topic = await this.topicRow(manager, periodoId, temaId);
-      const applications = await this.candidateRows(manager, periodoId, temaId);
-      const resolution = await manager.getRepository(ResolucionConflicto).findOne({
-        where: { tema: { id: temaId }, periodo: { id: periodoId } }, relations: { resuelto_por: true },
-      });
-      const participants = resolution ? await manager.getRepository(ConflictoParticipante).find({
-        where: { resolucion_conflicto_id: resolution.id }, relations: { postulacion: true }, order: { id: 'ASC' },
-      }) : [];
-      const result = resolution ? {
-        id: resolution.id, criterio_aplicado: resolution.criterio_aplicado,
-        postulacion_ganadora_id: resolution.postulacion_ganadora_id,
-        justificacion: resolution.justificacion, fecha_resolucion: resolution.fecha_resolucion,
-        responsable: { id: resolution.resuelto_por.id, nombres: resolution.resuelto_por.nombres, apellidos: resolution.resuelto_por.apellidos },
-        participantes: participants.map((p) => ({ postulacion_id: p.postulacion.id, puntaje_criterio: p.puntaje_criterio === null ? null : Number(p.puntaje_criterio) })),
-      } : null;
-      return { periodo_id: periodoId, tema: this.topicResponse(topic), elegibles: topic.elegibles.length, resolucion: result, postulaciones: applications.map((item) => ({ id: item.id, estado: item.estado, grupo_id: item.grupo_id, estudiante_id: item.estudiante_id, num_integrantes: item.num_integrantes, fecha_postulacion: item.fecha_postulacion, elegible: item.elegible, motivo: item.motivo, participantes: item.participantes })) };
+      const details = await this.details(manager, periodoId, [topic]);
+      return { periodo_id: periodoId, tema: this.topicResponse(topic), elegibles: topic.elegibles.length, ...details.get(topic.id)! };
     } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  private async details(manager: EntityManager, periodoId: string, topics: TopicRow[]) {
+    const result = new Map<string, { resolucion: ReturnType<ConflictosService['resolutionResponse']> | null; postulaciones: ReturnType<ConflictosService['applicationResponse']>[] }>();
+    if (!topics.length) return result;
+    const temaIds = topics.map((topic) => topic.id);
+    const applications = await this.candidateRows(manager, periodoId, temaIds);
+    const resolutions = await manager.getRepository(ResolucionConflicto).find({
+      where: { tema: { id: In(temaIds) }, periodo: { id: periodoId } }, relations: { resuelto_por: true, tema: true },
+    });
+    const participants = resolutions.length ? await manager.getRepository(ConflictoParticipante).find({
+      where: { resolucion_conflicto_id: In(resolutions.map((item) => item.id)) }, relations: { postulacion: true }, order: { id: 'ASC' },
+    }) : [];
+    for (const topic of topics) {
+      const resolution = resolutions.find((item) => item.tema?.id === topic.id) ?? null;
+      result.set(topic.id, {
+        resolucion: resolution ? this.resolutionResponse(resolution, participants.filter((item) => item.resolucion_conflicto_id === resolution.id)) : null,
+        postulaciones: applications.filter((item) => item.tema_id === topic.id).map((item) => this.applicationResponse(item)),
+      });
+    }
+    return result;
+  }
+
+  private resolutionResponse(resolution: ResolucionConflicto, participants: ConflictoParticipante[]) {
+    return {
+      id: resolution.id, criterio_aplicado: resolution.criterio_aplicado,
+      postulacion_ganadora_id: resolution.postulacion_ganadora_id,
+      justificacion: resolution.justificacion, fecha_resolucion: resolution.fecha_resolucion,
+      responsable: { id: resolution.resuelto_por.id, nombres: resolution.resuelto_por.nombres, apellidos: resolution.resuelto_por.apellidos },
+      participantes: participants.map((p) => ({ postulacion_id: p.postulacion.id, puntaje_criterio: p.puntaje_criterio === null ? null : Number(p.puntaje_criterio) })),
+    };
+  }
+
+  private applicationResponse(item: CandidateRow) {
+    return { id: item.id, estado: item.estado, grupo_id: item.grupo_id, grupo_nombre: item.grupo_nombre, estudiante_id: item.estudiante_id, num_integrantes: item.num_integrantes, fecha_postulacion: item.fecha_postulacion, elegible: item.elegible, motivo: item.motivo, participantes: item.participantes };
   }
 
   async resolve(periodoId: string, temaId: string, dto: ResolverConflictoDto, actor: Usuario, ip: string | null) {
@@ -79,7 +112,7 @@ export class ConflictosService {
         const inputIds = dto.participantes.map((item) => item.postulacion_id);
         if (new Set(inputIds).size !== inputIds.length) throw new ConflictException('No se pueden repetir postulaciones entre los participantes.');
         await manager.query(`SELECT "id" FROM ${this.schema(manager)}."postulacion" WHERE "periodo_id"=$1 AND "tema_id"=$2 ORDER BY "id" FOR UPDATE`, [periodoId, temaId]);
-        const rows = await this.candidateRows(manager, periodoId, temaId);
+        const rows = await this.candidateRows(manager, periodoId, [temaId]);
         const eligible = rows.filter((row) => row.elegible).map((row) => row.id).sort((left, right) => left.localeCompare(right));
         const supplied = [...inputIds].sort((left, right) => left.localeCompare(right));
         if (eligible.length < 2 || eligible.length !== supplied.length || eligible.some((id, index) => id !== supplied[index])) {
@@ -123,8 +156,8 @@ export class ConflictosService {
     return row;
   }
 
-  private async candidateRows(manager: EntityManager, periodoId: string, temaId: string): Promise<CandidateRow[]> {
-    const rows = await manager.query(`SELECT p."id",p."estado"::text AS estado,p."grupo_id",p."estudiante_id",p."num_integrantes",p."fecha_postulacion",${this.eligibilitySql(manager,'p','t')} AS elegible, CASE WHEN p."estado" <> 'PENDIENTE' THEN 'La postulación no está PENDIENTE.' WHEN t."estado" <> 'PUBLICADO' THEN 'El tema no está PUBLICADO.' WHEN p."grupo_id" IS NOT NULL AND g."estado" <> 'ACTIVO' THEN 'El grupo no está ACTIVO.' WHEN p."grupo_id" IS NOT NULL AND members."count" <> p."num_integrantes" THEN 'La composición del grupo cambió.' WHEN NOT ${this.eligibilitySql(manager,'p','t')} THEN 'Uno o más participantes no tienen cuenta y habilitación compatibles, o la cantidad no está dentro del rango del tema.' ELSE NULL END AS motivo, COALESCE(CASE WHEN p."estudiante_id" IS NOT NULL THEN (SELECT jsonb_agg(jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula")) FROM ${this.schema(manager)}."estudiante" e JOIN ${this.schema(manager)}."usuario" u ON u."id"=e."usuario_id" WHERE e."id"=p."estudiante_id") ELSE (SELECT jsonb_agg(jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula") ORDER BY gi."fecha_ingreso",gi."id") FROM ${this.schema(manager)}."grupo_integrante" gi JOIN ${this.schema(manager)}."estudiante" e ON e."id"=gi."estudiante_id" JOIN ${this.schema(manager)}."usuario" u ON u."id"=e."usuario_id" WHERE gi."grupo_id"=p."grupo_id" AND gi."estado"='ACTIVO') END,'[]'::jsonb) AS participantes FROM ${this.schema(manager)}."postulacion" p JOIN ${this.schema(manager)}."tema" t ON t."id"=p."tema_id" LEFT JOIN ${this.schema(manager)}."grupo" g ON g."id"=p."grupo_id" LEFT JOIN LATERAL (SELECT count(*)::int AS count FROM ${this.schema(manager)}."grupo_integrante" gi WHERE gi."grupo_id"=p."grupo_id" AND gi."estado"='ACTIVO') members ON true WHERE p."periodo_id"=$1 AND p."tema_id"=$2 ORDER BY p."fecha_postulacion",p."id"`, [periodoId, temaId]) as CandidateRow[];
+  private async candidateRows(manager: EntityManager, periodoId: string, temaIds: string[]): Promise<CandidateRow[]> {
+    const rows = await manager.query(`SELECT p."id",p."tema_id",p."estado"::text AS estado,p."grupo_id",g."nombre" AS grupo_nombre,p."estudiante_id",p."num_integrantes",p."fecha_postulacion",${this.eligibilitySql(manager,'p','t')} AS elegible, CASE WHEN p."estado" <> 'PENDIENTE' THEN 'La postulación no está PENDIENTE.' WHEN t."estado" <> 'PUBLICADO' THEN 'El tema no está PUBLICADO.' WHEN p."grupo_id" IS NOT NULL AND g."estado" <> 'ACTIVO' THEN 'El grupo no está ACTIVO.' WHEN p."grupo_id" IS NOT NULL AND members."count" <> p."num_integrantes" THEN 'La composición del grupo cambió.' WHEN NOT ${this.eligibilitySql(manager,'p','t')} THEN 'Uno o más participantes no tienen cuenta y habilitación compatibles, o la cantidad no está dentro del rango del tema.' ELSE NULL END AS motivo, COALESCE(CASE WHEN p."estudiante_id" IS NOT NULL THEN (SELECT jsonb_agg(jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula")) FROM ${this.schema(manager)}."estudiante" e JOIN ${this.schema(manager)}."usuario" u ON u."id"=e."usuario_id" WHERE e."id"=p."estudiante_id") ELSE (SELECT jsonb_agg(jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula") ORDER BY gi."fecha_ingreso",gi."id") FROM ${this.schema(manager)}."grupo_integrante" gi JOIN ${this.schema(manager)}."estudiante" e ON e."id"=gi."estudiante_id" JOIN ${this.schema(manager)}."usuario" u ON u."id"=e."usuario_id" WHERE gi."grupo_id"=p."grupo_id" AND gi."estado"='ACTIVO') END,'[]'::jsonb) AS participantes FROM ${this.schema(manager)}."postulacion" p JOIN ${this.schema(manager)}."tema" t ON t."id"=p."tema_id" LEFT JOIN ${this.schema(manager)}."grupo" g ON g."id"=p."grupo_id" LEFT JOIN LATERAL (SELECT count(*)::int AS count FROM ${this.schema(manager)}."grupo_integrante" gi WHERE gi."grupo_id"=p."grupo_id" AND gi."estado"='ACTIVO') members ON true WHERE p."periodo_id"=$1 AND p."tema_id" = ANY($2::uuid[]) ORDER BY p."fecha_postulacion",p."id"`, [periodoId, temaIds]) as CandidateRow[];
     return rows;
   }
 

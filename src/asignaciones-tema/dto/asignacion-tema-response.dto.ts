@@ -21,6 +21,7 @@ export class AsignacionTemaResponseDto {
   @ApiProperty({ enum: AsignacionTemaCausa, nullable: true }) causa_anulacion: AsignacionTemaCausa | null;
   @ApiProperty({ nullable: true }) motivo_anulacion: string | null;
   @ApiProperty({ nullable: true, format: 'uuid' }) anulada_por_id: string | null;
+  @ApiProperty({ type: Object, nullable: true, description: 'Responsable de la anulación (id, nombres, apellidos).' }) anulada_por: { id: string; nombres: string; apellidos: string } | null;
   @ApiProperty({ type: String, format: 'date-time', nullable: true }) fecha_anulacion: Date | null;
 }
 

@@ -1,7 +1,6 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiAcceptedResponse, ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import ExcelJS from 'exceljs';
+import { ApiAcceptedResponse, ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import 'multer';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
@@ -10,41 +9,35 @@ import { Roles } from '../common/roles.decorator.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { ImportacionesService } from './importaciones.service.js';
 import { ConfirmarImportacionDto } from './confirmar-importacion.dto.js';
+import { buildStudentsTemplate } from './estudiantes-excel.template.js';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { ImportacionHistorialPageDto } from './dto/importacion-historial.dto.js';
+import { ImportacionesHistorialService } from './importaciones-historial.service.js';
 
-const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** Límites compartidos para cargar libros XLSX de importación (5 MiB, un archivo). */
+export const XLSX_UPLOAD_OPTIONS = {
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_request: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
+    const extension = file.originalname.toLowerCase().endsWith('.xlsx');
+    const mime = file.mimetype === XLSX_MIME || file.mimetype === 'application/octet-stream';
+    callback(extension && mime ? null : new BadRequestException('Adjunta un archivo .xlsx.'), extension && mime);
+  },
+};
 
 @ApiTags('Importaciones')
 @ApiBearerAuth('bearer')
 @Controller()
 @Roles(UsuarioRol.ADMIN)
 export class ImportacionesController {
-  constructor(private readonly service: ImportacionesService) {}
+  constructor(private readonly service: ImportacionesService, private readonly historial: ImportacionesHistorialService) {}
 
   @Get('importaciones/estudiantes/plantilla')
   @ApiOperation({ summary: 'Descargar plantilla para estudiantes habilitados' })
-  @ApiOkResponse({ description: 'Libro XLSX con encabezados oficiales.' })
+  @ApiOkResponse({ description: 'Libro XLSX con el formato institucional: título con "CARRERA <NOMBRE>" y encabezados en la fila 6 (#, Campus, Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES).' })
   async downloadTemplate(@Res() response: Response): Promise<void> {
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Estudiantes');
-    sheet.columns = [
-      { header: 'email', key: 'email', width: 34 },
-      { header: 'nombres', key: 'nombres', width: 24 },
-      { header: 'apellidos', key: 'apellidos', width: 24 },
-      { header: 'cedula', key: 'cedula', width: 16 },
-      { header: 'matricula', key: 'matricula', width: 18 },
-      { header: 'carrera', key: 'carrera', width: 32 },
-      { header: 'nivel', key: 'nivel', width: 12 },
-      { header: 'condicion_ingreso', key: 'condicion_ingreso', width: 23 },
-      { header: 'requisito_pendiente', key: 'requisito_pendiente', width: 36 },
-    ];
-    sheet.getRow(1).font = { bold: true };
-    sheet.views = [{ state: 'frozen', ySplit: 1 }];
-    for (let row = 2; row <= 1001; row += 1) {
-      sheet.getCell(`H${row}`).dataValidation = { type: 'list', formulae: ['"REGULAR,CONDICIONADO"'], allowBlank: false };
-      sheet.getCell(`D${row}`).numFmt = '@';
-      sheet.getCell(`E${row}`).numFmt = '@';
-    }
-    const bytes = await workbook.xlsx.writeBuffer();
+    const bytes = await buildStudentsTemplate();
     response.setHeader('Content-Type', XLSX_MIME);
     response.setHeader('Content-Disposition', 'attachment; filename="plantilla-estudiantes-titulacion.xlsx"');
     response.setHeader('Cache-Control', 'no-store');
@@ -52,14 +45,7 @@ export class ImportacionesController {
   }
 
   @Post('periodos/:periodoId/importaciones/estudiantes/validar')
-  @UseInterceptors(FileInterceptor('archivo', {
-    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
-    fileFilter: (_request, file, callback) => {
-      const extension = file.originalname.toLowerCase().endsWith('.xlsx');
-      const mime = file.mimetype === XLSX_MIME || file.mimetype === 'application/octet-stream';
-      callback(extension && mime ? null : new BadRequestException('Adjunta un archivo .xlsx.'), extension && mime);
-    },
-  }))
+  @UseInterceptors(FileInterceptor('archivo', XLSX_UPLOAD_OPTIONS))
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', required: ['archivo'], properties: { archivo: { type: 'string', format: 'binary' } } } })
   @ApiOperation({ summary: 'Validar un Excel y generar una vista previa sin crear cuentas' })
@@ -73,6 +59,16 @@ export class ImportacionesController {
   ) {
     if (!file) throw new BadRequestException('Adjunta un archivo XLSX en el campo archivo.');
     return this.service.submit(periodId, actor, file.originalname, file.buffer, request.ip ?? null);
+  }
+
+  @Get('periodos/:periodoId/importaciones/estudiantes')
+  @ApiOperation({ summary: 'Historial de importaciones de estudiantes del período (más recientes primero)', description: 'Incluye preparaciones vencidas (expirada = true) y el lote cuando la importación se completó.' })
+  @ApiOkResponse({ type: ImportacionHistorialPageDto })
+  @ApiBadRequestResponse({ description: 'Identificador o paginación inválidos.' })
+  @ApiForbiddenResponse({ description: 'Solo ADMIN puede consultar el historial.' })
+  @ApiNotFoundResponse({ description: 'No existe el período indicado.' })
+  listHistorial(@Param('periodoId', new ParseUUIDPipe()) periodId: string, @Query() query: PaginationQueryDto) {
+    return this.historial.listarEstudiantes(periodId, query);
   }
 
   @Get('periodos/:periodoId/importaciones/estudiantes/:id')

@@ -4,6 +4,9 @@ import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/Postgres
 import { NotificacionCanal, NotificacionTipo } from './enums/notificacion-canal.enum.js';
 
 interface Recipient { usuario_id: string }
+
+/** Motivo del aviso de ingreso: resolución manual o suspensión automática al iniciar la titulación. */
+export type AvisoIngreso = 'RESOLUCION' | 'SUSPENSION_INICIO';
 interface ContextRow { titulo: string; periodo: string; estado: string; version?: number; resultado?: string }
 
 @Injectable()
@@ -63,11 +66,19 @@ export class NotificacionesPersistenciaService {
     await this.registrar(manager, { tipo, entidadTipo: 'asignacion_tutor', entidadId: id, actorId, recipients, title: tipo === NotificacionTipo.TUTOR_ASIGNADO ? 'Tutor asignado' : 'Tutor reemplazado', message: `El tema «${row.titulo}» del período «${row.periodo}» tiene ${tipo === NotificacionTipo.TUTOR_ASIGNADO ? 'un tutor asignado' : 'un nuevo tutor'}.` });
   }
 
-  async ingreso(manager: EntityManager, id: string, actorId: string): Promise<void> {
+  async ingreso(manager: EntityManager, id: string, actorId: string, aviso: AvisoIngreso = 'RESOLUCION'): Promise<void> {
     const s = this.schema(manager);
-    const rows = await manager.query(`SELECT u."id" AS usuario_id, h."situacion_ingreso", p."nombre" AS periodo FROM ${s}."estudiante_habilitado" h JOIN ${s}."estudiante" e ON e."id"=h."estudiante_id" JOIN ${s}."usuario" u ON u."id"=e."usuario_id" JOIN ${s}."periodo_titulacion" p ON p."id"=h."periodo_id" WHERE h."id"=$1 AND u."estado"='ACTIVO'`, [id]) as Array<Recipient & { situacion_ingreso: string; periodo: string }>;
+    const rows = await manager.query(`SELECT u."id" AS usuario_id, h."situacion_ingreso", p."nombre" AS periodo FROM ${s}."estudiante_habilitado" h JOIN ${s}."estudiante" e ON e."id"=h."estudiante_id" JOIN ${s}."usuario" u ON u."id"=e."usuario_id" JOIN ${s}."periodo_titulacion" p ON p."id"=h."periodo_id" WHERE h."id"=$1`, [id]) as Array<Recipient & { situacion_ingreso: string; periodo: string }>;
     const row = rows[0]; if (!row) throw new Error('No se encontró la habilitación para notificar.');
-    await this.registrar(manager, { tipo: NotificacionTipo.INGRESO_RESUELTO, entidadTipo: 'estudiante_habilitado', entidadId: id, actorId, recipients: [row], title: 'Situación de ingreso actualizada', message: `Tu situación de ingreso para el período «${row.periodo}» quedó ${row.situacion_ingreso.toLowerCase()}. Consulta el detalle en el sistema.` });
+    // Una cuenta inactiva no recibe avisos (registrar filtra por estado ACTIVO), pero no bloquea la operación.
+    const suspension = aviso === 'SUSPENSION_INICIO';
+    await this.registrar(manager, {
+      tipo: NotificacionTipo.INGRESO_RESUELTO, entidadTipo: 'estudiante_habilitado', entidadId: id, actorId, recipients: [row],
+      title: suspension ? 'Habilitación suspendida' : 'Situación de ingreso actualizada',
+      message: suspension
+        ? `Tu habilitación para el período «${row.periodo}» quedó suspendida y no admitida porque el requisito pendiente no se resolvió antes del inicio de titulación.`
+        : `Tu situación de ingreso para el período «${row.periodo}» quedó ${row.situacion_ingreso.toLowerCase()}. Consulta el detalle en el sistema.`,
+    });
   }
 
   private async usersForStudents(manager: EntityManager, ids: string[]): Promise<Recipient[]> {
