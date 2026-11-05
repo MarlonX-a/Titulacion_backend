@@ -167,13 +167,15 @@ describe('Usuarios (e2e)', () => {
   }
 
   async function createPeriod(code = 'HABILITADOS-1') {
+    // Relative future window: fixed dates silently fell inside the window once the calendar caught up.
+    const day = 24 * 60 * 60_000;
     return authenticated('post', '/periodos', 'admin-sub')
       .send({
         codigo: code,
         nombre: 'Período de prueba',
-        fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
-        fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
-        fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        fecha_inicio_postulacion: new Date(Date.now() + 7 * day).toISOString(),
+        fecha_fin_postulacion: new Date(Date.now() + 30 * day).toISOString(),
+        fecha_inicio_titulacion: new Date(Date.now() + 31 * day).toISOString(),
         max_integrantes_default: 5,
       })
       .expect(201);
