@@ -129,8 +129,8 @@ export class DocentesService {
     try {
       const docente = await this.dataSource.transaction(async (manager) => {
         const docentes = manager.getRepository(Docente);
-        const cedula = dto.cedula.trim();
-        if (await docentes.findOne({ where: { cedula } })) {
+        const cedula = dto.cedula?.trim() || null;
+        if (cedula && (await docentes.findOne({ where: { cedula } }))) {
           throw new ConflictException(CEDULA_DUPLICADA);
         }
         const usuario = dto.usuario_id
@@ -140,8 +140,8 @@ export class DocentesService {
           docentes.create({
             usuario,
             cedula,
-            titulo_academico: dto.titulo_academico.trim(),
-            departamento: dto.departamento.trim(),
+            titulo_academico: dto.titulo_academico?.trim() || null,
+            departamento: dto.departamento?.trim() || null,
             habilitado_tutoria: dto.habilitado_tutoria ?? false,
           }),
         );
@@ -186,7 +186,7 @@ export class DocentesService {
           return { ...docente, usuario };
         }
         const docentes = manager.getRepository(Docente);
-        if (perfil.cedula !== undefined) {
+        if (perfil.cedula) {
           const owner = await docentes.findOne({ where: { cedula: perfil.cedula } });
           if (owner && owner.id !== docente.id) throw new ConflictException(CEDULA_DUPLICADA);
         }

@@ -21,7 +21,7 @@ export class AsignacionTutorResponseDto {
   @ApiProperty() fecha_asignacion: Date;
   @ApiProperty({ nullable: true }) fecha_fin: Date | null;
   @ApiProperty({ nullable: true }) motivo_cambio: string | null;
-  @ApiProperty({ type: Object }) docente: { id: string; nombres: string; apellidos: string; titulo_academico: string; departamento: string };
+  @ApiProperty({ type: Object }) docente: { id: string; nombres: string; apellidos: string; titulo_academico: string | null; departamento: string | null };
   @ApiProperty({ type: Object }) responsable: { id: string; nombres: string; apellidos: string };
   @ApiProperty({ type: Object }) trabajo: {
     id: string;
@@ -55,7 +55,7 @@ export class CargaDocenteResumenDto {
   @ApiProperty() nombres: string;
   @ApiProperty() apellidos: string;
   @ApiProperty() email: string;
-  @ApiProperty() cedula: string;
+  @ApiProperty({ type: String, nullable: true }) cedula: string | null;
   @ApiProperty() habilitado_tutoria: boolean;
   @ApiProperty({ enum: ['ACTIVO', 'INACTIVO'] }) estado: string;
 }

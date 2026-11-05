@@ -8,6 +8,13 @@ function trimText(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
 }
 
+/** Los datos opcionales del perfil vacíos se guardan como NULL. */
+function optionalText(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 /** Edición administrativa de un docente. El correo es el usuario de acceso y no se edita. */
 export class UpdateDocenteDto {
   @ApiHideProperty()
@@ -28,26 +35,26 @@ export class UpdateDocenteDto {
   @Length(1, 100, { message: 'apellidos debe tener entre 1 y 100 caracteres.' })
   apellidos?: string;
 
-  @ApiPropertyOptional({ example: '0102030400', maxLength: 20 })
+  @ApiPropertyOptional({ example: '0102030400', maxLength: 20, nullable: true })
   @IsOptional()
-  @Transform(({ value }: { value: unknown }) => trimText(value))
+  @Transform(({ value }: { value: unknown }) => optionalText(value))
   @IsString()
   @Validate(CedulaEcuatorianaValidator)
-  cedula?: string;
+  cedula?: string | null;
 
-  @ApiPropertyOptional({ maxLength: 120 })
+  @ApiPropertyOptional({ maxLength: 120, nullable: true })
   @IsOptional()
-  @Transform(({ value }: { value: unknown }) => trimText(value))
+  @Transform(({ value }: { value: unknown }) => optionalText(value))
   @IsString()
   @Length(1, 120)
-  titulo_academico?: string;
+  titulo_academico?: string | null;
 
-  @ApiPropertyOptional({ maxLength: 120 })
+  @ApiPropertyOptional({ maxLength: 120, nullable: true })
   @IsOptional()
-  @Transform(({ value }: { value: unknown }) => trimText(value))
+  @Transform(({ value }: { value: unknown }) => optionalText(value))
   @IsString()
   @Length(1, 120)
-  departamento?: string;
+  departamento?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()

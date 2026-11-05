@@ -182,7 +182,7 @@ export const docenteTestRepository = {
       docenteRecords.some(
         (record) =>
           record.usuario.id === docente.usuario.id ||
-          record.cedula === docente.cedula,
+          (docente.cedula != null && record.cedula === docente.cedula),
       )
     ) {
       throw duplicateError('INSERT INTO docente');
@@ -209,7 +209,7 @@ export const docenteTestRepository = {
           record.usuario.id === options.where.usuario.id),
     ) ?? null,
   update: (criteria: { id: string }, values: Partial<Docente>) => {
-    if (values.cedula !== undefined &&
+    if (values.cedula != null &&
       docenteRecords.some((record) => record.cedula === values.cedula && record.id !== criteria.id)) {
       return Promise.reject(duplicateError('UPDATE docente'));
     }

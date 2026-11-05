@@ -11,8 +11,8 @@ export class TutorElegibleResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;
   @ApiProperty() nombres: string;
   @ApiProperty() apellidos: string;
-  @ApiProperty() titulo_academico: string;
-  @ApiProperty() departamento: string;
+  @ApiProperty({ type: String, nullable: true }) titulo_academico: string | null;
+  @ApiProperty({ type: String, nullable: true }) departamento: string | null;
   @ApiProperty() es_proponente_tema: boolean;
 }
 
@@ -20,8 +20,8 @@ export class DocenteTutorPropuestoResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;
   @ApiProperty() nombres: string;
   @ApiProperty() apellidos: string;
-  @ApiProperty() titulo_academico: string;
-  @ApiProperty() departamento: string;
+  @ApiProperty({ type: String, nullable: true }) titulo_academico: string | null;
+  @ApiProperty({ type: String, nullable: true }) departamento: string | null;
 }
 
 export class TutorPropuestoResponseDto {

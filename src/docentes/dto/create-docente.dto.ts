@@ -13,11 +13,18 @@ import {
   type ValidatorConstraintInterface,
   type ValidationArguments,
 } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { CedulaEcuatorianaValidator } from '../../common/validators/cedula-ecuatoriana.validator.js';
 
 function trimText(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
+}
+
+/** Los datos opcionales del perfil vacíos se guardan como NULL. */
+function optionalText(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
 }
 
 interface CuentaCampos { email?: unknown; nombres?: unknown; apellidos?: unknown; usuario_id?: unknown }
@@ -70,23 +77,26 @@ export class CreateDocenteDto {
   @Length(1, 100, { message: 'apellidos debe tener entre 1 y 100 caracteres.' })
   apellidos?: string;
 
-  @ApiProperty({ example: '0102030400', maxLength: 20 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
+  @ApiPropertyOptional({ example: '0102030400', maxLength: 20, nullable: true })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => optionalText(value))
   @IsString()
   @Validate(CedulaEcuatorianaValidator)
-  cedula: string;
+  cedula?: string | null;
 
-  @ApiProperty({ maxLength: 120 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
+  @ApiPropertyOptional({ maxLength: 120, nullable: true })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => optionalText(value))
   @IsString()
   @Length(1, 120)
-  titulo_academico: string;
+  titulo_academico?: string | null;
 
-  @ApiProperty({ maxLength: 120 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
+  @ApiPropertyOptional({ maxLength: 120, nullable: true })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => optionalText(value))
   @IsString()
   @Length(1, 120)
-  departamento: string;
+  departamento?: string | null;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()
