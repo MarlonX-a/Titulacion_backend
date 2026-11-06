@@ -24,12 +24,12 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator.js';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CreateEstudianteDto } from './dto/create-estudiante.dto.js';
 import { EstudianteResponseDto } from './dto/estudiante-response.dto.js';
+import { ListEstudiantesQueryDto } from './dto/list-estudiantes-query.dto.js';
 import { EstudiantesService } from './estudiantes.service.js';
 
 @ApiTags('Estudiantes')
@@ -64,6 +64,7 @@ export class EstudiantesController {
     minimum: 1,
     maximum: 100,
   })
+  @ApiQuery({ name: 'carrera_id', required: false, type: String, format: 'uuid' })
   @ApiBadRequestResponse({ description: 'La paginación no es válida.' })
   @ApiOkResponse({
     schema: {
@@ -80,7 +81,7 @@ export class EstudiantesController {
       },
     },
   })
-  list(@Query() query: PaginationQueryDto) {
+  list(@Query() query: ListEstudiantesQueryDto) {
     return this.estudiantes.list(query);
   }
 

@@ -107,7 +107,7 @@ async function verify(): Promise<void> {
   for (let index = 0; index < 5; index++) {
     const account = await userRepo.save(userRepo.create({ email: `estudiante${index}@postulaciones.verify`, nombres: `Estudiante ${index}`, apellidos: 'Verificación', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: `postulaciones-student-${index}`, ultimo_acceso: null }));
     studentUsers.push(account);
-    students.push(await studentRepo.save(studentRepo.create({ usuario: account, cedula: ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459'][index]!, matricula: `POST-${index}`, carrera: 'Sistemas', nivel: 8 })));
+    students.push(await studentRepo.save(studentRepo.create({ usuario: account, cedula: ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459'][index]!, matricula: `POST-${index}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 8 })));
   }
   const now = new Date();
   const periodRepo = isolated.getRepository(PeriodoTitulacion);

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AcademicoModule } from '../academico/academico.module.js';
 import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { EstudiantesModule } from '../estudiantes/estudiantes.module.js';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
@@ -16,6 +17,7 @@ import { GrupoIntegrantePersistenciaModule } from '../grupos/grupo-integrante-pe
   imports: [
     TypeOrmModule.forFeature([EstudianteHabilitado, PeriodoTitulacion, Auditoria]),
     EstudiantesModule,
+    AcademicoModule,
     AuditoriaModule,
     AsignacionTemaPersistenciaModule,
     NotificacionesModule,

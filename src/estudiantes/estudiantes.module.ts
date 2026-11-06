@@ -4,9 +4,10 @@ import { Estudiante } from './entities/estudiante.entity.js';
 import { EstudiantesController } from './estudiantes.controller.js';
 import { EstudiantesService } from './estudiantes.service.js';
 import { CedulaEcuatorianaValidator } from '../common/validators/cedula-ecuatoriana.validator.js';
+import { AcademicoModule } from '../academico/academico.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Estudiante])],
+  imports: [TypeOrmModule.forFeature([Estudiante]), AcademicoModule],
   controllers: [EstudiantesController],
   providers: [EstudiantesService, CedulaEcuatorianaValidator],
   exports: [EstudiantesService],

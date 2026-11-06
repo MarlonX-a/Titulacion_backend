@@ -80,7 +80,7 @@ async function verify(): Promise<void> {
     usuario_id: demoStudent.id,
     cedula: '0102030400',
     matricula: 'VERIFY-001',
-    carrera: 'Sistemas',
+    carrera_id: CARRERA_VERIFICACION_ID,
     nivel: 1,
   });
   const teacherProfile = await docentesService.create({
@@ -104,7 +104,7 @@ async function verify(): Promise<void> {
       usuario_id: demoStudent.id,
       cedula: '0102030418',
       matricula: 'VERIFY-002',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_VERIFICACION_ID,
       nivel: 2,
     });
   } catch (error: unknown) {
@@ -132,14 +132,14 @@ async function verify(): Promise<void> {
       usuario_id: concurrentStudent.id,
       cedula: '0102030418',
       matricula: 'VERIFY-003',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_VERIFICACION_ID,
       nivel: 3,
     }),
     estudiantesService.create({
       usuario_id: concurrentStudent.id,
       cedula: '0102030426',
       matricula: 'VERIFY-004',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_VERIFICACION_ID,
       nivel: 4,
     }),
   ]);

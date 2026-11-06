@@ -12,6 +12,7 @@ import { ConfirmarImportacionDto } from './confirmar-importacion.dto.js';
 import { buildStudentsTemplate } from './estudiantes-excel.template.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ImportacionHistorialPageDto } from './dto/importacion-historial.dto.js';
+import { ImportarConCarreraDto } from './dto/importar-con-carrera.dto.js';
 import { ImportacionesHistorialService } from './importaciones-historial.service.js';
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -35,7 +36,7 @@ export class ImportacionesController {
 
   @Get('importaciones/estudiantes/plantilla')
   @ApiOperation({ summary: 'Descargar plantilla para estudiantes habilitados' })
-  @ApiOkResponse({ description: 'Libro XLSX con el formato institucional: título con "CARRERA <NOMBRE>" y encabezados en la fila 6 (#, Campus, Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES).' })
+  @ApiOkResponse({ description: 'Libro XLSX con el formato institucional: título informativo "CARRERA <NOMBRE>" (la carrera se elige con carrera_id) y encabezados en la fila 6 (#, Campus, Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES).' })
   async downloadTemplate(@Res() response: Response): Promise<void> {
     const bytes = await buildStudentsTemplate();
     response.setHeader('Content-Type', XLSX_MIME);
@@ -47,18 +48,19 @@ export class ImportacionesController {
   @Post('periodos/:periodoId/importaciones/estudiantes/validar')
   @UseInterceptors(FileInterceptor('archivo', XLSX_UPLOAD_OPTIONS))
   @ApiConsumes('multipart/form-data')
-  @ApiBody({ schema: { type: 'object', required: ['archivo'], properties: { archivo: { type: 'string', format: 'binary' } } } })
+  @ApiBody({ schema: { type: 'object', required: ['archivo', 'carrera_id'], properties: { archivo: { type: 'string', format: 'binary' }, carrera_id: { type: 'string', format: 'uuid', description: 'Carrera de la facultad del período; única fuente de la carrera (el título del archivo se ignora).' } } } })
   @ApiOperation({ summary: 'Validar un Excel y generar una vista previa sin crear cuentas' })
   @ApiAcceptedResponse({ description: 'Validación en segundo plano; consultar la preparación.' })
   @ApiBadRequestResponse({ description: 'Archivo inválido o fuera de los límites.' })
   async submit(
     @Param('periodoId') periodId: string,
     @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: ImportarConCarreraDto,
     @CurrentUsuario() actor: Usuario,
     @Req() request: Request,
   ) {
     if (!file) throw new BadRequestException('Adjunta un archivo XLSX en el campo archivo.');
-    return this.service.submit(periodId, actor, file.originalname, file.buffer, request.ip ?? null);
+    return this.service.submit(periodId, actor, file.originalname, file.buffer, request.ip ?? null, body.carrera_id);
   }
 
   @Get('periodos/:periodoId/importaciones/estudiantes')

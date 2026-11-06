@@ -3,6 +3,10 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { QueryFailedError } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
+import { construirCatalogo } from '../academico/catalogo-academico.js';
+
+/** Catálogo vacío para pruebas que no revisan la carrera del estudiante. */
+const CATALOGO_VACIO = { catalogo: async () => construirCatalogo([], []) } as never;
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
@@ -41,7 +45,7 @@ function setup(estado: PeriodoEstado = PeriodoEstado.BORRADOR) {
   const dataSource = { transaction: vi.fn(async (callback: (m: typeof manager) => Promise<unknown>) => callback(manager)) };
   const auditoria = { registrar: vi.fn(async () => undefined) };
   const service = new HabilitadosService(
-    {} as never, dataSource as never, {} as never, auditoria as never, {} as never, {} as never, {} as never, {} as never,
+    {} as never, dataSource as never, {} as never, auditoria as never, {} as never, {} as never, {} as never, {} as never, CATALOGO_VACIO,
   );
   return { service, actor, record, periodRepo, habilitadoRepo, auditoria };
 }
@@ -189,7 +193,7 @@ describe('HabilitadosService.resolve', () => {
     })) };
     const service = new HabilitadosService(
       {} as never, dataSource as never, {} as never, state.auditoria as never, asignaciones as never, notificaciones as never,
-      postulaciones as never, grupos as never,
+      postulaciones as never, grupos as never, CATALOGO_VACIO,
     );
     return { ...state, service, notificaciones, asignaciones, postulaciones, grupos };
   }
@@ -252,7 +256,7 @@ describe('HabilitadosService.aplicarNoAdmision', () => {
     const notificaciones = { ingreso: vi.fn(async () => { calls.push('notificar'); }) };
     const service = new HabilitadosService(
       {} as never, {} as never, {} as never, {} as never, asignaciones as never, notificaciones as never,
-      postulaciones as never, grupos as never,
+      postulaciones as never, grupos as never, CATALOGO_VACIO,
     );
     const manager = {} as never;
     const actor = { id: 'admin-id' };
@@ -275,7 +279,7 @@ describe('HabilitadosService.aplicarNoAdmision', () => {
     const notificaciones = { ingreso: vi.fn(async () => undefined) };
     const service = new HabilitadosService(
       {} as never, {} as never, {} as never, {} as never, asignaciones as never, notificaciones as never,
-      postulaciones as never, grupos as never,
+      postulaciones as never, grupos as never, CATALOGO_VACIO,
     );
     await expect(service.aplicarNoAdmision(
       {} as never, { id: 'habilitado-id', periodoId: 'periodo-id', estudianteId: 'estudiante-id' },
@@ -287,9 +291,10 @@ describe('HabilitadosService.aplicarNoAdmision', () => {
 });
 
 describe('HabilitadosService datos del estudiante en respuestas', () => {
+  const catalogo = { catalogo: async () => construirCatalogo([{ id: 'f', codigo: 'F', nombre: 'Facultad' }], [{ id: 'car-1', codigo: 'SOFTWARE', nombre: 'Software', facultad_id: 'f' }]) } as never;
   const record = {
     id: 'h1', periodo: { id: 'p1' },
-    estudiante: { id: 'e1', matricula: 'M1', cedula: '1300000001', carrera: 'Software', nivel: 9, usuario: { id: 'u1', nombres: 'Ana', apellidos: 'Pérez', email: 'e1300000001@live.uleam.edu.ec' } },
+    estudiante: { id: 'e1', matricula: 'M1', cedula: '1300000001', carrera_id: 'car-1', nivel: 9, usuario: { id: 'u1', nombres: 'Ana', apellidos: 'Pérez', email: 'e1300000001@live.uleam.edu.ec' } },
     origen: HabilitadoOrigen.MANUAL, lote_importacion: null, estado: HabilitadoEstado.HABILITADO,
     condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.ADMITIDO,
     fecha_habilitacion: new Date(), fecha_resolucion_ingreso: new Date(), observacion_ingreso: null,
@@ -298,9 +303,9 @@ describe('HabilitadosService datos del estudiante en respuestas', () => {
 
   it('el listado ADMIN incluye correo, cédula, carrera, nivel y el responsable', async () => {
     const repository = { findAndCount: vi.fn(async () => [[record], 1]) };
-    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, catalogo);
     const page = await service.list('p1', { page: 1, limit: 20 } as never);
-    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1', email: 'e1300000001@live.uleam.edu.ec', cedula: '1300000001', carrera: 'Software', nivel: 9 });
+    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1', email: 'e1300000001@live.uleam.edu.ec', cedula: '1300000001', carrera: { id: 'car-1', nombre: 'Software' }, nivel: 9 });
     expect(page.data[0].resuelto_por).toEqual({ id: 'admin-1', nombres: 'Ada', apellidos: 'Admin' });
   });
 
@@ -311,7 +316,7 @@ describe('HabilitadosService datos del estudiante en respuestas', () => {
       getManyAndCount: vi.fn(async () => [[record], 1]),
     };
     const repository = { findOne: vi.fn(async () => record), createQueryBuilder: vi.fn(() => qb) };
-    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, catalogo);
     const page = await service.candidatosInvitacion('p1', { id: 'u2' } as never, { page: 1, limit: 20 });
     expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1' });
     expect(page.data[0]).not.toHaveProperty('resuelto_por');

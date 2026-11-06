@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import type { AppEnvironment } from '../config/environment.js';
 import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.js';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { CondicionIngreso } from '../habilitados/enums/condicion-ingreso.enum.js';
@@ -86,6 +87,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     private readonly auditoria: AuditoriaService,
     private readonly config: ConfigService<AppEnvironment, true>,
     @InjectQueue('importaciones') private readonly queue: Queue,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
     this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
@@ -99,8 +101,13 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> { if (this.timer) clearInterval(this.timer); }
 
-  async submit(periodId: string, actor: Usuario, originalName: string, buffer: Buffer, ip: string | null): Promise<{ id: string; estado: EstadoPreparacion }> {
-    await this.assertDraftPeriod(periodId);
+  /**
+   * La carrera elegida en el formulario (`carreraId`) es la única fuente de la carrera de los
+   * estudiantes; el título del libro («CARRERA …») se ignora.
+   */
+  async submit(periodId: string, actor: Usuario, originalName: string, buffer: Buffer, ip: string | null, carreraId: string): Promise<{ id: string; estado: EstadoPreparacion }> {
+    const periodo = await this.assertDraftPeriod(periodId);
+    await this.academico.assertCarreraEnFacultad(this.dataSource, carreraId, periodo.facultad_id);
     const filename = originalName.replaceAll('\\', '/').split('/').at(-1) ?? 'estudiantes.xlsx';
     const key = await this.storage.savePrivate(buffer, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     let record: PreparacionImportacion;
@@ -108,7 +115,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       record = await this.dataSource.transaction(async (manager) => {
         const preparationRepo = manager.getRepository(PreparacionImportacion);
         const created = await preparationRepo.save(preparationRepo.create({
-          periodo: { id: periodId }, tipo: LoteImportacionTipo.ESTUDIANTES, solicitada_por: actor, lote: null,
+          periodo: { id: periodId }, tipo: LoteImportacionTipo.ESTUDIANTES, carrera_id: carreraId, solicitada_por: actor, lote: null,
           nombre_archivo: filename.slice(0, 200), ruta_almacenamiento: key,
           sha256: createHash('sha256').update(buffer).digest('hex'),
           estado: EstadoPreparacion.VALIDANDO, total_filas: 0, filas: null, errores: null,
@@ -117,7 +124,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
         }));
         await this.auditoria.registrar(manager, {
           actor, accion: 'SOLICITAR_IMPORTACION_ESTUDIANTES', entidad_tipo: 'preparacion_importacion', entidad_id: created.id,
-          valores_anteriores: null, valores_nuevos: { periodo_id: periodId, sha256: created.sha256, nombre_archivo: created.nombre_archivo }, ip_origen: ip,
+          valores_anteriores: null, valores_nuevos: { periodo_id: periodId, carrera_id: carreraId, sha256: created.sha256, nombre_archivo: created.nombre_archivo }, ip_origen: ip,
         });
         return created;
       });
@@ -135,11 +142,13 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     if (!record?.periodo || record.estado !== EstadoPreparacion.VALIDANDO || record.expira_en <= new Date()) return;
     const periodo = record.periodo;
     try {
-      await this.assertDraftPeriod(periodo.id);
+      const actual = await this.assertDraftPeriod(periodo.id);
+      if (!record.carrera_id) throw new ConflictException('La importación no indica la carrera; vuelve a cargar el archivo.');
+      await this.academico.assertCarreraEnFacultad(this.dataSource, record.carrera_id, actual.facultad_id);
       const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
       const parsed = await parseStudentsXlsx(buffer);
       if (parsed.sha256 !== record.sha256) throw new ConflictException('El archivo cambió desde que se envió a validar.');
-      const databaseErrors = await this.validateExistingRows(parsed.rows, periodo.id);
+      const databaseErrors = await this.validateExistingRows(parsed.rows, periodo.id, record.carrera_id);
       const errors = [...parsed.errors, ...databaseErrors];
       record.total_filas = parsed.rows.length;
       record.filas = parsed.rows;
@@ -212,7 +221,10 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
         if (period.estado !== PeriodoEstado.BORRADOR) throw new ConflictException('El período dejó de estar en borrador; no se creó ningún registro.');
         const preparation = await manager.getRepository(PreparacionImportacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
         if (!preparation || preparation.estado !== EstadoPreparacion.EN_COLA) return false;
-        const currentErrors = await this.validateExistingRows(rows, period.id, manager);
+        if (!record.carrera_id) throw new ConflictException('La importación no indica la carrera; vuelve a cargar el archivo.');
+        const carreraId = record.carrera_id;
+        await this.academico.assertCarreraEnFacultad(this.dataSource, carreraId, period.facultad_id);
+        const currentErrors = await this.validateExistingRows(rows, period.id, carreraId, manager);
         if (currentErrors.length > 0) throw new ConflictException('Los datos cambiaron desde la vista previa; vuelve a validar el archivo.');
         const now = new Date();
         const loteRepo = manager.getRepository(LoteImportacion);
@@ -231,7 +243,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           let user = await users.findOne({ where: { email: row.email }, lock: { mode: 'pessimistic_write' } });
           if (!user) user = await users.save(users.create({ email: row.email, nombres: row.nombres, apellidos: row.apellidos, rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: null, ultimo_acceso: null }));
           let profile = await students.findOne({ where: { usuario: { id: user.id } }, lock: { mode: 'pessimistic_write' } });
-          if (!profile) profile = await students.save(students.create({ usuario: user, cedula: row.cedula, matricula: row.matricula, carrera: row.carrera, nivel: row.nivel }));
+          if (!profile) profile = await students.save(students.create({ usuario: user, cedula: row.cedula, matricula: row.matricula, carrera_id: carreraId, nivel: row.nivel }));
           let habilitation = await enabledRepo.findOne({ where: { periodo: { id: period.id }, estudiante: { id: profile.id } }, lock: { mode: 'pessimistic_write' } });
           if (!habilitation) {
             const resolution = habilitacionImportada(row);
@@ -293,13 +305,14 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     } finally { this.dispatching = false; }
   }
 
-  private async assertDraftPeriod(id: string): Promise<void> {
+  private async assertDraftPeriod(id: string): Promise<PeriodoTitulacion> {
     const period = await this.dataSource.getRepository(PeriodoTitulacion).findOneBy({ id });
     if (!period) throw new NotFoundException('No existe el período indicado.');
     if (period.estado !== PeriodoEstado.BORRADOR) throw new ConflictException('Solo se pueden importar estudiantes en un período BORRADOR.');
+    return period;
   }
 
-  private async validateExistingRows(rows: EstudianteExcelRow[], periodId: string, manager: EntityManager = this.dataSource.manager): Promise<ExcelRowError[]> {
+  private async validateExistingRows(rows: EstudianteExcelRow[], periodId: string, carreraId: string, manager: EntityManager = this.dataSource.manager): Promise<ExcelRowError[]> {
     const errors: ExcelRowError[] = [];
     const userRepo = manager.getRepository(Usuario);
     const studentRepo = manager.getRepository(Estudiante);
@@ -318,7 +331,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       }
       if (account) {
         const profile = await studentRepo.findOne({ where: { usuario: { id: account.id } }, relations: { usuario: true } });
-        if (profile && (profile.cedula !== row.cedula || profile.matricula !== row.matricula || profile.carrera !== row.carrera || profile.nivel !== row.nivel)) {
+        if (profile && (profile.cedula !== row.cedula || profile.matricula !== row.matricula || profile.carrera_id !== carreraId || profile.nivel !== row.nivel)) {
           errors.push({ fila: row.fila, columna: 'matricula', mensaje: 'El perfil existente contiene datos distintos; corrígelos mediante el proceso administrativo.' });
           continue;
         }

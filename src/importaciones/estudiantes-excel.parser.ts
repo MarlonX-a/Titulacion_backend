@@ -10,7 +10,6 @@ export interface EstudianteExcelRow {
   apellidos: string;
   cedula: string;
   matricula: string;
-  carrera: string;
   nivel: number;
   habilitado: boolean;
 }
@@ -109,31 +108,6 @@ function mapColumns(sheet: ExcelJS.Worksheet, headerRow: number): Record<Require
   return Object.fromEntries(columns) as Record<RequiredHeader, number>;
 }
 
-/** Devuelve el nombre tras «CARRERA» (y un «DE» opcional) o null si el texto no es el título de carrera. */
-function careerFromTitle(value: string): string | null {
-  const words = value.trim().split(/\s+/);
-  if (words[0]?.toLowerCase() !== 'carrera') return null;
-  const rest = words[1]?.toLowerCase() === 'de' ? words.slice(2) : words.slice(1);
-  return rest.length > 0 ? rest.join(' ') : null;
-}
-
-function findCareer(sheet: ExcelJS.Worksheet, headerRow: number): string {
-  for (let number = 1; number < headerRow; number += 1) {
-    let career: string | null = null;
-    sheet.getRow(number).eachCell({ includeEmpty: false }, (cell) => {
-      const value = cellText(cell.value);
-      if (career === null && value !== null) career = careerFromTitle(value);
-    });
-    if (career !== null) {
-      const name = titleCase(career);
-      if (/[<>]/.test(name)) throw new BadRequestException('Reemplaza el marcador de carrera del título (por ejemplo, "CARRERA SOFTWARE").');
-      if (name.length > 120) throw new BadRequestException('El nombre de la carrera admite máximo 120 caracteres.');
-      return name;
-    }
-  }
-  throw new BadRequestException('No se encontró la carrera en el título del archivo; agrega una celda como "CARRERA SOFTWARE" sobre los encabezados.');
-}
-
 export function readCedula(value: ExcelJS.CellValue): string {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return String(value).padStart(10, '0');
   return cellText(value) ?? '';
@@ -173,7 +147,7 @@ export async function parseStudentsXlsx(buffer: Buffer): Promise<ParsedStudentWo
   const sheet = await loadFirstSheet(buffer);
   const headerRow = findHeaderRow(sheet);
   const columns = mapColumns(sheet, headerRow);
-  const carrera = findCareer(sheet, headerRow);
+  // La carrera se elige al importar (carrera_id); el título del libro (p. ej. «CARRERA SOFTWARE») se ignora.
   const mapped = STUDENT_REQUIRED_HEADERS.map((header) => columns[header]);
 
   const dataRows: ExcelJS.Row[] = [];
@@ -215,7 +189,7 @@ export async function parseStudentsXlsx(buffer: Buffer): Promise<ParsedStudentWo
     if (rowErrors.length > 0) { errors.push(...rowErrors); continue; }
     rows.push({
       fila: number, email: `e${cedula}@${STUDENT_EMAIL_DOMAIN}`, nombres, apellidos, cedula, matricula: cedula,
-      carrera, nivel, habilitado: academico === true && ingles === true,
+      nivel, habilitado: academico === true && ingles === true,
     });
   }
   if (rows.length === 0 && errors.length === 0) throw new BadRequestException('El libro no contiene filas de estudiantes.');

@@ -21,7 +21,7 @@ export class ReportesService {
         if (filtros.estado) conditions.push(`eh."estado"=${add(filtros.estado)}`);
         if (filtros.condicion_ingreso) conditions.push(`eh."condicion_ingreso"=${add(filtros.condicion_ingreso)}`);
         if (filtros.situacion_ingreso) conditions.push(`eh."situacion_ingreso"=${add(filtros.situacion_ingreso)}`);
-        sql = `SELECT e."matricula" AS "Matrícula", u."nombres" AS "Nombres", u."apellidos" AS "Apellidos", e."carrera" AS "Carrera", e."nivel" AS "Nivel", eh."estado" AS "Estado de habilitación", eh."condicion_ingreso" AS "Condición", eh."situacion_ingreso" AS "Situación de ingreso" FROM ${s}."estudiante_habilitado" eh JOIN ${s}."estudiante" e ON e."id"=eh."estudiante_id" JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE ${conditions.join(' AND ')} ORDER BY e."id"`;
+        sql = `SELECT e."matricula" AS "Matrícula", u."nombres" AS "Nombres", u."apellidos" AS "Apellidos", c."nombre" AS "Carrera", e."nivel" AS "Nivel", eh."estado" AS "Estado de habilitación", eh."condicion_ingreso" AS "Condición", eh."situacion_ingreso" AS "Situación de ingreso" FROM ${s}."estudiante_habilitado" eh JOIN ${s}."estudiante" e ON e."id"=eh."estudiante_id" JOIN ${s}."usuario" u ON u."id"=e."usuario_id" JOIN ${s}."carrera" c ON c."id"=e."carrera_id" WHERE ${conditions.join(' AND ')} ORDER BY e."id"`;
         columnas = ['Matrícula','Nombres','Apellidos','Carrera','Nivel','Estado de habilitación','Condición','Situación de ingreso']; break;
       }
       case ExportacionTipo.GRUPOS: {

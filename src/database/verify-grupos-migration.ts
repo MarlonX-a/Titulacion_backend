@@ -37,6 +37,7 @@ import { CreateGruposInvitaciones20261002060000 } from './migrations/20261002060
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -90,7 +91,7 @@ async function verify(): Promise<void> {
   const profiles: Estudiante[] = [];
   for (let i = 0; i < 4; i++) {
     const user = await users.save(users.create({ email: `estudiante${i}@grupos.verify`, nombres: `Estudiante ${i}`, apellidos: 'Verificación', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: `grupos-student-${i}`, ultimo_acceso: null }));
-    profiles.push(await isolated.getRepository(Estudiante).save(isolated.getRepository(Estudiante).create({ usuario: user, cedula: ['0102030400', '0102030418', '0102030426', '0102030434'][i], matricula: `GRUPOS-${i}`, carrera: 'Sistemas', nivel: 5 })));
+    profiles.push(await isolated.getRepository(Estudiante).save(isolated.getRepository(Estudiante).create({ usuario: user, cedula: ['0102030400', '0102030418', '0102030426', '0102030434'][i], matricula: `GRUPOS-${i}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 5 })));
   }
   const now = Date.now();
   const period = await isolated.getRepository(PeriodoTitulacion).save(isolated.getRepository(PeriodoTitulacion).create({ codigo: 'GRUPOS-VERIFY', nombre: 'Verificación grupos', fecha_inicio_postulacion: new Date(now - 60_000), fecha_fin_postulacion: new Date(now + 10 * 60_000), fecha_inicio_titulacion: new Date(now + 11 * 60_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 2 }));

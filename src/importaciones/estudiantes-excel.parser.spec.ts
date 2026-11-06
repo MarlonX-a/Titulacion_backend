@@ -31,7 +31,7 @@ async function institutionalWorkbook({ title = 'LISTA DE ESTUDIANTES QUE PUEDEN 
 }
 
 describe('parseStudentsXlsx (formato institucional)', () => {
-  it('detecta encabezados en la fila 6, la carrera del título e ignora columnas adicionales', async () => {
+  it('detecta encabezados en la fila 6 e ignora el título de carrera y las columnas adicionales', async () => {
     const parsed = await parseStudentsXlsx(await institutionalWorkbook({
       career: 'CARRERA TECNOLOGIAS DE LA INFORMACION',
       rows: [[1, 'MANTA', '1316661675', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'SI', 'Tema libre', 'Imp', 'Tutor X', { formula: '1+1' }]],
@@ -39,7 +39,7 @@ describe('parseStudentsXlsx (formato institucional)', () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toEqual([{
       fila: 7, email: 'e1316661675@live.uleam.edu.ec', nombres: 'ORLEY ANTONIO', apellidos: 'ZAMBRANO VERA',
-      cedula: '1316661675', matricula: '1316661675', carrera: 'Tecnologias de la Informacion', nivel: 7, habilitado: true,
+      cedula: '1316661675', matricula: '1316661675', nivel: 7, habilitado: true,
     }]);
     expect(parsed.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -58,7 +58,7 @@ describe('parseStudentsXlsx (formato institucional)', () => {
       ['0951676576', 8, false],
       ['1315226090', 6, false],
     ]);
-    expect(parsed.rows[0].carrera).toBe('Software');
+    expect(parsed.rows[0]).not.toHaveProperty('carrera');
   });
 
   it('completa con ceros la cédula numérica que perdió el cero inicial', async () => {
@@ -102,10 +102,14 @@ describe('parseStudentsXlsx (formato institucional)', () => {
       .rejects.toThrow(/Faltan encabezados obligatorios.*ingles/);
   });
 
-  it('rechaza el libro sin carrera en el título o con el marcador de la plantilla', async () => {
+  it('ignora la celda de carrera del título: acepta el libro sin ella, con el marcador o con cualquier nombre', async () => {
     const rows = [[1, 'MANTA', '1316661675', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'SI']];
-    await expect(parseStudentsXlsx(await institutionalWorkbook({ career: null, rows }))).rejects.toThrow(/carrera/i);
-    await expect(parseStudentsXlsx(await institutionalWorkbook({ career: 'CARRERA <NOMBRE>', rows }))).rejects.toThrow(/marcador/);
+    for (const career of [null, 'CARRERA <NOMBRE>', 'CARRERA MEDICINA', `CARRERA ${'X'.repeat(200)}`]) {
+      const parsed = await parseStudentsXlsx(await institutionalWorkbook({ career, rows }));
+      expect(parsed.errors).toEqual([]);
+      expect(parsed.rows).toEqual([expect.objectContaining({ cedula: '1316661675', habilitado: true })]);
+      expect(parsed).not.toHaveProperty('carrera');
+    }
   });
 
   it('acepta filas ocultas por el autofiltro y omite filas vacías', async () => {
@@ -129,17 +133,16 @@ describe('parseStudentsXlsx (formato institucional)', () => {
     expect(parsed.errors).toEqual([expect.objectContaining({ fila: 7, columna: 'fila' })]);
   });
 
-  it('la plantilla descargable se procesa al completar la carrera y una fila', async () => {
+  it('la plantilla descargable se procesa al completar una fila, sin reemplazar el marcador de carrera', async () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(await buildStudentsTemplate() as unknown as Parameters<typeof workbook.xlsx.load>[0]);
     const sheet = workbook.worksheets[0];
     expect(sheet.getCell('C7').numFmt).toBe('@');
     expect(sheet.getCell('G7').dataValidation).toMatchObject({ type: 'list', formulae: ['"SI,NO"'] });
-    sheet.getCell('A2').value = 'CARRERA SOFTWARE';
     fillRow(sheet, 7, [1, 'MANTA', '1316661675', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'NO']);
     const parsed = await parseStudentsXlsx(Buffer.from(await workbook.xlsx.writeBuffer() as ArrayBuffer));
     expect(parsed.errors).toEqual([]);
-    expect(parsed.rows).toMatchObject([{ carrera: 'Software', habilitado: false }]);
+    expect(parsed.rows).toMatchObject([{ cedula: '1316661675', habilitado: false }]);
   });
 
   it.skipIf(!existsSync(SAMPLE_PATH))('procesa el archivo institucional de muestra', async () => {
@@ -147,6 +150,5 @@ describe('parseStudentsXlsx (formato institucional)', () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toHaveLength(84);
     expect(parsed.rows.filter((row) => row.habilitado)).toHaveLength(54);
-    expect(new Set(parsed.rows.map((row) => row.carrera))).toEqual(new Set(['Software']));
   });
 });

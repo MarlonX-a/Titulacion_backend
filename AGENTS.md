@@ -85,8 +85,10 @@ de Sonar al workflow sin cambiar primero esa configuración.
    del libro; la fila de encabezados se detecta en las primeras 20 filas por la
    celda `Identificación` y se exigen `Identificación`, `Apellidos`, `Nombres`,
    `nivel`, `ACADEMICO` e `INGLES` (sin importar mayúsculas ni tildes); las
-   demás columnas se ignoran. La carrera se toma del título (`CARRERA
-   SOFTWARE`). El correo es `e{cedula}@live.uleam.edu.ec`, la matrícula es la
+   demás columnas se ignoran. La carrera se elige en el formulario (campo multipart
+   `carrera_id`, debe pertenecer a la facultad del período) y es la única fuente: la celda
+   `CARRERA <NOMBRE>` del título se ignora (puede faltar o no coincidir). Un estudiante
+   existente de otra carrera es error por fila. El correo es `e{cedula}@live.uleam.edu.ec`, la matrícula es la
    cédula y la clave temporal inicial es la cédula, con cambio obligatorio en
    el primer acceso. SI/SI en ACADEMICO/INGLES crea la habilitación
    `HABILITADO`/`ADMITIDO`; cualquier otra combinación válida crea

@@ -195,7 +195,7 @@ describe('Usuarios (e2e)', () => {
       rol: UsuarioRol.ESTUDIANTE,
     });
     const profile = await authenticated('post', '/estudiantes', 'admin-sub')
-      .send({ usuario_id: account.id, cedula, matricula, carrera: 'Sistemas', nivel: 5 })
+      .send({ usuario_id: account.id, cedula, matricula, carrera_id: CARRERA_PRUEBA_ID, nivel: 5 })
       .expect(201);
     return { account, profile };
   }
@@ -406,7 +406,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: student.id,
         cedula: '0102030400',
         matricula: '  000123  ',
-        carrera: '  Sistemas  ',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 5,
       })
       .expect(201);
@@ -419,7 +419,8 @@ describe('Usuarios (e2e)', () => {
       },
       cedula: '0102030400',
       matricula: '000123',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_PRUEBA_ID,
+      carrera: CARRERA_PRUEBA,
       nivel: 5,
     });
     expect(studentProfile.body.usuario).not.toHaveProperty('id_externo_sso');
@@ -481,7 +482,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: student.id,
         cedula: '0102030400',
         matricula: '1001',
-        carrera: 'Sistemas',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 1,
       })
       .expect(201);
@@ -490,7 +491,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: otherStudent.id,
         cedula: '0102030418',
         matricula: '1002',
-        carrera: 'Sistemas',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 2,
       })
       .expect(201);
@@ -541,7 +542,7 @@ describe('Usuarios (e2e)', () => {
       usuario_id: student.id,
       cedula: '0102030400',
       matricula: '2001',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_PRUEBA_ID,
       nivel: 1,
     };
     await authenticated('post', '/estudiantes', 'admin-sub')
@@ -580,7 +581,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: 'not-a-uuid',
         cedula: '0102030400',
         matricula: '1',
-        carrera: 'Sistemas',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 1,
         estado: 'ACTIVO',
       })
