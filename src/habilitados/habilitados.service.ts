@@ -154,6 +154,7 @@ export class HabilitadosService {
           dto.estudiante_id,
           manager,
         );
+        await this.academico.assertCarreraEnFacultad(this.dataSource, estudiante.carrera_id, periodo.facultad_id);
         const now = new Date();
         const isRegular = dto.condicion_ingreso === CondicionIngreso.REGULAR;
         if (isRegular && dto.requisito_pendiente != null) {
@@ -216,6 +217,7 @@ export class HabilitadosService {
           ...(query.condicion_ingreso ? { condicion_ingreso: query.condicion_ingreso } : {}),
           ...(query.situacion_ingreso ? { situacion_ingreso: query.situacion_ingreso } : {}),
           ...(query.estado ? { estado: query.estado } : {}),
+          ...(query.carrera_id ? { estudiante: { carrera_id: query.carrera_id } } : {}),
         },
         relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
         order: { fecha_habilitacion: 'DESC', id: 'ASC' },

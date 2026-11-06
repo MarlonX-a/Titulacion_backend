@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { QueryFailedError } from 'typeorm';
 import { describe, expect, it, vi } from 'vitest';
+import { AcademicoService } from '../academico/academico.service.js';
 import { construirCatalogo } from '../academico/catalogo-academico.js';
 
 /** Catálogo vacío para pruebas que no revisan la carrera del estudiante. */
@@ -320,5 +321,42 @@ describe('HabilitadosService datos del estudiante en respuestas', () => {
     const page = await service.candidatosInvitacion('p1', { id: 'u2' } as never, { page: 1, limit: 20 });
     expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1' });
     expect(page.data[0]).not.toHaveProperty('resuelto_por');
+  });
+
+  it('filtra el listado por la carrera del estudiante', async () => {
+    const repository = { findAndCount: vi.fn(async () => [[], 0]) };
+    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, { catalogo: async () => construirCatalogo([], []) } as never);
+    await service.list('p1', { page: 1, limit: 20, carrera_id: 'car-1' } as never);
+    expect(repository.findAndCount).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ estudiante: { carrera_id: 'car-1' } }) }));
+  });
+});
+
+describe('HabilitadosService.create carrera', () => {
+  function setupAlta(carreraEstudiante: string) {
+    const periodo = { id: 'periodo-id', estado: PeriodoEstado.BORRADOR, facultad_id: 'fac-vida' };
+    const habilitadoRepo = { findOne: vi.fn(async () => null), create: vi.fn((v: object) => v), save: vi.fn(async (v: object) => ({ id: 'h-1', ...v })) };
+    const manager = { getRepository: (entity: unknown) => (entity === PeriodoTitulacion ? { findOne: vi.fn(async () => periodo) } : habilitadoRepo) };
+    const dataSource = { transaction: vi.fn(async (cb: (m: typeof manager) => Promise<unknown>) => cb(manager)) };
+    const estudiantes = { getActiveProfileForHabilitacion: vi.fn(async () => ({ id: 'e-1', carrera_id: carreraEstudiante, usuario: { nombres: 'Ana', apellidos: 'Pérez' } })) };
+    const academico = new AcademicoService();
+    vi.spyOn(academico, 'catalogo').mockResolvedValue(construirCatalogo(
+      [{ id: 'fac-vida', codigo: 'VIDA', nombre: 'Facultad Ciencias de la Vida y Tecnologías' }, { id: 'fac-salud', codigo: 'SALUD', nombre: 'Facultad Ciencias de la Salud' }],
+      [{ id: 'car-software', codigo: 'SOFTWARE', nombre: 'Ingeniería en Software', facultad_id: 'fac-vida' }, { id: 'car-medicina', codigo: 'MEDICINA', nombre: 'Medicina', facultad_id: 'fac-salud' }],
+    ));
+    const service = new HabilitadosService({} as never, dataSource as never, estudiantes as never, { registrar: vi.fn() } as never, {} as never, {} as never, {} as never, {} as never, academico);
+    return { service, habilitadoRepo };
+  }
+
+  it('rechaza habilitar a un estudiante de una carrera fuera de la facultad del período', async () => {
+    const state = setupAlta('car-medicina');
+    await expect(state.service.create('periodo-id', { id: 'admin-id' } as never, { estudiante_id: 'e-1', condicion_ingreso: CondicionIngreso.REGULAR } as never, null))
+      .rejects.toThrow('La carrera «Medicina» no pertenece a la facultad «Facultad Ciencias de la Vida y Tecnologías» del período.');
+    expect(state.habilitadoRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('habilita a un estudiante de una carrera de la facultad del período', async () => {
+    const state = setupAlta('car-software');
+    await state.service.create('periodo-id', { id: 'admin-id' } as never, { estudiante_id: 'e-1', condicion_ingreso: CondicionIngreso.REGULAR } as never, null);
+    expect(state.habilitadoRepo.save).toHaveBeenCalled();
   });
 });

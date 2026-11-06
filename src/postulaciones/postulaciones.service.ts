@@ -2,6 +2,7 @@ import { ConflictException, ForbiddenException, HttpException, Injectable, NotFo
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudianteHabilitado } from '../habilitados/entities/estudiante-habilitado.entity.js';
@@ -47,6 +48,7 @@ export class PostulacionesService {
     private readonly asignaciones: AsignacionTemaPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
     private readonly persistencia: PostulacionPersistenciaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   async create(periodoId: string, actor: Usuario, dto: CreatePostulacionDto, ip: string | null): Promise<PostulacionResponseDto> {
@@ -64,7 +66,8 @@ export class PostulacionesService {
         if (dto.modalidad === ModalidadPostulacion.INDIVIDUAL) {
           studentId = await this.studentId(manager, actor.id);
           await this.lockAssignmentStudent(manager, studentId);
-          await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
+          const estudiante = await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
+          await this.academico.assertMismaCarrera(this.dataSource, estudiante.carrera_id, topic.carrera_id, 'del estudiante');
           if (await this.asignaciones.tieneVigenteParaEstudiante(manager, studentId)) throw new ConflictException('El estudiante ya tiene una asignación vigente.');
           if (await manager.getRepository(GrupoIntegrante).findOne({ where: { periodo: { id: periodoId }, estudiante: { id: studentId }, estado: GrupoIntegranteEstado.ACTIVO } })) throw new ConflictException('Para postular individualmente debes estar fuera de los grupos del período.');
           participantIds = [studentId]; count = 1;
@@ -81,7 +84,8 @@ export class PostulacionesService {
           if (!participantIds.includes(student)) throw new ForbiddenException('No formas parte del grupo representante.');
           for (const participantId of [...participantIds].sort((left, right) => left.localeCompare(right))) await this.lockAssignmentStudent(manager, participantId);
           for (const participantId of participantIds) {
-            await this.habilitados.getEligibleStudentForGroup(periodoId, participantId, manager);
+            const integrante = await this.habilitados.getEligibleStudentForGroup(periodoId, participantId, manager);
+            await this.academico.assertMismaCarrera(this.dataSource, integrante.carrera_id, topic.carrera_id, 'de un integrante del grupo');
             if (await this.asignaciones.tieneVigenteParaEstudiante(manager, participantId)) throw new ConflictException('Uno de los integrantes ya tiene una asignación vigente.');
           }
         }
