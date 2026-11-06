@@ -1,4 +1,5 @@
 import { Check, Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Carrera } from '../../academico/entities/carrera.entity.js';
 import { Docente } from '../../docentes/entities/docente.entity.js';
 import { LineaInvestigacion } from '../../lineas-investigacion/entities/linea-investigacion.entity.js';
 import { PeriodoTitulacion } from '../../periodos/entities/periodo-titulacion.entity.js';
@@ -8,6 +9,7 @@ import { EstadoTema } from '../enums/estado-tema.enum.js';
 @Index('IDX_tema_periodo_creado', ['periodo', 'creado_en', 'id'])
 @Index('IDX_tema_docente', ['docente_proponente', 'creado_en', 'id'])
 @Index('IDX_tema_linea', ['linea', 'creado_en', 'id'])
+@Index('IDX_tema_carrera', ['carrera_id'])
 @Check('CHK_tema_titulo_no_vacio', 'length(btrim("titulo")) > 0')
 @Check('CHK_tema_descripcion_no_vacia', 'length(btrim("descripcion")) > 0')
 @Check('CHK_tema_min_integrantes', '"min_integrantes" >= 1')
@@ -27,6 +29,13 @@ export class Tema {
   @ManyToOne(() => Docente, { nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'docente_proponente_id', foreignKeyConstraintName: 'FK_tema_docente_proponente' })
   docente_proponente: Docente;
+
+  @Column({ type: 'uuid', name: 'carrera_id' })
+  carrera_id: string;
+
+  @ManyToOne(() => Carrera, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'carrera_id', foreignKeyConstraintName: 'FK_tema_carrera' })
+  carrera?: Carrera;
 
   @Column({ type: 'varchar', length: 250 })
   titulo: string;

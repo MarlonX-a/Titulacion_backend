@@ -5,6 +5,10 @@ import { IsInt, IsString, IsUUID, Length, Max, Min } from 'class-validator';
 const trim = ({ value }: { value: unknown }): unknown => typeof value === 'string' ? value.trim() : value;
 
 export class CreateTemaDto {
+  @ApiProperty({ format: 'uuid', description: 'Carrera de la facultad del período; el docente proponente debe ser de la misma carrera.' })
+  @IsUUID()
+  carrera_id: string;
+
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   linea_id: string;

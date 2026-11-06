@@ -81,7 +81,7 @@ async function verify(): Promise<void> {
     { postulacion: () => Promise.resolve() } as unknown as NotificacionesPersistenciaService,
   );
   const periodosService = new PeriodosService(periodos, isolated, auditoria);
-  const dto = { linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;
+  const dto = { carrera_id: CARRERA_VERIFICACION_ID, linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;
 
   step = 'alta e historial inicial';
   const created = await service.create(periodo.id, dto, actor, null);

@@ -12,6 +12,8 @@ import { DataSource, EntityManager, LessThanOrEqual, MoreThanOrEqual, QueryFaile
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { AsignacionTemaEstado } from '../asignaciones-tema/enums/asignacion-tema-estado.enum.js';
+import { AcademicoService } from '../academico/academico.service.js';
+import { resumenCatalogo, type CatalogoAcademico } from '../academico/catalogo-academico.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
@@ -56,6 +58,7 @@ function hasCode(error: unknown, code: string): boolean {
 function temaValues(tema: Tema): Record<string, unknown> {
   return {
     periodo_id: tema.periodo.id,
+    carrera_id: tema.carrera_id,
     linea_id: tema.linea.id,
     docente_proponente_id: tema.docente_proponente.id,
     titulo: tema.titulo,
@@ -67,10 +70,12 @@ function temaValues(tema: Tema): Record<string, unknown> {
   };
 }
 
-function responseFrom(tema: Tema): TemaResponseDto {
+function responseFrom(tema: Tema, catalogo: CatalogoAcademico): TemaResponseDto {
   return {
     id: tema.id,
     periodo_id: tema.periodo.id,
+    carrera_id: tema.carrera_id,
+    carrera: resumenCatalogo(catalogo.carrera(tema.carrera_id), tema.carrera_id),
     linea_id: tema.linea.id,
     linea: { id: tema.linea.id, codigo: tema.linea.codigo, nombre: tema.linea.nombre },
     docente_proponente_id: tema.docente_proponente.id,
@@ -117,17 +122,24 @@ export class TemasService {
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
+
+  private async respuesta(tema: Tema): Promise<TemaResponseDto> {
+    return responseFrom(tema, await this.academico.catalogo(this.dataSource));
+  }
 
   async create(periodoId: string, dto: CreateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
         const periodo = await this.lockWritablePeriod(manager, periodoId);
+        const carrera = await this.academico.assertCarreraEnFacultad(this.dataSource, dto.carrera_id, periodo.facultad_id);
         const refs = await this.references(manager, dto.linea_id, dto.docente_proponente_id);
+        await this.academico.assertMismaCarrera(this.dataSource, refs.docente.carrera_id, carrera.id, 'del docente proponente');
         this.assertRange(dto.min_integrantes, dto.max_integrantes);
         const repo = manager.getRepository(Tema);
         const tema = await repo.save(repo.create({
-          periodo, linea: refs.linea, docente_proponente: refs.docente,
+          periodo, carrera_id: carrera.id, linea: refs.linea, docente_proponente: refs.docente,
           titulo: dto.titulo.trim(), descripcion: dto.descripcion.trim(),
           min_integrantes: dto.min_integrantes, max_integrantes: dto.max_integrantes,
           estado: EstadoTema.BORRADOR,
@@ -138,7 +150,7 @@ export class TemasService {
           actor, accion: 'CREAR_TEMA', entidad_tipo: 'tema', entidad_id: loaded.id,
           valores_anteriores: null, valores_nuevos: temaValues(loaded), ip_origen: ip,
         });
-        return responseFrom(loaded);
+        return await this.respuesta(loaded);
       });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
@@ -163,6 +175,7 @@ export class TemasService {
       const [records, total] = await this.repository.findAndCount({
         where: {
           periodo: { id: periodoId },
+          ...(query.carrera_id ? { carrera_id: query.carrera_id } : {}),
           ...(query.linea_id ? { linea: { id: query.linea_id } } : {}),
           ...(docenteId ? { docente_proponente: { id: docenteId } } : {}),
           ...(actor.rol === UsuarioRol.ESTUDIANTE
@@ -178,7 +191,8 @@ export class TemasService {
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
-      return { data: await this.enrichAvailability(periodoId, records.map(responseFrom)), total, page: query.page, limit: query.limit };
+      const catalogo = await this.academico.catalogo(this.dataSource);
+      return { data: await this.enrichAvailability(periodoId, records.map((record) => responseFrom(record, catalogo))), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -197,7 +211,7 @@ export class TemasService {
         if (!docente) throw new NotFoundException('La cuenta aún no tiene perfil de docente.');
         if (tema.docente_proponente.id !== docente.id) throw new NotFoundException('No existe el tema en el período indicado.');
       }
-      return (await this.enrichAvailability(periodoId, [responseFrom(tema)]))[0]!;
+      return (await this.enrichAvailability(periodoId, [await this.respuesta(tema)]))[0]!;
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -205,7 +219,7 @@ export class TemasService {
     if (!Object.values(dto).some((value) => value !== undefined)) throw new BadRequestException('Debe indicar al menos un campo para editar.');
     try {
       return await this.dataSource.transaction(async (manager) => {
-        await this.lockWritablePeriod(manager, periodoId);
+        const periodo = await this.lockWritablePeriod(manager, periodoId);
         const repo = manager.getRepository(Tema);
         const locked = await repo.findOne({ where: { id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
         if (!locked) throw new NotFoundException('No existe el tema en el período indicado.');
@@ -216,6 +230,10 @@ export class TemasService {
         const lineaId = dto.linea_id ?? tema.linea.id;
         const docenteId = dto.docente_proponente_id ?? tema.docente_proponente.id;
         const refs = await this.references(manager, lineaId, docenteId);
+        const carreraId = dto.carrera_id ?? tema.carrera_id;
+        if (dto.carrera_id !== undefined) await this.academico.assertCarreraEnFacultad(this.dataSource, carreraId, periodo.facultad_id);
+        await this.academico.assertMismaCarrera(this.dataSource, refs.docente.carrera_id, carreraId, 'del docente proponente');
+        tema.carrera_id = carreraId;
         tema.linea = refs.linea;
         tema.docente_proponente = refs.docente;
         if (dto.titulo !== undefined) tema.titulo = dto.titulo.trim();
@@ -224,7 +242,7 @@ export class TemasService {
         if (dto.max_integrantes !== undefined) tema.max_integrantes = dto.max_integrantes;
         this.assertRange(tema.min_integrantes, tema.max_integrantes);
         const next = temaValues(tema);
-        if (JSON.stringify(previous) === JSON.stringify(next)) return responseFrom(tema);
+        if (JSON.stringify(previous) === JSON.stringify(next)) return await this.respuesta(tema);
         await repo.save(tema);
         const loaded = await this.loadForResponse(manager, id, periodoId);
         await this.writeHistory(manager, loaded, actor, previous);
@@ -232,7 +250,7 @@ export class TemasService {
           actor, accion: 'ACTUALIZAR_TEMA', entidad_tipo: 'tema', entidad_id: id,
           valores_anteriores: previous, valores_nuevos: temaValues(loaded), ip_origen: ip,
         });
-        return responseFrom(loaded);
+        return await this.respuesta(loaded);
       });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
@@ -277,7 +295,7 @@ export class TemasService {
           valores_nuevos: temaValues(loaded),
           ip_origen: ip,
         });
-        return responseFrom(loaded);
+        return await this.respuesta(loaded);
       });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
@@ -338,7 +356,7 @@ export class TemasService {
           valores_anteriores: previous, valores_nuevos: { ...temaValues(loaded), motivo }, ip_origen: ip,
         });
         await this.rejectOpenApplications(manager, periodoId, id, `${cierre ? 'Tema cerrado' : 'Tema retirado'}: ${motivo}`, cierre ? 'RECHAZAR_POSTULACION_POR_CIERRE_TEMA' : 'RECHAZAR_POSTULACION_POR_RETIRO_TEMA', actor, ip);
-        return responseFrom(loaded);
+        return await this.respuesta(loaded);
       });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
@@ -355,7 +373,7 @@ export class TemasService {
       actor, accion: 'REABRIR_TEMA', entidad_tipo: 'tema', entidad_id: tema.id,
       valores_anteriores: previous, valores_nuevos: temaValues(loaded), ip_origen: ip,
     });
-    return responseFrom(loaded);
+    return await this.respuesta(loaded);
   }
 
   /** Las postulaciones se bloquean en orden de id después del tema, igual que en la asignación. */

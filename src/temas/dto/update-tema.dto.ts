@@ -6,6 +6,11 @@ const supplied = (_object: object, value: unknown): boolean => value !== undefin
 const trim = ({ value }: { value: unknown }): unknown => typeof value === 'string' ? value.trim() : value;
 
 export class UpdateTemaDto {
+  @ApiPropertyOptional({ format: 'uuid', description: 'Debe pertenecer a la facultad del período y coincidir con la del docente proponente.' })
+  @ValidateIf(supplied)
+  @IsUUID()
+  carrera_id?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @ValidateIf(supplied)
   @IsUUID()

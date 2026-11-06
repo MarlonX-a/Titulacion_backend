@@ -1,9 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { CarreraResumenDto } from '../../academico/dto/resumen-academico.dto.js';
 import { EstadoTema } from '../enums/estado-tema.enum.js';
 
 export class TemaResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;
   @ApiProperty({ format: 'uuid' }) periodo_id: string;
+  @ApiProperty({ format: 'uuid' }) carrera_id: string;
+  @ApiProperty({ type: () => CarreraResumenDto }) carrera: CarreraResumenDto;
   @ApiProperty({ format: 'uuid' }) linea_id: string;
   @ApiProperty() linea: { id: string; codigo: string; nombre: string };
   @ApiProperty({ format: 'uuid' }) docente_proponente_id: string;

@@ -1,5 +1,11 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { AcademicoService } from '../academico/academico.service.js';
+import { construirCatalogo } from '../academico/catalogo-academico.js';
+import { Docente } from '../docentes/entities/docente.entity.js';
+import { LineaInvestigacion } from '../lineas-investigacion/entities/linea-investigacion.entity.js';
+import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
@@ -64,7 +70,7 @@ function setup(options: SetupOptions = {}) {
   const notificaciones = { postulacion: vi.fn(async () => undefined) };
   const service = new TemasService(
     {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
-    dataSource as never, auditoria as never, notificaciones as never,
+    dataSource as never, auditoria as never, notificaciones as never, { catalogo: async () => construirCatalogo([], []) } as never,
   );
   return { service, actor, tema, periodo, postulaciones, temaRepo, historialRepo, postulacionRepo, query, dataSource, auditoria, notificaciones };
 }
@@ -151,5 +157,62 @@ describe('TemasService: cierre, retiro y reapertura', () => {
     const state = setup();
     state.temaRepo.findOne.mockResolvedValueOnce(null as never);
     await expect(state.service.close('periodo-id', 'tema-id', { motivo: 'Cierre' }, state.actor as never, null)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('TemasService: carrera del tema', () => {
+  function setupAlta(docenteCarrera = 'car-software') {
+    const periodo = { id: 'periodo-id', estado: PeriodoEstado.BORRADOR, facultad_id: 'fac-vida' };
+    const linea = { id: 'linea-id', codigo: 'IA', nombre: 'IA', activa: true };
+    const cuenta = { id: 'docente-user', nombres: 'Doc', apellidos: 'Ente', estado: UsuarioEstado.ACTIVO, rol: UsuarioRol.DOCENTE };
+    const docente = { id: 'docente-id', carrera_id: docenteCarrera, usuario: cuenta };
+    const temaRepo = {
+      create: vi.fn((value: object) => value),
+      save: vi.fn(async (value: object) => ({ id: 'tema-id', ...value })),
+      findOne: vi.fn(async () => ({ id: 'tema-id', periodo, linea, docente_proponente: docente, carrera_id: 'car-software', titulo: 'T', descripcion: 'D', min_integrantes: 1, max_integrantes: 2, estado: EstadoTema.BORRADOR, creado_en: new Date() })),
+    };
+    const repos = new Map<unknown, unknown>([
+      [PeriodoTitulacion, { findOne: vi.fn(async () => periodo) }],
+      [LineaInvestigacion, { findOne: vi.fn(async () => linea) }],
+      [Docente, { findOne: vi.fn(async () => docente) }],
+      [Usuario, { findOne: vi.fn(async () => cuenta) }],
+      [Tema, temaRepo],
+      [TemaHistorial, { create: vi.fn((v: unknown) => v), save: vi.fn(async (v: unknown) => v) }],
+    ]);
+    const manager = { getRepository: (entity: unknown) => repos.get(entity) };
+    const dataSource = { transaction: vi.fn(async (cb: (m: typeof manager) => Promise<unknown>) => cb(manager)) };
+    const academico = new AcademicoService();
+    vi.spyOn(academico, 'catalogo').mockResolvedValue(construirCatalogo(
+      [{ id: 'fac-vida', codigo: 'VIDA', nombre: 'Facultad Ciencias de la Vida y Tecnologías' }, { id: 'fac-salud', codigo: 'SALUD', nombre: 'Facultad Ciencias de la Salud' }],
+      [
+        { id: 'car-software', codigo: 'INGENIERIA_EN_SOFTWARE', nombre: 'Ingeniería en Software', facultad_id: 'fac-vida' },
+        { id: 'car-sistemas', codigo: 'INGENIERIA_EN_SISTEMAS', nombre: 'Ingeniería en Sistemas', facultad_id: 'fac-vida' },
+        { id: 'car-medicina', codigo: 'MEDICINA', nombre: 'Medicina', facultad_id: 'fac-salud' },
+      ],
+    ));
+    const service = new TemasService({} as never, {} as never, {} as never, {} as never, {} as never, {} as never, dataSource as never, { registrar: vi.fn() } as never, {} as never, academico);
+    return { service, temaRepo };
+  }
+  const dto = { carrera_id: 'car-software', linea_id: 'linea-id', docente_proponente_id: 'docente-id', titulo: 'Tema', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 2 };
+
+  it('registra el tema con una carrera de la facultad del período y la expone', async () => {
+    const state = setupAlta();
+    const result = await state.service.create('periodo-id', dto as never, { id: 'admin-id' } as never, null);
+    expect(state.temaRepo.create).toHaveBeenCalledWith(expect.objectContaining({ carrera_id: 'car-software' }));
+    expect(result.carrera).toEqual({ id: 'car-software', nombre: 'Ingeniería en Software' });
+  });
+
+  it('rechaza una carrera que no pertenece a la facultad del período', async () => {
+    const state = setupAlta();
+    await expect(state.service.create('periodo-id', { ...dto, carrera_id: 'car-medicina' } as never, { id: 'admin-id' } as never, null))
+      .rejects.toThrow('La carrera «Medicina» no pertenece a la facultad «Facultad Ciencias de la Vida y Tecnologías» del período.');
+    expect(state.temaRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un docente proponente de otra carrera', async () => {
+    const state = setupAlta('car-sistemas');
+    await expect(state.service.create('periodo-id', dto as never, { id: 'admin-id' } as never, null))
+      .rejects.toThrow('La carrera del docente proponente («Ingeniería en Sistemas») no coincide con la carrera del tema («Ingeniería en Software»).');
+    expect(state.temaRepo.save).not.toHaveBeenCalled();
   });
 });
