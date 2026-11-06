@@ -47,8 +47,8 @@ function memoryRepository(rows: Row[]) {
 
 async function teacherWorkbook(rows: unknown[][]): Promise<Buffer> {
   const book = new ExcelJS.Workbook();
-  const sheet = book.addWorksheet('Docentes');
-  ['cedula', 'nombres', 'apellidos', 'email', 'titulo', 'departamento', 'habilitado_tutoria'].forEach((value, index) => { sheet.getCell(1, index + 1).value = value; });
+  const sheet = book.addWorksheet('Tutores');
+  ['DOCENTES', 'Tipo', 'CARRERA'].forEach((value, index) => { sheet.getCell(1, index + 1).value = value; });
   rows.forEach((values, rowIndex) => values.forEach((value, index) => { sheet.getCell(rowIndex + 2, index + 1).value = value as ExcelJS.CellValue; }));
   return Buffer.from(await book.xlsx.writeBuffer() as ArrayBuffer);
 }
@@ -81,8 +81,12 @@ function setup(buffer: Buffer) {
   return { service, repos, admin, auditoria, queue };
 }
 
-const ROSA = ['1316661675', 'Rosa', 'Mera', 'rosa@uleam.edu.ec', 'Magíster', 'Sistemas', 'SI'];
-const LUIS = ['0102030400', 'Luis', 'Vera', 'luis@live.uleam.edu.ec', 'Ing.', 'Software', 'NO'];
+
+const EDISON = ['ALMEIDA ZAMBRANO EDISON ERNESTO', 'Nombramiento', 'SOFTWARE'];
+const GABRIELA = ['VELASQUEZ MOREIRA GABRIELA MAHOLY', 'Contratos', 'SOFTWARE'];
+const JOFFRE = ['PANCHANA FLORES JOFFRE EDGARDO', null, 'SOFTWARE'];
+const EDISON_EMAIL = 'edison.almeida@live.uleam.edu.ec';
+const GABRIELA_EMAIL = 'gabriela.velasquez@live.uleam.edu.ec';
 
 async function prepared(rows: unknown[][]) {
   const buffer = await teacherWorkbook(rows);
@@ -93,60 +97,85 @@ async function prepared(rows: unknown[][]) {
 }
 
 describe('ImportacionesDocentesService', () => {
-  it('valida sin período, crea la vista previa y la encola para validar', async () => {
-    const { service, repos, id, queue, auditoria } = await prepared([ROSA, LUIS]);
+  it('valida sin período, deduplica y expone advertencias no bloqueantes en la vista previa', async () => {
+    const { service, repos, id, queue, auditoria } = await prepared([EDISON, GABRIELA, JOFFRE, EDISON]);
     const record = repos.get(PreparacionImportacion)!.rows[0];
     expect(record).toMatchObject({ periodo: null, tipo: LoteImportacionTipo.DOCENTES, estado: Estado.LISTA });
     expect(queue.add).toHaveBeenCalledWith('validar-docentes', { id }, expect.anything());
     expect(auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'SOLICITAR_IMPORTACION_DOCENTES' }));
     const summary = await service.get(id);
-    expect(summary.vista_previa.map((row) => row.email)).toEqual(['rosa@uleam.edu.ec', 'luis@live.uleam.edu.ec']);
+    expect(summary.vista_previa.map((row) => row.email)).toEqual([EDISON_EMAIL, GABRIELA_EMAIL, 'joffre.panchana@live.uleam.edu.ec']);
+    expect(summary.errores).toEqual([]);
+    expect(summary.advertencias).toEqual([expect.objectContaining({ fila: 4, columna: 'Tipo' })]);
   });
 
-  it('confirma, crea cuenta DOCENTE, perfil, credencial con la cédula y correo ACCESO; omite registros idénticos', async () => {
-    const buffer = await teacherWorkbook([ROSA, LUIS]);
+  it('confirma: crea cuenta, perfil sin cédula, credencial aleatoria y correo ACCESO; actualiza u omite docentes existentes', async () => {
+    const buffer = await teacherWorkbook([EDISON, GABRIELA, JOFFRE]);
     const context = setup(buffer);
-    const existingUser = await context.repos.get(Usuario)!.save({ email: 'luis@live.uleam.edu.ec', nombres: 'Luis', apellidos: 'Vera', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
-    await context.repos.get(Docente)!.save({ usuario: existingUser, cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Software', habilitado_tutoria: false });
-    await context.repos.get(CredencialUsuario)!.save({ id: 'cred-luis', usuario_id: existingUser.id, requiere_cambio: false });
+    const users = context.repos.get(Usuario)!;
+    const gabriela = await users.save({ email: GABRIELA_EMAIL, nombres: 'GABRIELA  maholy', apellidos: 'Velásquez Moreira', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
+    await context.repos.get(Docente)!.save({ id: 'doc-gabriela', usuario: gabriela, cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Software', habilitado_tutoria: true });
+    await context.repos.get(CredencialUsuario)!.save({ id: 'cred-gabriela', usuario_id: gabriela.id, requiere_cambio: false });
+    const joffre = await users.save({ email: 'joffre.panchana@live.uleam.edu.ec', nombres: 'Joffre Edgardo', apellidos: 'Panchana Flores', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
+    await context.repos.get(Docente)!.save({ id: 'doc-joffre', usuario: joffre, cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: false });
+    await context.repos.get(CredencialUsuario)!.save({ id: 'cred-joffre', usuario_id: joffre.id, requiere_cambio: false });
     const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
     await context.service.validateFile(id);
     await context.service.confirm(id, context.admin, null);
     expect(context.queue.add).toHaveBeenCalledWith('importar-docentes', { id }, expect.anything());
     await context.service.importConfirmed(id);
 
-    const rosa = context.repos.get(Usuario)!.rows.find((row) => row.email === 'rosa@uleam.edu.ec');
-    expect(rosa).toMatchObject({ rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
-    expect(context.repos.get(Docente)!.rows).toHaveLength(2);
+    const edison = users.rows.find((row) => row.email === EDISON_EMAIL);
+    expect(edison).toMatchObject({ nombres: 'Edison Ernesto', apellidos: 'Almeida Zambrano', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
+    const teachers = context.repos.get(Docente)!.rows;
+    expect(teachers).toHaveLength(3);
+    expect(teachers.find((row) => (row.usuario as Usuario).id === edison!.id)).toMatchObject({ cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: true });
+    expect(teachers.find((row) => row.id === 'doc-gabriela')).toMatchObject({ cedula: '0102030400', habilitado_tutoria: false });
+    expect(gabriela).toMatchObject({ nombres: 'GABRIELA  maholy', apellidos: 'Velásquez Moreira' });
     const credentials = context.repos.get(CredencialUsuario)!.rows;
-    expect(credentials.find((row) => row.usuario_id === rosa!.id)).toMatchObject({ requiere_cambio: true });
-    expect(credentials.find((row) => row.usuario_id === existingUser.id)).toMatchObject({ requiere_cambio: false });
-    expect(context.repos.get(CorreoSalida)!.rows).toEqual([expect.objectContaining({ usuario_id: rosa!.id, tipo: 'ACCESO' })]);
-    expect(context.repos.get(LoteImportacion)!.rows[0]).toMatchObject({ periodo: null, tipo: LoteImportacionTipo.DOCENTES, filas_ok: 2, estado: 'COMPLETADO' });
+    const edisonCredential = credentials.find((row) => row.usuario_id === edison!.id);
+    expect(edisonCredential).toMatchObject({ requiere_cambio: true, password_hash: expect.stringMatching(/^\$argon2id\$/) });
+    expect(context.repos.get(CorreoSalida)!.rows).toEqual([expect.objectContaining({ usuario_id: edison!.id, tipo: 'ACCESO' })]);
+    expect(context.repos.get(LoteImportacion)!.rows[0]).toMatchObject({ periodo: null, tipo: LoteImportacionTipo.DOCENTES, filas_ok: 3, estado: 'COMPLETADO' });
     expect(context.repos.get(PreparacionImportacion)!.rows[0]).toMatchObject({ estado: Estado.COMPLETADA });
-    expect(context.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'COMPLETAR_IMPORTACION_DOCENTES', valores_nuevos: expect.objectContaining({ docentes_creados: 1, omitidos: 1 }) }));
+    expect(context.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'IMPORTAR_DOCENTE', entidad_tipo: 'docente' }));
+    expect(context.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'ACTUALIZAR_DOCENTE_IMPORTACION', entidad_id: 'doc-gabriela', valores_anteriores: { habilitado_tutoria: true } }));
+    expect(context.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'COMPLETAR_IMPORTACION_DOCENTES', valores_nuevos: expect.objectContaining({ docentes_creados: 1, docentes_actualizados: 1, omitidos: 1 }) }));
     await expect(context.service.confirm(id, context.admin, null)).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('marca como error de fila los conflictos con cuentas o cédulas existentes y no permite confirmar', async () => {
-    const buffer = await teacherWorkbook([ROSA, LUIS]);
+  it('marca como error de fila el correo generado que pertenece a una cuenta con otro rol y no permite confirmar', async () => {
+    const buffer = await teacherWorkbook([EDISON, GABRIELA]);
     const context = setup(buffer);
-    await context.repos.get(Usuario)!.save({ email: 'rosa@uleam.edu.ec', nombres: 'Rosa', apellidos: 'Mera', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO });
-    const other = await context.repos.get(Usuario)!.save({ email: 'otro@uleam.edu.ec', nombres: 'Otro', apellidos: 'Docente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
-    await context.repos.get(Docente)!.save({ usuario: other, cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Software', habilitado_tutoria: false });
+    await context.repos.get(Usuario)!.save({ email: EDISON_EMAIL, nombres: 'Edison', apellidos: 'Almeida', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO });
     const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
     await context.service.validateFile(id);
     const summary = await context.service.get(id);
     expect(summary.estado).toBe(Estado.INVALIDA);
-    expect(summary.errores).toEqual([
-      expect.objectContaining({ fila: 2, columna: 'email' }),
-      expect.objectContaining({ fila: 3, columna: 'cedula' }),
-    ]);
+    expect(summary.errores).toEqual([expect.objectContaining({ fila: 2, columna: 'DOCENTES', mensaje: expect.stringContaining('ESTUDIANTE') })]);
     await expect(context.service.confirm(id, context.admin, null)).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it.each([
+    ['otro docente con el mismo correo', { nombres: 'Gabriela Alexandra', apellidos: 'Velásquez Mendoza', estado: UsuarioEstado.ACTIVO }, 'ya pertenece a otro docente (Gabriela Alexandra Velásquez Mendoza)'],
+    ['un docente INACTIVO', { nombres: 'Gabriela Maholy', apellidos: 'Velasquez Moreira', estado: UsuarioEstado.INACTIVO }, 'pertenece a una cuenta inactiva'],
+  ])('marca como error de fila el correo generado que pertenece a %s y no actualiza su perfil', async (_case, account, message) => {
+    const buffer = await teacherWorkbook([EDISON, GABRIELA]);
+    const context = setup(buffer);
+    const gabriela = await context.repos.get(Usuario)!.save({ email: GABRIELA_EMAIL, rol: UsuarioRol.DOCENTE, ...account });
+    await context.repos.get(Docente)!.save({ id: 'doc-gabriela', usuario: gabriela, cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: true });
+    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
+    await context.service.validateFile(id);
+    const summary = await context.service.get(id);
+    expect(summary.estado).toBe(Estado.INVALIDA);
+    expect(summary.errores).toEqual([expect.objectContaining({ fila: 3, columna: 'DOCENTES', mensaje: expect.stringContaining(message) })]);
+    await expect(context.service.confirm(id, context.admin, null)).rejects.toBeInstanceOf(ConflictException);
+    expect(context.repos.get(Docente)!.rows).toEqual([expect.objectContaining({ id: 'doc-gabriela', habilitado_tutoria: true })]);
+    expect(context.auditoria.registrar).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'ACTUALIZAR_DOCENTE_IMPORTACION' }));
+  });
+
   it('rechaza el archivo cuyo hash cambió y responde 404 para preparaciones inexistentes', async () => {
-    const buffer = await teacherWorkbook([ROSA]);
+    const buffer = await teacherWorkbook([EDISON]);
     const context = setup(buffer);
     const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
     const record = context.repos.get(PreparacionImportacion)!.rows[0];

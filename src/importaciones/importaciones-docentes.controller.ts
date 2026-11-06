@@ -33,7 +33,7 @@ export class ImportacionesDocentesController {
 
   @Get('plantilla')
   @ApiOperation({ summary: 'Descargar la plantilla XLSX de docentes' })
-  @ApiOkResponse({ description: 'Libro XLSX con encabezados en la fila 4: cedula, nombres, apellidos, email, titulo, departamento, habilitado_tutoria (SI/NO).' })
+  @ApiOkResponse({ description: 'Libro XLSX con la hoja Tutores y los encabezados DOCENTES (APELLIDO1 APELLIDO2 NOMBRES) y Tipo (Nombramiento/Contratos) en la fila 1.' })
   async downloadTemplate(@Res() response: Response): Promise<void> {
     const bytes = await buildTeachersTemplate();
     response.setHeader('Content-Type', XLSX_MIME);

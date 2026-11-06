@@ -49,7 +49,7 @@ export function isUnsafeCell(cell: ExcelJS.Cell): boolean {
   return Boolean(cell.formula) || Boolean(cell.hyperlink) || (structured && ('sharedFormula' in value || 'formula' in value || 'hyperlink' in value));
 }
 
-function titleCase(value: string): string {
+export function titleCase(value: string): string {
   return value.toLowerCase().split(/\s+/).filter(Boolean).map((word, index) =>
     index > 0 && LOWERCASE_WORDS.has(word) ? word : word.charAt(0).toUpperCase() + word.slice(1),
   ).join(' ');
@@ -153,14 +153,18 @@ export function readSiNo(value: ExcelJS.CellValue): boolean | null {
   return null;
 }
 
-/** Aplica los límites de tamaño y estructura ZIP antes de abrir la primera hoja del libro. */
-export async function loadFirstSheet(buffer: Buffer): Promise<ExcelJS.Worksheet> {
+/** Aplica los límites de tamaño y estructura ZIP antes de abrir el libro. */
+export async function loadWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
   if (buffer.length > 5 * 1024 * 1024) throw new BadRequestException('El archivo supera el máximo de 5 MiB.');
   inspectZip(buffer);
   const workbook = new ExcelJS.Workbook();
   try { await workbook.xlsx.load(Buffer.from(buffer) as unknown as Parameters<typeof workbook.xlsx.load>[0]); }
   catch { throw new BadRequestException('No se pudo leer el libro XLSX.'); }
-  const sheet = workbook.worksheets[0];
+  return workbook;
+}
+
+export async function loadFirstSheet(buffer: Buffer): Promise<ExcelJS.Worksheet> {
+  const sheet = (await loadWorkbook(buffer)).worksheets[0];
   if (!sheet) throw new BadRequestException('El libro no contiene hojas.');
   return sheet;
 }

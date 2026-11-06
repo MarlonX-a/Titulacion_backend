@@ -167,13 +167,15 @@ describe('Usuarios (e2e)', () => {
   }
 
   async function createPeriod(code = 'HABILITADOS-1') {
+    // Relative future window: fixed dates silently fell inside the window once the calendar caught up.
+    const day = 24 * 60 * 60_000;
     return authenticated('post', '/periodos', 'admin-sub')
       .send({
         codigo: code,
         nombre: 'Período de prueba',
-        fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
-        fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
-        fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        fecha_inicio_postulacion: new Date(Date.now() + 7 * day).toISOString(),
+        fecha_fin_postulacion: new Date(Date.now() + 30 * day).toISOString(),
+        fecha_inicio_titulacion: new Date(Date.now() + 31 * day).toISOString(),
         max_integrantes_default: 5,
       })
       .expect(201);
@@ -1488,6 +1490,20 @@ describe('Usuarios (e2e)', () => {
       .expect(409).then((r) => expect(r.body.message).toContain('cédula'));
     await authenticated('get', '/usuarios?limit=100', 'admin-sub').expect(200)
       .then((r) => expect(r.body.data.map((u: { email: string }) => u.email)).not.toContain('otro@uleam.edu.ec'));
+  });
+
+  it('crea docentes sin cédula, título ni departamento y permite vaciarlos al editar', async () => {
+    addAdmin();
+    const first = await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'sin.cedula@live.uleam.edu.ec', nombres: 'Edison', apellidos: 'Almeida' })
+      .expect(201);
+    expect(first.body).toMatchObject({ cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: false });
+    await authenticated('post', '/docentes', 'admin-sub')
+      .send({ email: 'otro.sin.cedula@live.uleam.edu.ec', nombres: 'Cesar', apellidos: 'Cedeño', cedula: '', titulo_academico: ' ' })
+      .expect(201).then((r) => expect(r.body).toMatchObject({ cedula: null, titulo_academico: null }));
+    await authenticated('patch', `/docentes/${first.body.id as string}`, 'admin-sub').send({ cedula: '1316661675', departamento: 'Sistemas' }).expect(200);
+    const cleared = await authenticated('patch', `/docentes/${first.body.id as string}`, 'admin-sub').send({ cedula: null, departamento: '' }).expect(200);
+    expect(cleared.body).toMatchObject({ cedula: null, departamento: null });
   });
 
   it('rechaza altas de docente con dominio inválido, datos incompletos o mezcla de usuario_id y cuenta', async () => {

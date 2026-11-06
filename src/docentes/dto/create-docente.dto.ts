@@ -13,8 +13,8 @@ import {
   type ValidatorConstraintInterface,
   type ValidationArguments,
 } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { CedulaEcuatorianaValidator } from '../../common/validators/cedula-ecuatoriana.validator.js';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { DocentePerfilOpcionalDto } from './docente-perfil-opcional.dto.js';
 
 function trimText(value: unknown): unknown {
   return typeof value === 'string' ? value.trim() : value;
@@ -41,7 +41,7 @@ class CuentaExistenteOAlta implements ValidatorConstraintInterface {
  * Alta de un perfil docente. Con `usuario_id` vincula una cuenta DOCENTE existente; sin él crea,
  * en la misma transacción, la cuenta DOCENTE (clave temporal y correo de acceso) y el perfil.
  */
-export class CreateDocenteDto {
+export class CreateDocenteDto extends DocentePerfilOpcionalDto {
   @ApiPropertyOptional({ format: 'uuid', description: 'Cuenta existente con rol DOCENTE. Omitir para crear la cuenta con email, nombres y apellidos.' })
   @ValidateIf((object: CuentaCampos) => object.usuario_id !== undefined || !tieneDatosDeCuenta(object))
   @IsUUID('all', { message: 'usuario_id debe ser un UUID; si la cuenta no existe, envía email, nombres y apellidos.' })
@@ -69,24 +69,6 @@ export class CreateDocenteDto {
   @IsString({ message: 'apellidos debe ser texto.' })
   @Length(1, 100, { message: 'apellidos debe tener entre 1 y 100 caracteres.' })
   apellidos?: string;
-
-  @ApiProperty({ example: '0102030400', maxLength: 20 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
-  @IsString()
-  @Validate(CedulaEcuatorianaValidator)
-  cedula: string;
-
-  @ApiProperty({ maxLength: 120 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
-  @IsString()
-  @Length(1, 120)
-  titulo_academico: string;
-
-  @ApiProperty({ maxLength: 120 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
-  @IsString()
-  @Length(1, 120)
-  departamento: string;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()

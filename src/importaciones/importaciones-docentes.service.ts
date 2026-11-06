@@ -13,13 +13,13 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
-import { createEncryptedOutbox, createTemporaryCredentialHash, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
+import { createEncryptedOutbox, createTemporaryCredentialHash, generateOneTimeSecret, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
 import { LoteImportacion } from './entities/lote-importacion.entity.js';
 import { PreparacionImportacion } from './entities/preparacion-importacion.entity.js';
 import { PreparacionImportacionEstado as EstadoPreparacion } from './enums/preparacion-importacion-estado.enum.js';
 import { LoteImportacionEstado } from './enums/lote-importacion-estado.enum.js';
 import { LoteImportacionTipo } from './enums/lote-importacion-tipo.enum.js';
-import type { ExcelRowError } from './estudiantes-excel.parser.js';
+import { normalizeExcelText, type ExcelRowError } from './estudiantes-excel.parser.js';
 import { parseTeachersXlsx, type DocenteExcelRow } from './docentes-excel.parser.js';
 
 const PREPARATION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -33,31 +33,35 @@ export interface ImportacionDocentesResumen {
   estado: EstadoPreparacion;
   total_filas: number;
   errores: ExcelRowError[];
+  /** Avisos no bloqueantes (por ejemplo, Tipo vacío); no impiden confirmar. */
+  advertencias: ExcelRowError[];
   vista_previa: DocenteExcelRow[];
   lote_id: string | null;
   creada_en: Date;
   expira_en: Date;
 }
 
+interface TemporaryCredential { secret: string; hash: string; }
+
+interface ImportCounts { creados: number; actualizados: number; omitidos: number; }
+
 function response(record: PreparacionImportacion): ImportacionDocentesResumen {
+  const rows = (record.filas as DocenteExcelRow[] | null) ?? [];
   return {
     id: record.id, tipo: LoteImportacionTipo.DOCENTES, nombre_archivo: record.nombre_archivo,
     estado: record.estado, total_filas: record.total_filas,
     errores: (record.errores as ExcelRowError[] | null) ?? [],
-    vista_previa: (record.filas as DocenteExcelRow[] | null) ?? [],
+    advertencias: rows.filter((row) => row.advertencia).map((row) => ({ fila: row.fila, columna: 'Tipo', mensaje: row.advertencia ?? '' })),
+    vista_previa: rows,
     lote_id: record.lote?.id ?? null, creada_en: record.creada_en, expira_en: record.expira_en,
   };
 }
 
-function profileMatches(profile: Docente, row: DocenteExcelRow): boolean {
-  return profile.cedula === row.cedula && profile.titulo_academico === row.titulo_academico
-    && profile.departamento === row.departamento && profile.habilitado_tutoria === row.habilitado_tutoria;
-}
-
 /**
- * Importación de docentes desde la plantilla XLSX propia. No pertenece a un período: crea la
- * cuenta DOCENTE, su perfil y la credencial temporal (cédula, cambio obligatorio) en una sola
- * transacción SERIALIZABLE; los registros idénticos existentes se omiten.
+ * Importación de docentes desde el Excel institucional (hoja «Tutores»: DOCENTES y Tipo). No
+ * pertenece a un período: crea la cuenta DOCENTE, su perfil y una credencial temporal aleatoria
+ * (como el alta manual, con correo ACCESO) en una transacción SERIALIZABLE. Un docente existente
+ * con el mismo correo solo actualiza `habilitado_tutoria`; si no cambia, se omite.
  */
 @Injectable()
 export class ImportacionesDocentesService {
@@ -164,9 +168,13 @@ export class ImportacionesDocentesService {
     const rows = record.filas as DocenteExcelRow[];
     const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
     if (createHash('sha256').update(buffer).digest('hex') !== record.sha256) throw new ConflictException('El archivo guardado no coincide con la vista previa validada.');
-    // La clave temporal inicial es la cédula; la credencial exige cambiarla en el primer acceso.
-    const tempHashes = new Map<string, string>();
-    for (const row of rows) tempHashes.set(row.email, await createTemporaryCredentialHash(row.cedula));
+    // Clave temporal aleatoria (como el alta manual); el hash se calcula fuera de la transacción.
+    const temporaryCredentials = new Map<string, TemporaryCredential>();
+    const userRepo = this.dataSource.getRepository(Usuario);
+    for (const row of rows) {
+      if (await userRepo.findOne({ where: { email: row.email } })) continue;
+      temporaryCredentials.set(row.email, await this.temporaryCredential());
+    }
     try {
       const wasImported = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
         const preparation = await manager.getRepository(PreparacionImportacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
@@ -180,7 +188,7 @@ export class ImportacionesDocentesService {
           estado: LoteImportacionEstado.EN_PROCESO, total_filas: rows.length, filas_ok: 0, filas_error: 0,
           errores: null, fecha_inicio: now, fecha_fin: null,
         }));
-        const created = await this.createRows(manager, rows, tempHashes, record, now);
+        const counts = await this.createRows(manager, rows, temporaryCredentials, record, now);
         lot.filas_ok = rows.length;
         lot.estado = LoteImportacionEstado.COMPLETADO;
         lot.fecha_fin = new Date();
@@ -191,7 +199,7 @@ export class ImportacionesDocentesService {
         record.errores = [];
         record.lote = lot;
         await manager.getRepository(PreparacionImportacion).save(record);
-        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'COMPLETAR_IMPORTACION_DOCENTES', entidad_tipo: 'lote_importacion', entidad_id: lot.id, valores_anteriores: null, valores_nuevos: { preparacion_id: record.id, total_filas: rows.length, filas_ok: lot.filas_ok, filas_error: 0, docentes_creados: created, omitidos: rows.length - created }, ip_origen: record.ip_origen });
+        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'COMPLETAR_IMPORTACION_DOCENTES', entidad_tipo: 'lote_importacion', entidad_id: lot.id, valores_anteriores: null, valores_nuevos: { preparacion_id: record.id, total_filas: rows.length, filas_ok: lot.filas_ok, filas_error: 0, docentes_creados: counts.creados, docentes_actualizados: counts.actualizados, omitidos: counts.omitidos }, ip_origen: record.ip_origen });
         return true;
       });
       if (!wasImported) return;
@@ -209,55 +217,61 @@ export class ImportacionesDocentesService {
     }
   }
 
-  /** Crea cuenta, perfil y credencial faltantes; devuelve cuántos perfiles docentes se crearon. */
-  private async createRows(manager: EntityManager, rows: DocenteExcelRow[], tempHashes: Map<string, string>, record: PreparacionImportacion, now: Date): Promise<number> {
+  private async temporaryCredential(): Promise<TemporaryCredential> {
+    const secret = generateOneTimeSecret();
+    return { secret, hash: await createTemporaryCredentialHash(secret) };
+  }
+
+  /** Crea cuenta, perfil y credencial faltantes, o actualiza la habilitación de tutoría existente. */
+  private async createRows(manager: EntityManager, rows: DocenteExcelRow[], temporaryCredentials: Map<string, TemporaryCredential>, record: PreparacionImportacion, now: Date): Promise<ImportCounts> {
     const users = manager.getRepository(Usuario);
     const teachers = manager.getRepository(Docente);
     const credentials = manager.getRepository(CredencialUsuario);
     const outboxRepo = manager.getRepository(CorreoSalida);
-    let created = 0;
+    const counts: ImportCounts = { creados: 0, actualizados: 0, omitidos: 0 };
     for (const row of [...rows].sort((left, right) => left.email.localeCompare(right.email))) {
       let user = await users.findOne({ where: { email: row.email }, lock: { mode: 'pessimistic_write' } });
       if (!user) user = await users.save(users.create({ email: row.email, nombres: row.nombres, apellidos: row.apellidos, rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: null, ultimo_acceso: null }));
       const profile = await teachers.findOne({ where: { usuario: { id: user.id } }, lock: { mode: 'pessimistic_write' } });
       if (!profile) {
-        const saved = await teachers.save(teachers.create({ usuario: user, cedula: row.cedula, titulo_academico: row.titulo_academico, departamento: row.departamento, habilitado_tutoria: row.habilitado_tutoria }));
-        created += 1;
-        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_DOCENTE', entidad_tipo: 'docente', entidad_id: saved.id, valores_anteriores: null, valores_nuevos: { usuario_id: user.id, email: user.email, cedula: saved.cedula, titulo_academico: saved.titulo_academico, departamento: saved.departamento, habilitado_tutoria: saved.habilitado_tutoria, preparacion_id: record.id }, ip_origen: record.ip_origen });
+        const saved = await teachers.save(teachers.create({ usuario: user, cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: row.habilitado_tutoria }));
+        counts.creados += 1;
+        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_DOCENTE', entidad_tipo: 'docente', entidad_id: saved.id, valores_anteriores: null, valores_nuevos: { usuario_id: user.id, email: user.email, nombres: user.nombres, apellidos: user.apellidos, tipo: row.tipo, habilitado_tutoria: saved.habilitado_tutoria, preparacion_id: record.id }, ip_origen: record.ip_origen });
+      } else if (profile.habilitado_tutoria !== row.habilitado_tutoria) {
+        const before = profile.habilitado_tutoria;
+        await teachers.update({ id: profile.id }, { habilitado_tutoria: row.habilitado_tutoria });
+        counts.actualizados += 1;
+        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'ACTUALIZAR_DOCENTE_IMPORTACION', entidad_tipo: 'docente', entidad_id: profile.id, valores_anteriores: { habilitado_tutoria: before }, valores_nuevos: { habilitado_tutoria: row.habilitado_tutoria, tipo: row.tipo, preparacion_id: record.id }, ip_origen: record.ip_origen });
+      } else {
+        counts.omitidos += 1;
       }
       const credential = await credentials.findOne({ where: { usuario_id: user.id }, lock: { mode: 'pessimistic_write' } });
       if (!credential) {
         const expiry = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
-        const hash = tempHashes.get(row.email);
-        if (!hash) throw new Error('No se pudo proteger la clave temporal.');
-        await credentials.save(credentials.create({ usuario_id: user.id, password_hash: hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));
-        await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', row.cedula, expiry, this.encryptionKey));
+        const temporary = temporaryCredentials.get(row.email) ?? await this.temporaryCredential();
+        await credentials.save(credentials.create({ usuario_id: user.id, password_hash: temporary.hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));
+        await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
       }
     }
-    return created;
+    return counts;
   }
 
-  /** Igual que la importación de estudiantes: conflictos → errores por fila; registros idénticos → se omiten. */
+  /**
+   * Un correo generado que pertenece a una cuenta con otro rol, a una cuenta inactiva o a un
+   * docente con otro nombre (sin importar mayúsculas, espacios ni tildes) es un error por fila.
+   */
   private async validateExistingRows(rows: DocenteExcelRow[], manager: EntityManager = this.dataSource.manager): Promise<ExcelRowError[]> {
     const errors: ExcelRowError[] = [];
     const userRepo = manager.getRepository(Usuario);
-    const teacherRepo = manager.getRepository(Docente);
     for (const row of rows) {
       const account = await userRepo.findOne({ where: { email: row.email } });
-      if (account && (account.rol !== UsuarioRol.DOCENTE || account.estado !== UsuarioEstado.ACTIVO || account.nombres !== row.nombres || account.apellidos !== row.apellidos)) {
-        errors.push({ fila: row.fila, columna: 'email', mensaje: 'El correo existe con un rol, estado o nombre distinto; requiere revisión administrativa.' });
-        continue;
-      }
-      const byCedula = await teacherRepo.findOne({ where: { cedula: row.cedula }, relations: { usuario: true } });
-      if (byCedula && (!account || byCedula.usuario?.id !== account.id)) {
-        errors.push({ fila: row.fila, columna: 'cedula', mensaje: 'La cédula ya pertenece a otro docente.' });
-        continue;
-      }
-      if (account) {
-        const profile = await teacherRepo.findOne({ where: { usuario: { id: account.id } }, relations: { usuario: true } });
-        if (profile && !profileMatches(profile, row)) {
-          errors.push({ fila: row.fila, columna: 'cedula', mensaje: 'El perfil docente existente contiene datos distintos; corrígelos mediante la edición del docente.' });
-        }
+      if (!account) continue;
+      if (account.rol !== UsuarioRol.DOCENTE) {
+        errors.push({ fila: row.fila, columna: 'DOCENTES', mensaje: `El correo generado (${row.email}) pertenece a una cuenta con rol ${account.rol}; requiere revisión administrativa.` });
+      } else if (account.estado !== UsuarioEstado.ACTIVO) {
+        errors.push({ fila: row.fila, columna: 'DOCENTES', mensaje: `El correo generado (${row.email}) pertenece a una cuenta inactiva; requiere revisión administrativa.` });
+      } else if (normalizeExcelText(`${account.nombres} ${account.apellidos}`) !== normalizeExcelText(`${row.nombres} ${row.apellidos}`)) {
+        errors.push({ fila: row.fila, columna: 'DOCENTES', mensaje: `El correo generado (${row.email}) ya pertenece a otro docente (${account.nombres} ${account.apellidos}); requiere revisión administrativa.` });
       }
     }
     return errors;
