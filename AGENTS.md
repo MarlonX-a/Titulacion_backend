@@ -389,6 +389,20 @@ campos se aceptan solo si repiten su valor actual) y se mantiene la cronología
 `fecha_fin_postulacion <= fecha_inicio_titulacion`. En los demás estados la
 edición responde 409. Ningún trigger restringe CERRADA → ABIERTA.
 
+Transiciones automáticas por fecha (cola BullMQ `transiciones-periodo`, scheduler
+`transiciones-periodo-por-fecha` registrado con `upsertJobScheduler` cada 60 s):
+BORRADOR → POSTULACION_ABIERTA cuando la hora actual está en [`fecha_inicio_postulacion`,
+`fecha_fin_postulacion`) y POSTULACION_ABIERTA → POSTULACION_CERRADA cuando la hora actual es
+>= `fecha_fin_postulacion`. Cada período usa su propia transacción con `pessimistic_write` y
+vuelve a comprobar estado y fechas bajo el bloqueo. Se auditan como `ABRIR_POSTULACION` /
+`CERRAR_POSTULACION` sin usuario y con `valores_nuevos.automatico = true` (migración
+`20261029110000`: `auditoria.usuario_id` admite NULL solo con esa marca). No se automatiza
+CERRADA → EN_CURSO ni la reapertura CERRADA → ABIERTA.
+
+`POST /periodos/:id/archivar` archiva desde cualquier estado distinto de ARCHIVADO (migración
+`20261029100000`); ARCHIVADO sigue siendo terminal e inmutable y no se puede insertar un
+período ya archivado. La auditoría `ARCHIVAR_PERIODO` guarda el estado anterior y el motivo.
+
 ---
 
 ## Estudiantes habilitados

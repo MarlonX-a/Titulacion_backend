@@ -22,7 +22,7 @@ describe('AuditoriaConsultaService', () => {
     const result = await service.listar(q({ page: 3, limit: 10 }));
     expect(result).toMatchObject({ total: 7, page: 3, limit: 10, data: [{ id: '42', actor: { email: 'admin@uleam.edu.ec', rol: 'ADMIN' }, ip_origen: '10.0.0.5' }] });
     const [sql, params] = query.mock.calls[1] as [string, unknown[]];
-    expect(sql).toContain('FROM "titulacion_dev"."auditoria" a JOIN "titulacion_dev"."usuario" u');
+    expect(sql).toContain('FROM "titulacion_dev"."auditoria" a LEFT JOIN "titulacion_dev"."usuario" u');
     expect(sql).toContain('ORDER BY a."fecha_hora" DESC, a."id" DESC LIMIT $1 OFFSET $2');
     expect(params).toEqual([10, 20]);
   });
@@ -60,5 +60,13 @@ describe('AuditoriaConsultaService', () => {
     await expect(setup('Bad-Schema').service.listar(q())).rejects.toMatchObject({ status: 503 });
     const failing = new AuditoriaConsultaService({ options: { schema: 'x' }, query: vi.fn(async () => { throw new QueryFailedError('SELECT', [], new Error('down')); }) } as never);
     await expect(failing.listar(q())).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('devuelve actor nulo para acciones automáticas del sistema', async () => {
+    const automatic = { ...row, accion: 'CERRAR_POSTULACION', actor_id: null, actor_email: null, actor_nombres: null, actor_apellidos: null, actor_rol: null };
+    const query = vi.fn(async (sql: string) => sql.startsWith('SELECT count') ? [{ total: 1 }] : [automatic]);
+    const service = new AuditoriaConsultaService({ options: { schema: 'titulacion_dev' }, query } as never);
+    const [item] = (await service.listar(q())).data;
+    expect(item.actor).toBeNull();
   });
 });

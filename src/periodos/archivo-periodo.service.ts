@@ -57,8 +57,8 @@ export class ArchivoPeriodoService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!current) throw new NotFoundException('No existe el período solicitado.');
-        if (current.estado !== PeriodoEstado.EN_CURSO) {
-          throw new ConflictException('Solo se pueden archivar períodos en estado EN_CURSO.');
+        if (current.estado === PeriodoEstado.ARCHIVADO) {
+          throw new ConflictException('El período ya está ARCHIVADO; el archivo es terminal.');
         }
 
         const responsible = await manager.getRepository(Usuario).findOne({

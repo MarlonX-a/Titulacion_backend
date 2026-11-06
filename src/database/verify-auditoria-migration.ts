@@ -53,14 +53,29 @@ async function verify(): Promise<void> {
   const all = await service.listar(page({}));
   if (all.total !== 3 || all.data[0].accion !== 'CREAR_USUARIO' || typeof all.data[0].id !== 'string' || all.data[2].ip_origen !== '10.0.0.5') throw new Error('La consulta sin filtros no respetó orden, id textual o IP.');
   const literal = await service.listar(page({ q: 'admin_x' }));
-  if (literal.total !== 2 || literal.data.some((row) => row.actor.id !== adminId)) throw new Error('El texto libre no escapó el comodín _.');
+  if (literal.total !== 2 || literal.data.some((row) => row.actor?.id !== adminId)) throw new Error('El texto libre no escapó el comodín _.');
   const range = await service.listar(page({ desde: '2026-10-02', hasta: '2026-10-02', entidad_tipo: 'tema' }));
   if (range.total !== 1 || range.data[0].accion !== 'EDITAR_TEMA') throw new Error('El rango de fechas inclusivo no filtró correctamente.');
   const byActor = await service.listar(page({ usuario_id: otherId, accion: 'CREAR_USUARIO', entidad_id: entity, limit: 1 }));
-  if (byActor.total !== 1 || byActor.data[0].actor.email !== 'adminxx@uleam.edu.ec') throw new Error('Los filtros exactos no funcionaron.');
+  if (byActor.total !== 1 || byActor.data[0].actor?.email !== 'adminxx@uleam.edu.ec') throw new Error('Los filtros exactos no funcionaron.');
+
+  step = 'actor automático';
+  await db.query(`INSERT INTO ${s}."auditoria" ("usuario_id","accion","entidad_tipo","entidad_id","valores_nuevos") VALUES (NULL,'CERRAR_POSTULACION','periodo_titulacion',$1,'{"automatico":true}')`, [entity]);
+  let manualSinActor = false;
+  try {
+    await db.query(`INSERT INTO ${s}."auditoria" ("usuario_id","accion","entidad_tipo","entidad_id","valores_nuevos") VALUES (NULL,'EDITAR_TEMA','tema',$1,'{"titulo":"C"}')`, [entity]);
+    manualSinActor = true;
+  } catch (error: unknown) {
+    if (code(error) !== '23514') throw error;
+  }
+  if (manualSinActor) throw new Error('Se aceptó una auditoría manual sin actor.');
+  const automatica = await service.listar(page({ accion: 'CERRAR_POSTULACION' }));
+  if (automatica.total !== 1 || automatica.data[0].actor !== null) throw new Error('La consulta no devolvió la auditoría automática sin actor.');
 
   step = 'reversión';
-  await db.undoLastMigration({ transaction: 'all' });
+  await db.query(`DELETE FROM ${s}."auditoria" WHERE "usuario_id" IS NULL`);
+  // Revierte las migraciones posteriores (actor automático y archivo de períodos) antes de la de índices.
+  for (let i = 0; i < 3; i++) await db.undoLastMigration({ transaction: 'all' });
   const after = await indexes(db);
   if (after.includes('IDX_auditoria_fecha_hora') || after.includes('IDX_auditoria_usuario') || !after.includes('IDX_auditoria_entidad')) throw new Error('La reversión no eliminó solo los índices nuevos.');
 }

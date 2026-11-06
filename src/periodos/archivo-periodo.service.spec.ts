@@ -38,6 +38,22 @@ describe('ArchivoPeriodoService', () => {
     }));
   });
 
+  it.each([
+    PeriodoEstado.BORRADOR,
+    PeriodoEstado.POSTULACION_ABIERTA,
+    PeriodoEstado.POSTULACION_CERRADA,
+    PeriodoEstado.EN_CURSO,
+  ])('archiva desde %s y audita el estado anterior', async (estado) => {
+    const state = setup(estado);
+    const result = await state.service.archivar('periodo-id', { motivo: 'Cancelación' }, state.actor as never, null);
+    expect(result.estado).toBe(PeriodoEstado.ARCHIVADO);
+    expect(state.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      accion: 'ARCHIVAR_PERIODO',
+      valores_anteriores: { estado },
+      valores_nuevos: { estado: PeriodoEstado.ARCHIVADO, motivo: 'Cancelación' },
+    }));
+  });
+
   it('rechaza un segundo archivo sin escribir auditoría', async () => {
     const state = setup(PeriodoEstado.ARCHIVADO);
     await expect(state.service.archivar('periodo-id', { motivo: 'Cierre' }, state.actor as never, null)).rejects.toBeInstanceOf(ConflictException);

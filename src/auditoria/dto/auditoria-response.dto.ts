@@ -11,7 +11,7 @@ export class AuditoriaActorDto {
 
 export class AuditoriaResponseDto {
   @ApiProperty({ description: 'Identificador bigint serializado como texto.', example: '1024' }) id: string;
-  @ApiProperty({ type: AuditoriaActorDto }) actor: AuditoriaActorDto;
+  @ApiProperty({ type: AuditoriaActorDto, nullable: true, description: 'Nulo en acciones automáticas del sistema (valores_nuevos.automatico = true).' }) actor: AuditoriaActorDto | null;
   @ApiProperty() accion: string;
   @ApiProperty() entidad_tipo: string;
   @ApiProperty({ format: 'uuid' }) entidad_id: string;
