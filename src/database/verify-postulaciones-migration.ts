@@ -48,6 +48,7 @@ import { CreateTemas20261002050000 } from './migrations/20261002050000-CreateTem
 import { Tema } from '../temas/entities/tema.entity.js';
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { TipoTema } from '../temas/enums/tipo-tema.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
@@ -117,7 +118,7 @@ async function verify(): Promise<void> {
   const lineRepo = isolated.getRepository(LineaInvestigacion);
   const line = await lineRepo.save(lineRepo.create({ codigo: 'VERIFY', nombre: 'Verificación', descripcion: null, activa: true }));
   const topicRepo = isolated.getRepository(Tema);
-  const topic = await topicRepo.save(topicRepo.create({ periodo: period, linea: line, docente_proponente: teacher, titulo: 'Tema de verificación', descripcion: 'Tema publicado de verificación', min_integrantes: 1, max_integrantes: 3, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const topic = await topicRepo.save(topicRepo.create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema de verificación', descripcion: 'Tema publicado de verificación', tipo: TipoTema.GRUPO, estado: EstadoTema.PUBLICADO, creado_en: now }));
 
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
@@ -268,15 +269,15 @@ async function verify(): Promise<void> {
   step = 'cierre, reapertura y retiro de tema con postulaciones abiertas';
   const openBeforeClose = await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: EstadoPostulacion.PENDIENTE } });
   if (openBeforeClose < 1) throw new Error('La verificación de cierre de tema requiere al menos una postulación PENDIENTE.');
-  const closedTopic = await temasService.close(period.id, topic.id, { motivo: 'Cierre de verificación' }, adminUser, null);
+  const closedTopic = await temasService.close(topic.id, { motivo: 'Cierre de verificación' }, adminUser, null);
   const rejectedByClose = await isolated.getRepository(Postulacion).findOneByOrFail({ id: groupRetry.id });
   if (closedTopic.estado !== EstadoTema.CERRADO || rejectedByClose.estado !== EstadoPostulacion.RECHAZADA || rejectedByClose.observacion !== 'Tema cerrado: Cierre de verificación') throw new Error('El cierre del tema no rechazó sus postulaciones PENDIENTE en PostgreSQL.');
   if (await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: EstadoPostulacion.PENDIENTE } }) !== 0) throw new Error('El cierre del tema dejó postulaciones PENDIENTE.');
-  const reopenedTopic = await temasService.publish(period.id, topic.id, {}, adminUser, null);
+  const reopenedTopic = await temasService.publish(topic.id, {}, adminUser, null);
   if (reopenedTopic.estado !== EstadoTema.PUBLICADO || rejectedByClose.estado !== EstadoPostulacion.RECHAZADA) throw new Error('La reapertura del tema no lo devolvió a PUBLICADO.');
-  const withdrawnTopic = await temasService.withdraw(period.id, topic.id, { motivo: 'Retiro de verificación' }, adminUser, null);
+  const withdrawnTopic = await temasService.withdraw(topic.id, { motivo: 'Retiro de verificación' }, adminUser, null);
   if (withdrawnTopic.estado !== EstadoTema.RETIRADO) throw new Error('El retiro del tema no lo dejó RETIRADO.');
-  const retiredTerminal = await temasService.publish(period.id, topic.id, {}, adminUser, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
+  const retiredTerminal = await temasService.publish(topic.id, {}, adminUser, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
   if (!retiredTerminal) throw new Error('Un tema RETIRADO pudo volver a publicarse.');
 
   step = 'reversión protegida y auditoría';

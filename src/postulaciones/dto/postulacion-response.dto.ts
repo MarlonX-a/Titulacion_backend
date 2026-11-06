@@ -1,3 +1,4 @@
+import { TipoTema } from '../../temas/enums/tipo-tema.enum.js';
 import { ApiProperty } from '@nestjs/swagger';
 import { EstadoPostulacion } from '../enums/estado-postulacion.enum.js';
 import { TutorPropuestoResponseDto } from './tutores-propuestos.dto.js';
@@ -13,7 +14,7 @@ export class PostulacionResponseDto {
   @ApiProperty() id: string;
   @ApiProperty() periodo_id: string;
   @ApiProperty() tema_id: string;
-  @ApiProperty({ type: Object }) tema: { id: string; titulo: string; min_integrantes: number; max_integrantes: number; estado: string };
+  @ApiProperty({ type: Object, description: 'min/max derive from tipo and the max_integrantes_default of the application period.' }) tema: { id: string; titulo: string; tipo: TipoTema; min_integrantes: number; max_integrantes: number; estado: string };
   @ApiProperty({ nullable: true }) grupo_id: string | null;
   @ApiProperty({ nullable: true, type: Object }) grupo: { id: string; nombre: string } | null;
   @ApiProperty({ nullable: true }) estudiante_id: string | null;

@@ -16,6 +16,7 @@ import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entit
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { admiteIntegrantes, integrantesPermitidos, mensajeRangoIntegrantes } from '../temas/integrantes-tema.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { Postulacion } from './entities/postulacion.entity.js';
 import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
@@ -56,8 +57,8 @@ export class PostulacionesService {
       const id = await this.dataSource.transaction(async (manager) => {
         const period = await this.lockPeriod(manager, periodoId);
         this.assertStudentWindow(period);
-        const topic = await manager.getRepository(Tema).findOne({ where: { id: dto.tema_id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
-        if (!topic) throw new NotFoundException('No existe ese tema en el período indicado.');
+        const topic = await manager.getRepository(Tema).findOne({ where: { id: dto.tema_id }, lock: { mode: 'pessimistic_write' } });
+        if (!topic) throw new NotFoundException('No existe ese tema.');
         if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('Solo se puede postular a temas publicados.');
         let studentId: string | null = null;
         let groupId: string | null = null;
@@ -89,7 +90,7 @@ export class PostulacionesService {
             if (await this.asignaciones.tieneVigenteParaEstudiante(manager, participantId)) throw new ConflictException('Uno de los integrantes ya tiene una asignación vigente.');
           }
         }
-        if (count < topic.min_integrantes || count > topic.max_integrantes) throw new ConflictException(`El tema admite entre ${topic.min_integrantes} y ${topic.max_integrantes} integrantes; la solicitud tiene ${count}.`);
+        if (!admiteIntegrantes(topic.tipo, count, period.max_integrantes_default)) throw new ConflictException(mensajeRangoIntegrantes(topic.tipo, count, period.max_integrantes_default));
         this.assertStudentWindow(period);
         const repo = manager.getRepository(Postulacion);
         if (groupId && !(await manager.getRepository(Postulacion).findOne({ where: { grupo: { id: groupId } } }))) {
@@ -113,7 +114,7 @@ export class PostulacionesService {
         this.assertStudentWindow(period);
         const initial = await manager.getRepository(Postulacion).findOne({ where: { id, periodo: { id: periodoId } }, relations: { tema: true, grupo: true, estudiante: true } });
         if (!initial) throw new NotFoundException('No existe esa postulación en el período indicado.');
-        const topic = await manager.getRepository(Tema).findOne({ where: { id: initial.tema.id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
+        const topic = await manager.getRepository(Tema).findOne({ where: { id: initial.tema.id }, lock: { mode: 'pessimistic_write' } });
         if (!topic) throw new NotFoundException('No existe el tema de esa postulación.');
         if (initial.grupo) {
           const group = await manager.getRepository(Grupo).findOne({ where: { id: initial.grupo.id }, lock: { mode: 'pessimistic_write' } });
@@ -134,12 +135,12 @@ export class PostulacionesService {
           if (!representative) throw new NotFoundException('No existe esa postulación visible para el usuario.');
           const participants = await manager.getRepository(GrupoIntegrante).find({ where: { grupo: { id: item.grupo.id }, estado: GrupoIntegranteEstado.ACTIVO }, order: { estudiante: { id: 'ASC' } } });
           for (const participant of participants) await this.habilitados.getEligibleStudentForGroup(periodoId, participant.estudiante.id, manager);
-          if (participants.length !== item.num_integrantes || participants.length < topic.min_integrantes || participants.length > topic.max_integrantes) throw new ConflictException('La composición o el rango del tema ya no es compatible.');
+          if (participants.length !== item.num_integrantes || !admiteIntegrantes(topic.tipo, participants.length, period.max_integrantes_default)) throw new ConflictException('La composición o el rango del tema ya no es compatible.');
         } else {
           const studentId = await this.studentId(manager, actor.id);
           if (item.estudiante?.id !== studentId) throw new NotFoundException('No existe esa postulación visible para el usuario.');
           await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
-          if (topic.min_integrantes > 1 || topic.max_integrantes < 1) throw new ConflictException('El tema no admite una postulación individual.');
+          if (!admiteIntegrantes(topic.tipo, 1, period.max_integrantes_default)) throw new ConflictException('El tema no admite una postulación individual.');
         }
         this.assertStudentWindow(period);
         await this.tutores.agregar(manager, id, docenteIds);
@@ -269,7 +270,7 @@ export class PostulacionesService {
         return [{ id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula, habilitado: record?.estado ?? null, situacion_ingreso: record?.situacion_ingreso ?? null }];
       });
       return { id: item.id, periodo_id: item.periodo.id, tema_id: item.tema.id,
-        tema: { id: item.tema.id, titulo: item.tema.titulo, min_integrantes: item.tema.min_integrantes, max_integrantes: item.tema.max_integrantes, estado: item.tema.estado },
+        tema: { id: item.tema.id, titulo: item.tema.titulo, tipo: item.tema.tipo, min_integrantes: integrantesPermitidos(item.tema.tipo).min, max_integrantes: integrantesPermitidos(item.tema.tipo, item.periodo.max_integrantes_default).max ?? item.periodo.max_integrantes_default, estado: item.tema.estado },
         grupo_id: item.grupo?.id ?? null, grupo: item.grupo ? { id: item.grupo.id, nombre: item.grupo.nombre } : null,
         estudiante_id: item.estudiante?.id ?? null, participantes: participants,
         num_integrantes: item.num_integrantes, registrada_por_id: item.registrada_por.id,

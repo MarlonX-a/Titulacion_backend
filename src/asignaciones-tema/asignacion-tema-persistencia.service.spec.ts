@@ -5,6 +5,7 @@ import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enu
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { TipoTema } from '../temas/enums/tipo-tema.enum.js';
 import { AsignacionTemaPersistenciaService } from './asignacion-tema-persistencia.service.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
@@ -19,8 +20,8 @@ function setup() {
   };
   const application = { id: 'postulacion-id', estado: EstadoPostulacion.ACEPTADA, observacion: 'Asignación aprobada' };
   const topic = {
-    id: 'tema-id', periodo: { id: 'periodo-id' }, linea: { id: 'linea-id' }, docente_proponente: { id: 'docente-id' },
-    titulo: 'Tema', estado: EstadoTema.ASIGNADO, min_integrantes: 1, max_integrantes: 3,
+    id: 'tema-id', linea: { id: 'linea-id' }, docente_proponente: { id: 'docente-id' },
+    titulo: 'Tema', estado: EstadoTema.ASIGNADO, tipo: TipoTema.GRUPO,
   };
   const repos = {
     assignment: { findOneByOrFail: vi.fn(async () => assignment), save: vi.fn(async (value: unknown) => value) },
@@ -60,6 +61,9 @@ describe('AsignacionTemaPersistenciaService', () => {
     expect(state.tutores.anularPorAsignacionTema).toHaveBeenCalledWith(state.manager, 'periodo-id', 'asignacion-id', 'Desistimiento del grupo', state.actor, '127.0.0.1');
     expect(state.application).toMatchObject({ estado: EstadoPostulacion.ANULADA, observacion: 'Desistimiento del grupo' });
     expect(state.topic.estado).toBe(EstadoTema.PUBLICADO);
+    const historial = JSON.stringify(state.repos.history.save.mock.calls[0]![0]);
+    expect(historial).toContain('"tipo":"GRUPO"');
+    expect(historial).not.toContain('"periodo_id"');
     expect(state.repos.history.save).toHaveBeenCalledWith(expect.objectContaining({ estado_anterior: EstadoTema.ASIGNADO, estado_nuevo: EstadoTema.PUBLICADO }));
     const acciones = state.auditoria.registrar.mock.calls.map((call) => ((call as unknown[])[1] as { accion: string }).accion);
     expect(acciones).toEqual(['ANULAR_ASIGNACION_TEMA', 'ANULAR_POSTULACION_MANUAL', 'REPUBLICAR_TEMA_ANULACION']);

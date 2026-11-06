@@ -83,7 +83,7 @@ export class AsignacionTemaPersistenciaService {
     const postRepo = manager.getRepository(Postulacion);
     const application = await postRepo.findOneByOrFail({ id: assignment.postulacion_id });
     const topicRepo = manager.getRepository(Tema);
-    const topic = await topicRepo.findOneOrFail({ where: { id: assignment.tema_id }, relations: { periodo: true, linea: true, docente_proponente: true } });
+    const topic = await topicRepo.findOneOrFail({ where: { id: assignment.tema_id }, relations: { linea: true, docente_proponente: true } });
     const previousAssignment = { estado: assignment.estado, causa_anulacion: assignment.causa_anulacion, motivo_anulacion: assignment.motivo_anulacion, anulada_por_id: assignment.anulada_por_id, fecha_anulacion: assignment.fecha_anulacion };
     const previousApplication = { estado: application.estado, observacion: application.observacion };
     const previousTopic = this.topicValues(topic);
@@ -116,7 +116,7 @@ export class AsignacionTemaPersistenciaService {
   }
 
   private topicValues(topic: Tema): Record<string, unknown> {
-    return { tema_id: topic.id, periodo_id: topic.periodo.id, estado: topic.estado, titulo: topic.titulo, linea_id: topic.linea.id, docente_proponente_id: topic.docente_proponente.id, min_integrantes: topic.min_integrantes, max_integrantes: topic.max_integrantes };
+    return { tema_id: topic.id, carrera_id: topic.carrera_id, estado: topic.estado, titulo: topic.titulo, linea_id: topic.linea.id, docente_proponente_id: topic.docente_proponente.id, tipo: topic.tipo };
   }
 
   private schema(manager: EntityManager): string {

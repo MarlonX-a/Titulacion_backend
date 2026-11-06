@@ -48,7 +48,7 @@ export class TutoresPropuestosService {
 
   async disponibles(periodoId: string, temaId: string, actor: Usuario, query: PaginationQueryDto): Promise<PagedAvailableTutorsResponseDto> {
     try {
-      const topic = await this.temas.getById(periodoId, temaId, actor);
+      const topic = await this.temas.getById(temaId, { periodo_id: periodoId }, actor);
       const qb = this.docentes.createQueryBuilder('d')
         .innerJoinAndSelect('d.usuario', 'u')
         .select(['d.id', 'd.titulo_academico', 'd.carrera_id', 'u.id', 'u.nombres', 'u.apellidos'])
