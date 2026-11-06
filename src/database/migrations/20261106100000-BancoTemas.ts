@@ -138,6 +138,21 @@ async function contar(queryRunner: QueryRunner, sql: string): Promise<number> {
 }
 
 /**
+ * Aborts before any change when an active application (PENDIENTE, EN_CONFLICTO, ACEPTADA) or a
+ * VIGENTE assignment has a member count outside the range of the tipo derived for its topic:
+ * max=1 INDIVIDUAL (1), max=2 PAREJA (2), max>=3 GRUPO (3..max_integrantes_default of its period).
+ */
+async function validarUsoActivo(queryRunner: QueryRunner, s: string): Promise<void> {
+  const where = `FROM ${s}."postulacion" p JOIN ${s}."tema" t ON t."id" = p."tema_id" JOIN ${s}."periodo_titulacion" per ON per."id" = p."periodo_id"
+    WHERE (p."estado"::text IN ('PENDIENTE', 'EN_CONFLICTO', 'ACEPTADA') OR EXISTS (SELECT 1 FROM ${s}."asignacion_tema" a WHERE a."postulacion_id" = p."id" AND a."estado"::text = 'VIGENTE'))
+      AND NOT (CASE WHEN t."max_integrantes" = 1 THEN p."num_integrantes" = 1 WHEN t."max_integrantes" = 2 THEN p."num_integrantes" = 2 ELSE p."num_integrantes" BETWEEN 3 AND per."max_integrantes_default" END)`;
+  const total = await contar(queryRunner, `SELECT count(DISTINCT t."id")::int AS total ${where}`);
+  if (total === 0) return;
+  const ejemplos = await queryRunner.query(`SELECT DISTINCT t."id"::text AS id ${where} ORDER BY 1 LIMIT 5`) as Array<{ id: string }>;
+  throw new Error(`No se puede migrar al banco de temas: ${total} tema(s) tienen postulaciones activas o asignaciones vigentes cuya cantidad de integrantes no cabe en el rango de su tipo derivado (individual 1, pareja 2, grupo 3 hasta el máximo del período). Temas: ${ejemplos.map((e) => e.id).join(', ')}. Corrija o anule esas postulaciones o asignaciones antes de migrar.`);
+}
+
+/**
  * Topic bank (design 2026-11-06): topics belong to a career, not a period. The member range
  * derives from `tipo` and the period of the application/assignment; the period of use stays in
  * asignacion_tema / postulacion. Topics can be imported (lote_importacion TEMAS).
@@ -148,11 +163,14 @@ export class BancoTemas20261106100000 implements MigrationInterface {
   async up(queryRunner: QueryRunner): Promise<void> {
     const s = schemaName(queryRunner);
     await queryRunner.query(`LOCK TABLE ${TABLAS.map((t) => `${s}."${t}"`).join(', ')} IN ACCESS EXCLUSIVE MODE`);
+    await validarUsoActivo(queryRunner, s);
     await queryRunner.query(`DROP TRIGGER "TRG_tema_bloquear_periodo_archivado" ON ${s}."tema"`);
 
     await queryRunner.query(`CREATE TYPE ${s}."tema_tipo_enum" AS ENUM ('INDIVIDUAL', 'PAREJA', 'GRUPO')`);
     await queryRunner.query(`ALTER TABLE ${s}."tema" ADD COLUMN "tipo" ${s}."tema_tipo_enum" NULL`);
-    await queryRunner.query(`UPDATE ${s}."tema" SET "tipo" = (CASE WHEN "max_integrantes" = 1 THEN 'INDIVIDUAL' WHEN "min_integrantes" = 2 AND "max_integrantes" = 2 THEN 'PAREJA' ELSE 'GRUPO' END)::${s}."tema_tipo_enum"`);
+    await queryRunner.query(`UPDATE ${s}."tema" SET "tipo" = (CASE WHEN "max_integrantes" = 1 THEN 'INDIVIDUAL' WHEN "max_integrantes" = 2 THEN 'PAREJA' ELSE 'GRUPO' END)::${s}."tema_tipo_enum"`);
+    // Flushes deferred constraint-trigger events queued by the UPDATE, or the next ALTER TABLE on tema fails (55006).
+    await queryRunner.query('SET CONSTRAINTS ALL IMMEDIATE');
     await queryRunner.query(`ALTER TABLE ${s}."tema" ALTER COLUMN "tipo" SET NOT NULL`);
 
     await queryRunner.query(`ALTER TABLE ${s}."tema" ADD COLUMN "lote_importacion_id" uuid NULL, ADD CONSTRAINT "FK_tema_lote_importacion" FOREIGN KEY ("lote_importacion_id") REFERENCES ${s}."lote_importacion"("id") ON DELETE RESTRICT`);
@@ -182,11 +200,13 @@ export class BancoTemas20261106100000 implements MigrationInterface {
 
     await queryRunner.query(`ALTER TABLE ${s}."tema" ADD COLUMN "periodo_id" uuid NULL, ADD COLUMN "min_integrantes" smallint NULL, ADD COLUMN "max_integrantes" smallint NULL`);
     await queryRunner.query(`UPDATE ${s}."tema" t SET "periodo_id" = (SELECT a."periodo_id" FROM ${s}."asignacion_tema" a WHERE a."tema_id" = t."id" ORDER BY a."fecha_asignacion" DESC, a."id" DESC LIMIT 1)`);
+    await queryRunner.query('SET CONSTRAINTS ALL IMMEDIATE');
     const sinPeriodo = await contar(queryRunner, `SELECT count(*)::int AS total FROM ${s}."tema" WHERE "periodo_id" IS NULL`);
     if (sinPeriodo > 0) throw new Error(`No se puede revertir el banco de temas: ${sinPeriodo} tema(s) no tienen una asignación de la que recuperar el período.`);
     const multiperiodo = await contar(queryRunner, `SELECT count(*)::int AS total FROM ${s}."tema" t WHERE EXISTS (SELECT 1 FROM ${s}."postulacion" p WHERE p."tema_id" = t."id" AND p."periodo_id" <> t."periodo_id") OR EXISTS (SELECT 1 FROM ${s}."resolucion_conflicto" r WHERE r."tema_id" = t."id" AND r."periodo_id" <> t."periodo_id") OR EXISTS (SELECT 1 FROM ${s}."asignacion_tema" a WHERE a."tema_id" = t."id" AND a."periodo_id" <> t."periodo_id")`);
     if (multiperiodo > 0) throw new Error(`No se puede revertir el banco de temas: ${multiperiodo} tema(s) se usaron en varios períodos.`);
     await queryRunner.query(`UPDATE ${s}."tema" t SET "min_integrantes" = CASE t."tipo" WHEN 'INDIVIDUAL' THEN 1 WHEN 'PAREJA' THEN 2 ELSE 3 END, "max_integrantes" = CASE t."tipo" WHEN 'INDIVIDUAL' THEN 1 WHEN 'PAREJA' THEN 2 ELSE GREATEST(3, p."max_integrantes_default") END FROM ${s}."periodo_titulacion" p WHERE p."id" = t."periodo_id"`);
+    await queryRunner.query('SET CONSTRAINTS ALL IMMEDIATE');
     await queryRunner.query(`ALTER TABLE ${s}."tema" ALTER COLUMN "periodo_id" SET NOT NULL, ALTER COLUMN "min_integrantes" SET NOT NULL, ALTER COLUMN "max_integrantes" SET NOT NULL`);
     await queryRunner.query(`ALTER TABLE ${s}."tema" ADD CONSTRAINT "UQ_tema_id_periodo" UNIQUE ("id", "periodo_id"), ADD CONSTRAINT "FK_tema_periodo" FOREIGN KEY ("periodo_id") REFERENCES ${s}."periodo_titulacion"("id") ON DELETE RESTRICT, ADD CONSTRAINT "CHK_tema_min_integrantes" CHECK ("min_integrantes" >= 1), ADD CONSTRAINT "CHK_tema_max_integrantes" CHECK ("max_integrantes" >= "min_integrantes")`);
     await queryRunner.query(`DROP INDEX ${s}."IDX_tema_carrera_creado"`);
