@@ -19,6 +19,7 @@
     "auth:keys": "npm run build && node dist/auth/generate-keys.js",
     "storage:prepare-dev": "node scripts/storage-prepare-dev.mjs",
     "db:seed-dev-users": "node scripts/seed-dev-users.mjs",
+    "db:reset-dev": "node scripts/reset-dev-schema.mjs",
     "db:prepare-auth": "npm run build && node dist/database/prepare-schema.js && typeorm migration:run -d dist/database/data-source.js",
     "db:verify-usuarios": "npm run build && node dist/database/verify-usuario-migration.js",
     "db:verify-perfiles": "npm run build && node dist/database/verify-usuario-migration.js",

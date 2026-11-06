@@ -130,6 +130,16 @@ archivos existentes. El comando `db:prepare-auth` crea únicamente el esquema
 recibir la primera importación. Mailpit muestra los mensajes locales en
 [http://localhost:8025](http://localhost:8025).
 
+### Reiniciar el esquema de desarrollo (catálogo de facultades y carreras)
+
+La migración `20261105110000-FacultadCarrera` agrega columnas NOT NULL y exige tablas vacías.
+Con datos previos en `titulacion_dev`:
+
+1. `npm run db:reset-dev` (solo borra `titulacion_dev` en una base local).
+2. `npm run db:prepare-auth` (recrea el esquema y aplica todas las migraciones, incluido el catálogo).
+3. `npm run usuario:bootstrap-admin` si se necesita el administrador inicial.
+4. `npm run db:seed-dev-users` (docentes en Ingeniería en Software; estudiantes en Software y Sistemas).
+
 El backend escucha en `127.0.0.1` fuera de producción. No publiques estos
 servicios ni sus credenciales de desarrollo en Internet.
 
