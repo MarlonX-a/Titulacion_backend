@@ -7,7 +7,7 @@ export class TutorPropuestoAsignacionResponseDto {
   @ApiProperty() es_proponente_tema: boolean;
   @ApiProperty() elegible_actualmente: boolean;
   @ApiProperty({ type: Object }) docente: {
-    id: string; nombres: string; apellidos: string; titulo_academico: string | null; departamento: string | null;
+    id: string; nombres: string; apellidos: string; titulo_academico: string | null; carrera_id: string;
   };
 }
 

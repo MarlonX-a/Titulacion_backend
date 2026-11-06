@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { AcademicoModule } from '../academico/academico.module.js';
 import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { AlmacenamientoModule } from '../almacenamiento/almacenamiento.module.js';
 import { ColasModule } from '../colas/colas.module.js';
@@ -11,7 +12,7 @@ import { ImportacionesDocentesService } from './importaciones-docentes.service.j
 import { ImportacionesHistorialService } from './importaciones-historial.service.js';
 
 @Module({
-  imports: [ColasModule, BullModule.registerQueue({ name: 'importaciones' }), AuditoriaModule, AlmacenamientoModule],
+  imports: [ColasModule, BullModule.registerQueue({ name: 'importaciones' }), AuditoriaModule, AlmacenamientoModule, AcademicoModule],
   controllers: [ImportacionesController, ImportacionesDocentesController],
   providers: [ImportacionesService, ImportacionesDocentesService, ImportacionesHistorialService, ImportacionesWorker],
 })

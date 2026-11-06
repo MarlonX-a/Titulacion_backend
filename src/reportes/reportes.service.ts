@@ -52,8 +52,8 @@ export class ReportesService {
         const conditions: string[] = [];
         if (filtros.estado_cuenta) conditions.push(`u."estado"=${add(filtros.estado_cuenta)}`);
         if (filtros.habilitado_tutoria !== undefined) conditions.push(`d."habilitado_tutoria"=${add(filtros.habilitado_tutoria)}`);
-        sql = `SELECT d."id" AS "Docente", u."nombres" AS "Nombres", u."apellidos" AS "Apellidos", d."departamento" AS "Departamento", d."habilitado_tutoria" AS "Habilitado para tutoría", u."estado" AS "Estado de cuenta" FROM ${s}."docente" d JOIN ${s}."usuario" u ON u."id"=d."usuario_id" ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY d."id"`;
-        columnas = ['Docente','Nombres','Apellidos','Departamento','Habilitado para tutoría','Estado de cuenta']; break;
+        sql = `SELECT d."id" AS "Docente", u."nombres" AS "Nombres", u."apellidos" AS "Apellidos", c."nombre" AS "Carrera", d."habilitado_tutoria" AS "Habilitado para tutoría", u."estado" AS "Estado de cuenta" FROM ${s}."docente" d JOIN ${s}."usuario" u ON u."id"=d."usuario_id" JOIN ${s}."carrera" c ON c."id"=d."carrera_id" ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY d."id"`;
+        columnas = ['Docente','Nombres','Apellidos','Carrera','Habilitado para tutoría','Estado de cuenta']; break;
       }
       case ExportacionTipo.CARGA_TUTORIAL: {
         const conditions = [`a."periodo_id"=$1`];

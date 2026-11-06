@@ -3,7 +3,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 
 describe('TutoresPropuestosService.porPostulaciones', () => {
-  const docente = (id: string) => ({ id, titulo_academico: 'MSc', departamento: 'TI', habilitado_tutoria: true, usuario: { nombres: `N${id}`, apellidos: `A${id}`, estado: UsuarioEstado.ACTIVO, rol: UsuarioRol.DOCENTE } });
+  const docente = (id: string) => ({ id, titulo_academico: 'MSc', carrera_id: 'car-1', habilitado_tutoria: true, usuario: { nombres: `N${id}`, apellidos: `A${id}`, estado: UsuarioEstado.ACTIVO, rol: UsuarioRol.DOCENTE } });
 
   it('carga los tutores de toda la página en una consulta y los agrupa por postulación', async () => {
     const records = [

@@ -351,7 +351,7 @@ Docentes (RF-19): `POST /docentes` sin `usuario_id` crea en una transacción la 
 DOCENTE (clave temporal aleatoria y correo ACCESO cifrado, como `POST /usuarios`) y su
 perfil, con auditoría `CREAR_USUARIO` y `CREAR_DOCENTE`; con `usuario_id` vincula una cuenta
 existente (mezclar ambos es 400). `PATCH /docentes/:id` (ADMIN) edita nombres, apellidos,
-estado ACTIVO/INACTIVO, cédula, título, departamento y `habilitado_tutoria` con auditoría
+estado ACTIVO/INACTIVO, cédula, título, `carrera_id` (catálogo; no cambia si el docente propone temas) y `habilitado_tutoria` con auditoría
 `EDITAR_DOCENTE` antes/después; el correo es el usuario de acceso y se rechaza con 400. Una
 cédula repetida responde 409. Pasar a INACTIVO revoca las sesiones (`version_sesion` + 1 y
 sesiones revocadas) y no altera tutorías VIGENTES, asignaciones ni límites de carga: el docente
@@ -359,7 +359,9 @@ inactivo deja de poder ingresar y el trigger de tutor ya impide asignarle tutor�
 
 Importación de docentes: Excel institucional (`GET /importaciones/docentes/plantilla`). Se usa
 la hoja `Tutores` (sin importar mayúsculas ni tildes) o, si no existe, la primera hoja con los
-encabezados `DOCENTES` y `Tipo`; las demás columnas se ignoran. `DOCENTES` es
+encabezados `DOCENTES` y `Tipo`; las demás columnas se ignoran. `POST /importaciones/docentes/validar` recibe el
+archivo y el campo multipart `carrera_id`; la carrera se guarda en la preparación y se asigna a los
+docentes nuevos; un docente existente de otra carrera es error por fila. `DOCENTES` es
 `APELLIDO1 APELLIDO2 NOMBRES` (menos de tres palabras es error); el correo se genera como
 `nombre1.apellido1@live.uleam.edu.ec` sin tildes ni ñ. Las filas repetidas (una por fase) se
 deduplican por nombre completo y `Nombramiento` prevalece; `Nombramiento` habilita la tutoría,
@@ -369,8 +371,8 @@ deduplican por nombre completo y `Nombramiento` prevalece; `Nombramiento` habili
 `POST /importaciones/docentes/:id/confirmar` (ADMIN, BullMQ, una transacción SERIALIZABLE). No
 depende de un período: `preparacion_importacion.tipo` (migración `20261020110000`) exige período
 para ESTUDIANTES y lo prohíbe para DOCENTES. Las cuentas nuevas reciben una clave temporal
-aleatoria (como el alta manual) y correo ACCESO cifrado; el perfil se crea sin cédula, título ni
-departamento (opcionales desde la migración `20261105100000`; `UQ_docente_cedula` sigue vigente
+aleatoria (como el alta manual) y correo ACCESO cifrado; el perfil se crea sin cédula ni título
+(con la carrera elegida) (opcionales desde la migración `20261105100000`; `UQ_docente_cedula` sigue vigente
 para valores no nulos). Un DOCENTE existente con el mismo correo solo actualiza
 `habilitado_tutoria` (auditoría `ACTUALIZAR_DOCENTE_IMPORTACION`) o se omite si no cambia; un
 correo de otro rol es error por fila.

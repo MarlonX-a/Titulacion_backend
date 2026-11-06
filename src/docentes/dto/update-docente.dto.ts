@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { Equals, IsBoolean, IsIn, IsOptional, IsString, Length } from 'class-validator';
+import { Equals, IsBoolean, IsIn, IsOptional, IsString, IsUUID, Length } from 'class-validator';
 import { ApiHideProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DocentePerfilOpcionalDto } from './docente-perfil-opcional.dto.js';
 import { UsuarioEstado } from '../../usuarios/enums/usuario-estado.enum.js';
@@ -10,6 +10,11 @@ function trimText(value: unknown): unknown {
 
 /** Edición administrativa de un docente. El correo es el usuario de acceso y no se edita. */
 export class UpdateDocenteDto extends DocentePerfilOpcionalDto {
+  @ApiPropertyOptional({ format: 'uuid', description: 'No se puede cambiar si el docente es proponente de temas.' })
+  @IsOptional()
+  @IsUUID()
+  carrera_id?: string;
+
   @ApiHideProperty()
   @Equals(undefined, { message: 'El correo es el usuario de acceso y no se puede modificar.' })
   email?: undefined;

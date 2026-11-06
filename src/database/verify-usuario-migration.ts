@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
@@ -86,7 +87,7 @@ async function verify(): Promise<void> {
     usuario_id: demoTeacher.id,
     cedula: '3002030405',
     titulo_academico: 'Magíster',
-    departamento: 'Verificación',
+    carrera_id: CARRERA_VERIFICACION_ID,
   }, admin, null);
 
   if (

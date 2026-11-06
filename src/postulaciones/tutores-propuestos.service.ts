@@ -51,7 +51,7 @@ export class TutoresPropuestosService {
       const topic = await this.temas.getById(periodoId, temaId, actor);
       const qb = this.docentes.createQueryBuilder('d')
         .innerJoinAndSelect('d.usuario', 'u')
-        .select(['d.id', 'd.titulo_academico', 'd.departamento', 'u.id', 'u.nombres', 'u.apellidos'])
+        .select(['d.id', 'd.titulo_academico', 'd.carrera_id', 'u.id', 'u.nombres', 'u.apellidos'])
         .where('d.habilitado_tutoria = true')
         .andWhere('u.estado = :active', { active: UsuarioEstado.ACTIVO })
         .andWhere('u.rol = :role', { role: UsuarioRol.DOCENTE })
@@ -63,7 +63,7 @@ export class TutoresPropuestosService {
       return {
         data: records.map((teacher) => ({
           id: teacher.id, nombres: teacher.usuario.nombres, apellidos: teacher.usuario.apellidos,
-          titulo_academico: teacher.titulo_academico, departamento: teacher.departamento,
+          titulo_academico: teacher.titulo_academico, carrera_id: teacher.carrera_id,
           es_proponente_tema: teacher.id === topic.docente_proponente_id,
         })), total, page: query.page, limit: query.limit,
       };
@@ -101,7 +101,7 @@ export class TutoresPropuestosService {
     return {
       id: record.id, postulacion_id: postulacionId, docente_id: record.docente.id,
       orden_prioridad: record.orden_prioridad,
-      docente: { id: record.docente.id, nombres: record.docente.usuario.nombres, apellidos: record.docente.usuario.apellidos, titulo_academico: record.docente.titulo_academico, departamento: record.docente.departamento },
+      docente: { id: record.docente.id, nombres: record.docente.usuario.nombres, apellidos: record.docente.usuario.apellidos, titulo_academico: record.docente.titulo_academico, carrera_id: record.docente.carrera_id },
       es_proponente_tema: record.docente.id === proponenteId,
       elegible_actualmente: record.docente.habilitado_tutoria && record.docente.usuario.estado === UsuarioEstado.ACTIVO && record.docente.usuario.rol === UsuarioRol.DOCENTE,
     };

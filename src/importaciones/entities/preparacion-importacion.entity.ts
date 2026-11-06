@@ -18,6 +18,10 @@ export class PreparacionImportacion {
   @Column({ type: 'enum', enum: LoteImportacionTipo, enumName: 'lote_importacion_tipo_enum', default: LoteImportacionTipo.ESTUDIANTES })
   tipo: LoteImportacionTipo;
 
+  /** Carrera elegida al importar; NULL solo en preparaciones anteriores al catálogo. */
+  @Column({ type: 'uuid', name: 'carrera_id', nullable: true })
+  carrera_id: string | null;
+
   @ManyToOne(() => Usuario, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'solicitada_por_id' })
   solicitada_por: Usuario;
