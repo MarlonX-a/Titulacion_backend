@@ -1,11 +1,8 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
-import { AcademicoService } from '../academico/academico.service.js';
+import { describe, expect, it } from 'vitest';
+import { importacionesHarness, memoryRepository, type MemoryRepository } from '../../test/support/importaciones-harness.js';
 import { Carrera } from '../academico/entities/carrera.entity.js';
 import { Facultad } from '../academico/entities/facultad.entity.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
@@ -20,35 +17,6 @@ import { PreparacionImportacionEstado as Estado } from './enums/preparacion-impo
 import { LoteImportacionTipo } from './enums/lote-importacion-tipo.enum.js';
 import { ImportacionesDocentesService } from './importaciones-docentes.service.js';
 
-type Row = Record<string, unknown>;
-
-function matches(record: Row, where: Row): boolean {
-  return Object.entries(where).every(([key, value]) => {
-    const actual = record[key];
-    if (value !== null && typeof value === 'object') {
-      return actual !== null && typeof actual === 'object' && matches(actual as Row, value as Row);
-    }
-    return actual === value;
-  });
-}
-
-function memoryRepository(rows: Row[]) {
-  return {
-    rows,
-    find: async () => rows,
-    create: (value: Row) => ({ ...value }),
-    save: async (value: Row) => {
-      const stored = { id: value.id ?? randomBytes(8).toString('hex'), creada_en: value.creada_en ?? new Date(), ...value };
-      const index = rows.findIndex((row) => row.id === stored.id);
-      if (index >= 0) rows[index] = stored; else rows.push(stored);
-      Object.assign(value, stored);
-      return stored;
-    },
-    findOne: async (options: { where: Row }) => rows.find((row) => matches(row, options.where)) ?? null,
-    update: async (where: Row, values: Row) => { rows.filter((row) => matches(row, where)).forEach((row) => Object.assign(row, values)); },
-  };
-}
-
 async function teacherWorkbook(rows: unknown[][]): Promise<Buffer> {
   const book = new ExcelJS.Workbook();
   const sheet = book.addWorksheet('Tutores');
@@ -58,11 +26,7 @@ async function teacherWorkbook(rows: unknown[][]): Promise<Buffer> {
 }
 
 function setup(buffer: Buffer) {
-  const keyDir = mkdtempSync(join(tmpdir(), 'docentes-import-'));
-  const keyPath = join(keyDir, 'outbox.key');
-  writeFileSync(keyPath, randomBytes(32));
-  const admin = { id: 'admin', email: 'admin@uleam.edu.ec', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO } as Usuario;
-  const repos = new Map<unknown, ReturnType<typeof memoryRepository>>([
+  const repos = new Map<unknown, MemoryRepository>([
     [PreparacionImportacion, memoryRepository([])],
     [Usuario, memoryRepository([])],
     [Docente, memoryRepository([])],
@@ -72,19 +36,8 @@ function setup(buffer: Buffer) {
     [Facultad, memoryRepository([{ id: 'fac-1', codigo: 'FAC', nombre: 'Facultad' }])],
     [Carrera, memoryRepository([{ id: 'car-1', codigo: 'SOFTWARE', nombre: 'Ingeniería en Software', facultad_id: 'fac-1' }, { id: 'car-2', codigo: 'SISTEMAS', nombre: 'Ingeniería en Sistemas', facultad_id: 'fac-1' }])],
   ]);
-  const manager = { getRepository: (entity: unknown) => repos.get(entity) };
-  const dataSource = {
-    manager,
-    getRepository: (entity: unknown) => repos.get(entity),
-    transaction: async (isolation: unknown, callback?: (value: unknown) => Promise<unknown>) =>
-      (typeof isolation === 'function' ? isolation : callback!)(manager),
-  };
-  const storage = { savePrivate: vi.fn().mockResolvedValue('clave'), readPrivate: vi.fn().mockResolvedValue(buffer), removePrivate: vi.fn() };
-  const auditoria = { registrar: vi.fn().mockResolvedValue(undefined) };
-  const queue = { add: vi.fn().mockResolvedValue(undefined), getJob: vi.fn().mockResolvedValue(undefined) };
-  const config = { get: () => keyPath };
-  const service = new ImportacionesDocentesService(dataSource as never, storage as never, auditoria as never, config as never, queue as never, new AcademicoService());
-  return { service, repos, admin, auditoria, queue };
+  const harness = importacionesHarness(repos, buffer, 'docentes-import-');
+  return { service: new ImportacionesDocentesService(...harness.args), repos, admin: harness.admin, auditoria: harness.auditoria, queue: harness.queue };
 }
 
 

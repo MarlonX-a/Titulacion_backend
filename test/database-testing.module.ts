@@ -478,6 +478,39 @@ async function withTransaction<T>(callback: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Repositorios compartidos por la fuente de datos de prueba y por el gestor de sus transacciones. */
+function sharedTestRepository(entity: unknown) {
+  if (entity === Facultad) return facultadTestRepository;
+  if (entity === Carrera) return carreraTestRepository;
+  if (entity === Usuario) return usuarioTestRepository;
+  if (entity === Estudiante) return estudianteTestRepository;
+  if (entity === Docente) return docenteTestRepository;
+  if (entity === PeriodoTitulacion) return periodoTestRepository;
+  if (entity === EstudianteHabilitado) return habilitadoTestRepository;
+  if (entity === Auditoria) return auditoriaTestRepository;
+  if (entity === LineaInvestigacion) return lineaTestRepository;
+  if (entity === Tema) return temaTestRepository;
+  if (entity === TemaHistorial) return temaHistorialTestRepository;
+  if (entity === Grupo) return grupoTestRepository;
+  if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
+  if (entity === Invitacion) return invitacionTestRepository;
+  if (entity === Postulacion) return postulacionTestRepository;
+  if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
+  if (entity === ResolucionConflicto || entity === ConflictoParticipante) return { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, find: async () => [] };
+  if (entity === AsignacionTema) return assignmentTemaTestRepository;
+  if (entity === CredencialUsuario) return credencialTestRepository;
+  if (entity === CorreoSalida) return correoTestRepository;
+  if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
+  if (entity === AsignacionTutor) return asignacionTutorTestRepository;
+  if (entity === PlantillaPat) return plantillaPatTestRepository;
+  if (entity === DocumentoPat) return documentoPatTestRepository;
+  if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
+  if (entity === Notificacion) return notificacionTestRepository;
+  if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
+  if (entity === SolicitudExportacion) return solicitudExportacionTestRepository;
+  return undefined;
+}
+
 export const usuarioTestDataSource = {
   options: { type: 'postgres' },
   connection: { options: { schema: 'public' } },
@@ -522,35 +555,9 @@ export const usuarioTestDataSource = {
     { target: Carrera },
   ],
   getRepository: (entity: unknown) => {
-    if (entity === Facultad) return facultadTestRepository;
-    if (entity === Carrera) return carreraTestRepository;
-    if (entity === Usuario) return usuarioTestRepository;
-    if (entity === Estudiante) return estudianteTestRepository;
-    if (entity === Docente) return docenteTestRepository;
-    if (entity === PeriodoTitulacion) return periodoTestRepository;
-    if (entity === EstudianteHabilitado) return habilitadoTestRepository;
-    if (entity === Auditoria) return auditoriaTestRepository;
-    if (entity === LineaInvestigacion) return lineaTestRepository;
-    if (entity === Tema) return temaTestRepository;
-    if (entity === TemaHistorial) return temaHistorialTestRepository;
-    if (entity === Grupo) return grupoTestRepository;
-    if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
-    if (entity === Invitacion) return invitacionTestRepository;
-    if (entity === Postulacion) return postulacionTestRepository;
-    if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
-    if (entity === ResolucionConflicto || entity === ConflictoParticipante) return { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, find: async () => [] };
-    if (entity === AsignacionTema) return assignmentTemaTestRepository;
-    if (entity === CredencialUsuario) return credencialTestRepository;
-    if (entity === CorreoSalida) return correoTestRepository;
-    if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
-    if (entity === AsignacionTutor) return asignacionTutorTestRepository;
-    if (entity === PlantillaPat) return plantillaPatTestRepository;
-    if (entity === DocumentoPat) return documentoPatTestRepository;
-    if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
+    const repository = sharedTestRepository(entity);
+    if (repository) return repository;
     if (entity === RevisionPat) return { create: (value: unknown) => value, save: async (value: unknown) => value, exist: async () => false, findOne: async () => null };
-    if (entity === Notificacion) return notificacionTestRepository;
-    if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
-    if (entity === SolicitudExportacion) return solicitudExportacionTestRepository;
     throw new Error('Entidad no configurada en los repositorios de prueba.');
   },
   transaction: async <T>(
@@ -593,35 +600,9 @@ export const usuarioTestDataSource = {
           return [];
         },
         getRepository: (entity: unknown) => {
-          if (entity === Facultad) return facultadTestRepository;
-          if (entity === Carrera) return carreraTestRepository;
-          if (entity === Usuario) return usuarioTestRepository;
-          if (entity === Estudiante) return estudianteTestRepository;
-          if (entity === Docente) return docenteTestRepository;
-          if (entity === PeriodoTitulacion) return periodoTestRepository;
-          if (entity === EstudianteHabilitado) return habilitadoTestRepository;
-          if (entity === Auditoria) return auditoriaTestRepository;
-          if (entity === LineaInvestigacion) return lineaTestRepository;
-          if (entity === Tema) return temaTestRepository;
-          if (entity === TemaHistorial) return temaHistorialTestRepository;
-          if (entity === Grupo) return grupoTestRepository;
-          if (entity === GrupoIntegrante) return grupoIntegranteTestRepository;
-          if (entity === Invitacion) return invitacionTestRepository;
-          if (entity === Postulacion) return postulacionTestRepository;
-          if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
-          if (entity === ResolucionConflicto || entity === ConflictoParticipante) return { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, find: async () => [] };
-          if (entity === AsignacionTema) return assignmentTemaTestRepository;
-          if (entity === CredencialUsuario) return credencialTestRepository;
-          if (entity === CorreoSalida) return correoTestRepository;
+          const repository = sharedTestRepository(entity);
+          if (repository) return repository;
           if (entity === SesionUsuario) return sesionTestRepository;
-          if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
-          if (entity === AsignacionTutor) return asignacionTutorTestRepository;
-          if (entity === PlantillaPat) return plantillaPatTestRepository;
-          if (entity === DocumentoPat) return documentoPatTestRepository;
-          if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
-          if (entity === Notificacion) return notificacionTestRepository;
-          if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
-          if (entity === SolicitudExportacion) return solicitudExportacionTestRepository;
           throw new Error('Entidad no configurada en la transacción de prueba.');
         },
       }),

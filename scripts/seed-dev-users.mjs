@@ -1,8 +1,7 @@
 // Seeds development test users (ADMIN, DOCENTE, ESTUDIANTE) with carreras from the seeded catalog (by codigo). Idempotent: existing emails are skipped.
 // Only runs against a local database and the titulacion_dev schema.
-import { readFileSync } from 'node:fs';
-import pg from 'pg';
 import { argon2id, hash } from 'argon2';
+import { connectDevDatabase, DEV_SCHEMA } from './dev-database.mjs';
 
 // Shared development password for every seeded account (min. 15 characters).
 const DEV_PASSWORD = 'Titulacion-Dev-2026!';
@@ -25,23 +24,10 @@ function cedula(prefix) {
   return prefix + ((10 - (sum % 10)) % 10);
 }
 
-function readEnv() {
-  const file = new URL('../.env', import.meta.url);
-  const entries = readFileSync(file, 'utf8').split(/\r?\n/)
-    .filter((line) => line && !line.startsWith('#') && line.includes('='))
-    .map((line) => [line.slice(0, line.indexOf('=')).trim(), line.slice(line.indexOf('=') + 1).trim()]);
-  return { ...Object.fromEntries(entries), ...process.env };
-}
-
-const env = readEnv();
-if (env.DB_SCHEMA !== 'titulacion_dev') throw new Error('The seed only runs against the titulacion_dev schema.');
-if (!['localhost', '127.0.0.1', '::1'].includes(env.DB_HOST)) throw new Error('The seed only runs against a local database.');
-
-const client = new pg.Client({ host: env.DB_HOST, port: Number(env.DB_PORT), user: env.DB_USERNAME, password: env.DB_PASSWORD, database: env.DB_NAME });
-await client.connect();
+const client = await connectDevDatabase('seed');
 try {
   await client.query('BEGIN');
-  await client.query(`SET LOCAL search_path TO ${env.DB_SCHEMA}`);
+  await client.query(`SET LOCAL search_path TO ${DEV_SCHEMA}`);
   const passwordHash = await hash(DEV_PASSWORD, { type: argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 });
   for (const user of USERS) {
     const existing = await client.query('SELECT id FROM usuario WHERE email = $1', [user.email]);
