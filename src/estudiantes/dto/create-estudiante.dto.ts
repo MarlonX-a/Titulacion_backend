@@ -24,11 +24,9 @@ export class CreateEstudianteDto {
   @Length(1, 20)
   matricula: string;
 
-  @ApiProperty({ maxLength: 120 })
-  @Transform(({ value }: { value: unknown }) => trimText(value))
-  @IsString()
-  @Length(1, 120)
-  carrera: string;
+  @ApiProperty({ format: 'uuid', description: 'Carrera del catálogo.' })
+  @IsUUID()
+  carrera_id: string;
 
   @ApiProperty({ minimum: 1, maximum: 32767, type: Number })
   @Type(() => Number)

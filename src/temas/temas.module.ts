@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AcademicoModule } from '../academico/academico.module.js';
 import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
@@ -14,7 +15,7 @@ import { TemasController } from './temas.controller.js';
 import { TemasService } from './temas.service.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Tema, TemaHistorial, Docente, Estudiante, EstudianteHabilitado, PeriodoTitulacion, Postulacion, AsignacionTema]), AuditoriaModule, NotificacionesModule],
+  imports: [TypeOrmModule.forFeature([Tema, TemaHistorial, Docente, Estudiante, EstudianteHabilitado, PeriodoTitulacion, Postulacion, AsignacionTema]), AuditoriaModule, NotificacionesModule, AcademicoModule],
   controllers: [TemasController],
   providers: [TemasService],
   exports: [TemasService],

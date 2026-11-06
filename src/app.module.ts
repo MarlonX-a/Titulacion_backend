@@ -4,6 +4,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { validateEnvironment } from './config/environment.js';
 import { DatabaseModule } from './database/database.module.js';
+import { AcademicoModule } from './academico/academico.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { EstudiantesModule } from './estudiantes/estudiantes.module.js';
 import { DocentesModule } from './docentes/docentes.module.js';
@@ -36,6 +37,7 @@ import { ExportacionesModule } from './exportaciones/exportaciones.module.js';
     }),
     DatabaseModule,
     AuthModule,
+    AcademicoModule,
     EstudiantesModule,
     DocentesModule,
     PeriodosModule,

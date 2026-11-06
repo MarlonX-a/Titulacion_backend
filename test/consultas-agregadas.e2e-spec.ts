@@ -6,7 +6,6 @@ import request from 'supertest';
 import { vi } from 'vitest';
 import { AppModule } from '../src/app.module.js';
 import { AuthenticationService } from '../src/auth/authentication.service.js';
-import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
 import { DatabaseModule } from '../src/database/database.module.js';
 import { AsignacionesTutorService } from '../src/asignaciones-tutor/asignaciones-tutor.service.js';
@@ -15,6 +14,7 @@ import { ResumenPeriodoService } from '../src/periodos/resumen-periodo.service.j
 import { PeriodosService } from '../src/periodos/periodos.service.js';
 import { UsuarioRol } from '../src/usuarios/enums/usuario-rol.enum.js';
 import { addUsuarioTestRecord, clearUsuarioTestRecords, DatabaseTestingModule } from './database-testing.module.js';
+import { testConfigService, tokenAuthenticationMock } from './support/e2e-app.js';
 
 describe('Consultas agregadas de período (e2e)', () => {
   let app: INestApplication<App>;
@@ -35,12 +35,8 @@ describe('Consultas agregadas de período (e2e)', () => {
       const user = addUsuarioTestRecord({ email: `${rol.toLowerCase()}-agregadas@live.uleam.edu.ec`, id_externo_sso: `agregadas-${rol}`, rol, nombres: rol, apellidos: 'Prueba' });
       tokens.set(rol, user.id);
     }
-    const config = new ConfigService<AppEnvironment, true>({
-      NODE_ENV: 'test', PORT: 3000, SWAGGER_ENABLED: true, DB_HOST: '127.0.0.1', DB_PORT: 5432,
-      DB_SCHEMA: 'test', DB_USERNAME: 'test_user', DB_PASSWORD: 'test_password', DB_NAME: 'test_database',
-      AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
-    });
-    const auth = { verifyToken: vi.fn((token: string) => Promise.resolve({ subject: tokens.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
+    const config = testConfigService();
+    const auth = tokenAuthenticationMock(tokens);
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)

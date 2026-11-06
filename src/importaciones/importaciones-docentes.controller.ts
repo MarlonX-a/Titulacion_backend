@@ -13,6 +13,7 @@ import { ImportacionesDocentesService } from './importaciones-docentes.service.j
 import { XLSX_MIME, XLSX_UPLOAD_OPTIONS } from './importaciones.controller.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { ImportacionHistorialPageDto } from './dto/importacion-historial.dto.js';
+import { ImportarConCarreraDto } from './dto/importar-con-carrera.dto.js';
 import { ImportacionesHistorialService } from './importaciones-historial.service.js';
 
 @ApiTags('Importaciones')
@@ -46,17 +47,18 @@ export class ImportacionesDocentesController {
   @HttpCode(HttpStatus.ACCEPTED)
   @UseInterceptors(FileInterceptor('archivo', XLSX_UPLOAD_OPTIONS))
   @ApiConsumes('multipart/form-data')
-  @ApiBody({ schema: { type: 'object', required: ['archivo'], properties: { archivo: { type: 'string', format: 'binary' } } } })
+  @ApiBody({ schema: { type: 'object', required: ['archivo', 'carrera_id'], properties: { archivo: { type: 'string', format: 'binary' }, carrera_id: { type: 'string', format: 'uuid' } } } })
   @ApiOperation({ summary: 'Validar un XLSX de docentes y generar una vista previa sin crear cuentas (no depende de un período)' })
   @ApiAcceptedResponse({ description: 'Validación en segundo plano; consultar la preparación.' })
   @ApiBadRequestResponse({ description: 'Archivo ausente, no XLSX o fuera de los límites.' })
   submit(
     @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: ImportarConCarreraDto,
     @CurrentUsuario() actor: Usuario,
     @Req() request: Request,
   ) {
     if (!file) throw new BadRequestException('Adjunta un archivo XLSX en el campo archivo.');
-    return this.service.submit(actor, file.originalname, file.buffer, request.ip ?? null);
+    return this.service.submit(actor, file.originalname, file.buffer, request.ip ?? null, body.carrera_id);
   }
 
   @Get(':id')

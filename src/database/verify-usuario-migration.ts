@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
@@ -79,14 +80,14 @@ async function verify(): Promise<void> {
     usuario_id: demoStudent.id,
     cedula: '0102030400',
     matricula: 'VERIFY-001',
-    carrera: 'Sistemas',
+    carrera_id: CARRERA_VERIFICACION_ID,
     nivel: 1,
   });
   const teacherProfile = await docentesService.create({
     usuario_id: demoTeacher.id,
     cedula: '3002030405',
     titulo_academico: 'Magíster',
-    departamento: 'Verificación',
+    carrera_id: CARRERA_VERIFICACION_ID,
   }, admin, null);
 
   if (
@@ -103,7 +104,7 @@ async function verify(): Promise<void> {
       usuario_id: demoStudent.id,
       cedula: '0102030418',
       matricula: 'VERIFY-002',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_VERIFICACION_ID,
       nivel: 2,
     });
   } catch (error: unknown) {
@@ -131,14 +132,14 @@ async function verify(): Promise<void> {
       usuario_id: concurrentStudent.id,
       cedula: '0102030418',
       matricula: 'VERIFY-003',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_VERIFICACION_ID,
       nivel: 3,
     }),
     estudiantesService.create({
       usuario_id: concurrentStudent.id,
       cedula: '0102030426',
       matricula: 'VERIFY-004',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_VERIFICACION_ID,
       nivel: 4,
     }),
   ]);

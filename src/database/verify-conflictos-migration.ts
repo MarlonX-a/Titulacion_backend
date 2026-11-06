@@ -85,6 +85,7 @@ import { StrengthenAsignacionTemaIntegrity20261002120000 } from './migrations/20
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.js';
 import { ArchivoPendiente } from '../almacenamiento/entities/archivo-pendiente.entity.js';
 import { PlantillasPatService } from '../plantillas-pat/plantillas-pat.service.js';
@@ -112,11 +113,11 @@ async function verify(): Promise<void> {
   const now = new Date(); const users = isolated.getRepository(Usuario);
   const adminUser = await users.save(users.create({ email: 'admin@conflictos.verify', nombres: 'Admin', apellidos: 'Verificación', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'conflictos-admin', ultimo_acceso: null }));
   const teacherUser = await users.save(users.create({ email: 'docente@conflictos.verify', nombres: 'Docente', apellidos: 'Verificación', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'conflictos-docente', ultimo_acceso: null }));
-  const teacher = await isolated.getRepository(Docente).save(isolated.getRepository(Docente).create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true }));
+  const teacher = await isolated.getRepository(Docente).save(isolated.getRepository(Docente).create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: true }));
   const students: Estudiante[] = [];
   for (const [index, cedula] of ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459'].entries()) {
     const user = await users.save(users.create({ email: `estudiante${index}@conflictos.verify`, nombres: `Estudiante ${index}`, apellidos: 'Verificación', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: `conflictos-student-${index}`, ultimo_acceso: null }));
-    students.push(await isolated.getRepository(Estudiante).save(isolated.getRepository(Estudiante).create({ usuario: user, cedula, matricula: `CF-${index}`, carrera: 'Sistemas', nivel: 8 })));
+    students.push(await isolated.getRepository(Estudiante).save(isolated.getRepository(Estudiante).create({ usuario: user, cedula, matricula: `CF-${index}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 8 })));
   }
   const period = await isolated.getRepository(PeriodoTitulacion).save(isolated.getRepository(PeriodoTitulacion).create({ codigo: 'CF-VERIFY', nombre: 'Verificación de conflictos', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 60_000), fecha_inicio_titulacion: new Date(now.getTime() + 600_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 3 }));
   for (const student of students) await isolated.getRepository(EstudianteHabilitado).save(isolated.getRepository(EstudianteHabilitado).create({ periodo: period, estudiante: student, origen: HabilitadoOrigen.MANUAL, lote_importacion: null, estado: HabilitadoEstado.HABILITADO, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito pendiente', situacion_ingreso: SituacionIngreso.PENDIENTE, fecha_habilitacion: now, fecha_resolucion_ingreso: null, resuelto_por: null, observacion_ingreso: null }));
@@ -371,7 +372,7 @@ async function verify(): Promise<void> {
 
   step = 'carga tutorial, asignación concurrente y reemplazo';
   const newTeacherUser = await users.save(users.create({ email: 'docente-reemplazo@conflictos.verify', nombres: 'Docente', apellidos: 'Reemplazo', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'conflictos-docente-reemplazo', ultimo_acceso: null }));
-  const replacementTeacher = await isolated.getRepository(Docente).save(isolated.getRepository(Docente).create({ usuario: newTeacherUser, cedula: '0102030467', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true }));
+  const replacementTeacher = await isolated.getRepository(Docente).save(isolated.getRepository(Docente).create({ usuario: newTeacherUser, cedula: '0102030467', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: true }));
   await isolated.getRepository(PeriodoTitulacion).update(period.id, { estado: PeriodoEstado.POSTULACION_CERRADA });
   const loadRepo = isolated.getRepository(ConfigCargaTutorial);
   await loadRepo.save(loadRepo.create({ periodo_id: period.id, periodo: period, docente_id: null, docente: null, max_trabajos: 1, bloquear_al_superar: true }));

@@ -38,7 +38,7 @@ async function verify(): Promise<void> {
   const actorId = randomBytes(16).toString('hex').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
   const requestId = randomBytes(16).toString('hex').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
   await isolated.query(`INSERT INTO ${quotedSchema}."usuario" ("id","email","nombres","apellidos","rol","id_externo_sso") VALUES ($1,'admin@verification.example','Admin','Verificación','ADMIN','verify-admin')`, [actorId]);
-  await isolated.query(`INSERT INTO ${quotedSchema}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","max_integrantes_default") VALUES ($1,'VERIFY','Período verificador',now()-interval '2 days',now()-interval '1 day',now(),4)`, [periodId]);
+  await isolated.query(`INSERT INTO ${quotedSchema}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","max_integrantes_default","facultad_id") VALUES ($1,'VERIFY','Período verificador',now()-interval '2 days',now()-interval '1 day',now(),4,(SELECT "id" FROM ${quotedSchema}."facultad" ORDER BY "codigo" LIMIT 1))`, [periodId]);
 
   step = 'consultas de los siete reportes';
   const reports = new ReportesService(isolated);

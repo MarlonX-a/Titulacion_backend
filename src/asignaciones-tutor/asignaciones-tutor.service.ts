@@ -346,7 +346,7 @@ export class AsignacionesTutorService {
         nombres: record.docente.usuario.nombres,
         apellidos: record.docente.usuario.apellidos,
         titulo_academico: record.docente.titulo_academico,
-        departamento: record.docente.departamento,
+        carrera_id: record.docente.carrera_id,
       },
       responsable: {
         id: record.asignada_por.id,
@@ -492,7 +492,7 @@ export class AsignacionesTutorService {
         nombres: teacher.usuario.nombres,
         apellidos: teacher.usuario.apellidos,
         titulo_academico: teacher.titulo_academico,
-        departamento: teacher.departamento,
+        carrera_id: teacher.carrera_id,
       },
     };
   }

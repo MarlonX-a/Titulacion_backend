@@ -1,10 +1,10 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { importacionesHarness, memoryRepository, type MemoryRepository } from '../../test/support/importaciones-harness.js';
+import { Carrera } from '../academico/entities/carrera.entity.js';
+import { Facultad } from '../academico/entities/facultad.entity.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
@@ -17,34 +17,6 @@ import { PreparacionImportacionEstado as Estado } from './enums/preparacion-impo
 import { LoteImportacionTipo } from './enums/lote-importacion-tipo.enum.js';
 import { ImportacionesDocentesService } from './importaciones-docentes.service.js';
 
-type Row = Record<string, unknown>;
-
-function matches(record: Row, where: Row): boolean {
-  return Object.entries(where).every(([key, value]) => {
-    const actual = record[key];
-    if (value !== null && typeof value === 'object') {
-      return actual !== null && typeof actual === 'object' && matches(actual as Row, value as Row);
-    }
-    return actual === value;
-  });
-}
-
-function memoryRepository(rows: Row[]) {
-  return {
-    rows,
-    create: (value: Row) => ({ ...value }),
-    save: async (value: Row) => {
-      const stored = { id: value.id ?? randomBytes(8).toString('hex'), creada_en: value.creada_en ?? new Date(), ...value };
-      const index = rows.findIndex((row) => row.id === stored.id);
-      if (index >= 0) rows[index] = stored; else rows.push(stored);
-      Object.assign(value, stored);
-      return stored;
-    },
-    findOne: async (options: { where: Row }) => rows.find((row) => matches(row, options.where)) ?? null,
-    update: async (where: Row, values: Row) => { rows.filter((row) => matches(row, where)).forEach((row) => Object.assign(row, values)); },
-  };
-}
-
 async function teacherWorkbook(rows: unknown[][]): Promise<Buffer> {
   const book = new ExcelJS.Workbook();
   const sheet = book.addWorksheet('Tutores');
@@ -54,31 +26,18 @@ async function teacherWorkbook(rows: unknown[][]): Promise<Buffer> {
 }
 
 function setup(buffer: Buffer) {
-  const keyDir = mkdtempSync(join(tmpdir(), 'docentes-import-'));
-  const keyPath = join(keyDir, 'outbox.key');
-  writeFileSync(keyPath, randomBytes(32));
-  const admin = { id: 'admin', email: 'admin@uleam.edu.ec', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO } as Usuario;
-  const repos = new Map<unknown, ReturnType<typeof memoryRepository>>([
+  const repos = new Map<unknown, MemoryRepository>([
     [PreparacionImportacion, memoryRepository([])],
     [Usuario, memoryRepository([])],
     [Docente, memoryRepository([])],
     [CredencialUsuario, memoryRepository([])],
     [CorreoSalida, memoryRepository([])],
     [LoteImportacion, memoryRepository([])],
+    [Facultad, memoryRepository([{ id: 'fac-1', codigo: 'FAC', nombre: 'Facultad' }])],
+    [Carrera, memoryRepository([{ id: 'car-1', codigo: 'SOFTWARE', nombre: 'Ingeniería en Software', facultad_id: 'fac-1' }, { id: 'car-2', codigo: 'SISTEMAS', nombre: 'Ingeniería en Sistemas', facultad_id: 'fac-1' }])],
   ]);
-  const manager = { getRepository: (entity: unknown) => repos.get(entity) };
-  const dataSource = {
-    manager,
-    getRepository: (entity: unknown) => repos.get(entity),
-    transaction: async (isolation: unknown, callback?: (value: unknown) => Promise<unknown>) =>
-      (typeof isolation === 'function' ? isolation : callback!)(manager),
-  };
-  const storage = { savePrivate: vi.fn().mockResolvedValue('clave'), readPrivate: vi.fn().mockResolvedValue(buffer), removePrivate: vi.fn() };
-  const auditoria = { registrar: vi.fn().mockResolvedValue(undefined) };
-  const queue = { add: vi.fn().mockResolvedValue(undefined), getJob: vi.fn().mockResolvedValue(undefined) };
-  const config = { get: () => keyPath };
-  const service = new ImportacionesDocentesService(dataSource as never, storage as never, auditoria as never, config as never, queue as never);
-  return { service, repos, admin, auditoria, queue };
+  const harness = importacionesHarness(repos, buffer, 'docentes-import-');
+  return { service: new ImportacionesDocentesService(...harness.args), repos, admin: harness.admin, auditoria: harness.auditoria, queue: harness.queue };
 }
 
 
@@ -91,7 +50,7 @@ const GABRIELA_EMAIL = 'gabriela.velasquez@live.uleam.edu.ec';
 async function prepared(rows: unknown[][]) {
   const buffer = await teacherWorkbook(rows);
   const context = setup(buffer);
-  const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, '127.0.0.1');
+  const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, '127.0.0.1', 'car-1');
   await context.service.validateFile(id);
   return { ...context, id };
 }
@@ -114,12 +73,12 @@ describe('ImportacionesDocentesService', () => {
     const context = setup(buffer);
     const users = context.repos.get(Usuario)!;
     const gabriela = await users.save({ email: GABRIELA_EMAIL, nombres: 'GABRIELA  maholy', apellidos: 'Velásquez Moreira', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
-    await context.repos.get(Docente)!.save({ id: 'doc-gabriela', usuario: gabriela, cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Software', habilitado_tutoria: true });
+    await context.repos.get(Docente)!.save({ id: 'doc-gabriela', usuario: gabriela, cedula: '0102030400', titulo_academico: 'Ing.', carrera_id: 'car-1', habilitado_tutoria: true });
     await context.repos.get(CredencialUsuario)!.save({ id: 'cred-gabriela', usuario_id: gabriela.id, requiere_cambio: false });
     const joffre = await users.save({ email: 'joffre.panchana@live.uleam.edu.ec', nombres: 'Joffre Edgardo', apellidos: 'Panchana Flores', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
-    await context.repos.get(Docente)!.save({ id: 'doc-joffre', usuario: joffre, cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: false });
+    await context.repos.get(Docente)!.save({ id: 'doc-joffre', usuario: joffre, cedula: null, titulo_academico: null, carrera_id: 'car-1', habilitado_tutoria: false });
     await context.repos.get(CredencialUsuario)!.save({ id: 'cred-joffre', usuario_id: joffre.id, requiere_cambio: false });
-    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
+    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null, 'car-1');
     await context.service.validateFile(id);
     await context.service.confirm(id, context.admin, null);
     expect(context.queue.add).toHaveBeenCalledWith('importar-docentes', { id }, expect.anything());
@@ -129,7 +88,7 @@ describe('ImportacionesDocentesService', () => {
     expect(edison).toMatchObject({ nombres: 'Edison Ernesto', apellidos: 'Almeida Zambrano', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
     const teachers = context.repos.get(Docente)!.rows;
     expect(teachers).toHaveLength(3);
-    expect(teachers.find((row) => (row.usuario as Usuario).id === edison!.id)).toMatchObject({ cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: true });
+    expect(teachers.find((row) => (row.usuario as Usuario).id === edison!.id)).toMatchObject({ cedula: null, titulo_academico: null, carrera_id: 'car-1', habilitado_tutoria: true });
     expect(teachers.find((row) => row.id === 'doc-gabriela')).toMatchObject({ cedula: '0102030400', habilitado_tutoria: false });
     expect(gabriela).toMatchObject({ nombres: 'GABRIELA  maholy', apellidos: 'Velásquez Moreira' });
     const credentials = context.repos.get(CredencialUsuario)!.rows;
@@ -148,7 +107,7 @@ describe('ImportacionesDocentesService', () => {
     const buffer = await teacherWorkbook([EDISON, GABRIELA]);
     const context = setup(buffer);
     await context.repos.get(Usuario)!.save({ email: EDISON_EMAIL, nombres: 'Edison', apellidos: 'Almeida', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO });
-    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
+    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null, 'car-1');
     await context.service.validateFile(id);
     const summary = await context.service.get(id);
     expect(summary.estado).toBe(Estado.INVALIDA);
@@ -163,8 +122,8 @@ describe('ImportacionesDocentesService', () => {
     const buffer = await teacherWorkbook([EDISON, GABRIELA]);
     const context = setup(buffer);
     const gabriela = await context.repos.get(Usuario)!.save({ email: GABRIELA_EMAIL, rol: UsuarioRol.DOCENTE, ...account });
-    await context.repos.get(Docente)!.save({ id: 'doc-gabriela', usuario: gabriela, cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: true });
-    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
+    await context.repos.get(Docente)!.save({ id: 'doc-gabriela', usuario: gabriela, cedula: null, titulo_academico: null, carrera_id: 'car-1', habilitado_tutoria: true });
+    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null, 'car-1');
     await context.service.validateFile(id);
     const summary = await context.service.get(id);
     expect(summary.estado).toBe(Estado.INVALIDA);
@@ -177,11 +136,38 @@ describe('ImportacionesDocentesService', () => {
   it('rechaza el archivo cuyo hash cambió y responde 404 para preparaciones inexistentes', async () => {
     const buffer = await teacherWorkbook([EDISON]);
     const context = setup(buffer);
-    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null);
+    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null, 'car-1');
     const record = context.repos.get(PreparacionImportacion)!.rows[0];
     record.sha256 = createHash('sha256').update('otro').digest('hex');
     await context.service.validateFile(id);
     expect(record.estado).toBe(Estado.INVALIDA);
     await expect(context.service.get('no-existe')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('guarda la carrera elegida en la preparación y en los docentes creados', async () => {
+    const { service, repos, id } = await prepared([EDISON]);
+    expect(repos.get(PreparacionImportacion)!.rows[0]).toMatchObject({ carrera_id: 'car-1' });
+    await service.confirm(id, { id: 'admin' } as Usuario, null);
+    await service.importConfirmed(id);
+    expect(repos.get(Docente)!.rows[0]).toMatchObject({ carrera_id: 'car-1' });
+  });
+
+  it('rechaza una carrera inexistente al enviar el archivo', async () => {
+    const buffer = await teacherWorkbook([EDISON]);
+    const context = setup(buffer);
+    await expect(context.service.submit(context.admin, 'docentes.xlsx', buffer, null, 'nope')).rejects.toThrow('No existe la carrera indicada.');
+    expect(context.repos.get(PreparacionImportacion)!.rows).toHaveLength(0);
+  });
+
+  it('marca como error la fila de un docente que ya pertenece a otra carrera', async () => {
+    const buffer = await teacherWorkbook([EDISON]);
+    const context = setup(buffer);
+    const edison = await context.repos.get(Usuario)!.save({ email: EDISON_EMAIL, nombres: 'Edison Ernesto', apellidos: 'Almeida Zambrano', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO });
+    await context.repos.get(Docente)!.save({ usuario: edison, cedula: null, titulo_academico: null, carrera_id: 'car-2', habilitado_tutoria: true });
+    const { id } = await context.service.submit(context.admin, 'docentes.xlsx', buffer, null, 'car-1');
+    await context.service.validateFile(id);
+    const summary = await context.service.get(id);
+    expect(summary.estado).toBe(Estado.INVALIDA);
+    expect(summary.errores).toEqual([expect.objectContaining({ columna: 'DOCENTES', mensaje: expect.stringContaining('Ingeniería en Sistemas') })]);
   });
 });

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CarreraResumenDto } from '../../academico/dto/resumen-academico.dto.js';
 import { CondicionIngreso } from '../enums/condicion-ingreso.enum.js';
 import { HabilitadoEstado } from '../enums/habilitado-estado.enum.js';
 import { HabilitadoOrigen } from '../enums/habilitado-origen.enum.js';
@@ -23,8 +24,8 @@ export class HabilitadoEstudianteDto {
   @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
   cedula?: string;
 
-  @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
-  carrera?: string;
+  @ApiPropertyOptional({ type: () => CarreraResumenDto, description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
+  carrera?: CarreraResumenDto;
 
   @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
   nivel?: number;

@@ -8,13 +8,15 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
+import { AcademicoService } from '../academico/academico.service.js';
+import { resumenCatalogo, type CatalogoAcademico } from '../academico/catalogo-academico.js';
 import { UsuarioResumenDto } from '../common/dto/usuario-resumen.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CreateEstudianteDto } from './dto/create-estudiante.dto.js';
 import { EstudianteResponseDto } from './dto/estudiante-response.dto.js';
+import { ListEstudiantesQueryDto } from './dto/list-estudiantes-query.dto.js';
 import { Estudiante } from './entities/estudiante.entity.js';
 
 interface PostgresDriverError {
@@ -28,7 +30,7 @@ export interface PagedEstudiantes {
   limit: number;
 }
 
-function responseFrom(estudiante: Estudiante): EstudianteResponseDto {
+function responseFrom(estudiante: Estudiante, catalogo: CatalogoAcademico): EstudianteResponseDto {
   const usuario: UsuarioResumenDto = {
     id: estudiante.usuario.id,
     email: estudiante.usuario.email,
@@ -42,7 +44,8 @@ function responseFrom(estudiante: Estudiante): EstudianteResponseDto {
     usuario,
     cedula: estudiante.cedula,
     matricula: estudiante.matricula,
-    carrera: estudiante.carrera,
+    carrera_id: estudiante.carrera_id,
+    carrera: resumenCatalogo(catalogo.carrera(estudiante.carrera_id), estudiante.carrera_id),
     nivel: estudiante.nivel,
   };
 }
@@ -59,6 +62,7 @@ export class EstudiantesService {
     @InjectRepository(Estudiante)
     private readonly repository: Repository<Estudiante>,
     private readonly dataSource: DataSource,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   async getActiveProfileForHabilitacion(
@@ -102,6 +106,7 @@ export class EstudiantesService {
 
   async create(dto: CreateEstudianteDto): Promise<EstudianteResponseDto> {
     try {
+      await this.academico.buscarCarrera(this.dataSource, dto.carrera_id);
       const estudiante = await this.dataSource.transaction(async (manager) => {
         const usuarios = manager.getRepository(Usuario);
         const usuario = await usuarios.findOne({
@@ -126,27 +131,29 @@ export class EstudiantesService {
             usuario,
             cedula: dto.cedula.trim(),
             matricula: dto.matricula.trim(),
-            carrera: dto.carrera.trim(),
+            carrera_id: dto.carrera_id,
             nivel: dto.nivel,
           }),
         );
       });
-      return responseFrom(estudiante);
+      return responseFrom(estudiante, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
   }
 
-  async list(query: PaginationQueryDto): Promise<PagedEstudiantes> {
+  async list(query: ListEstudiantesQueryDto): Promise<PagedEstudiantes> {
     try {
       const [estudiantes, total] = await this.repository.findAndCount({
+        where: query.carrera_id ? { carrera_id: query.carrera_id } : {},
         relations: { usuario: true },
         order: { id: 'ASC' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
+      const catalogo = await this.academico.catalogo(this.dataSource);
       return {
-        data: estudiantes.map(responseFrom),
+        data: estudiantes.map((estudiante) => responseFrom(estudiante, catalogo)),
         total,
         page: query.page,
         limit: query.limit,
@@ -165,7 +172,7 @@ export class EstudiantesService {
       if (!estudiante) {
         throw new NotFoundException('No existe el perfil de estudiante solicitado.');
       }
-      return responseFrom(estudiante);
+      return responseFrom(estudiante, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -180,7 +187,7 @@ export class EstudiantesService {
       if (!estudiante) {
         throw new NotFoundException('La cuenta aún no tiene perfil de estudiante.');
       }
-      return responseFrom(estudiante);
+      return responseFrom(estudiante, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }

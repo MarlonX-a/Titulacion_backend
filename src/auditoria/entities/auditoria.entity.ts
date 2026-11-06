@@ -1,14 +1,16 @@
-import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 
 @Entity({ name: 'auditoria' })
+@Check('CHK_auditoria_actor_o_automatico', `"usuario_id" IS NOT NULL OR COALESCE(("valores_nuevos" ->> 'automatico') = 'true', false)`)
 export class Auditoria {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id: string;
 
-  @ManyToOne(() => Usuario, { nullable: false, onDelete: 'RESTRICT' })
+  /** Nulo solo en transiciones automáticas del sistema (`valores_nuevos.automatico = true`). */
+  @ManyToOne(() => Usuario, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'usuario_id', foreignKeyConstraintName: 'FK_auditoria_usuario' })
-  usuario: Usuario;
+  usuario: Usuario | null;
 
   @Column({ type: 'varchar', length: 60 })
   accion: string;

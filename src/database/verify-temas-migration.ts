@@ -32,6 +32,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 
 const schema = `test_temas_${randomBytes(8).toString('hex')}`;
 let admin: DatabaseDataSource | undefined;
@@ -67,7 +68,7 @@ async function verify(): Promise<void> {
   const actor = await users.save(users.create({ email: 'admin@temas.verify', nombres: 'Admin', apellidos: 'Verificación', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'temas-admin', ultimo_acceso: null }));
   const docenteUser = await users.save(users.create({ email: 'docente@temas.verify', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'temas-docente', ultimo_acceso: null }));
   const docentes = isolated.getRepository(Docente);
-  const docente = await docentes.save(docentes.create({ usuario: docenteUser, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: false }));
+  const docente = await docentes.save(docentes.create({ usuario: docenteUser, cedula: '0102030400', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: false }));
   const lineas = isolated.getRepository(LineaInvestigacion);
   const linea = await lineas.save(lineas.create({ codigo: 'IA', nombre: 'Inteligencia artificial', descripcion: null, activa: true }));
   const periodos = isolated.getRepository(PeriodoTitulacion);
@@ -80,7 +81,7 @@ async function verify(): Promise<void> {
     { postulacion: () => Promise.resolve() } as unknown as NotificacionesPersistenciaService,
   );
   const periodosService = new PeriodosService(periodos, isolated, auditoria);
-  const dto = { linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;
+  const dto = { carrera_id: CARRERA_VERIFICACION_ID, linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;
 
   step = 'alta e historial inicial';
   const created = await service.create(periodo.id, dto, actor, null);

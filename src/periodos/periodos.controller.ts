@@ -193,11 +193,11 @@ export class PeriodosController {
 
   @Post(':id/archivar')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Archivar un período EN_CURSO y conservar su historial' })
+  @ApiOperation({ summary: 'Archivar un período en cualquier estado no archivado y conservar su historial' })
   @ApiOkResponse({ type: PeriodoResponseDto })
   @ApiBadRequestResponse({ description: 'UUID o motivo inválido, o cuerpo con propiedades no permitidas.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'Solo se archivan períodos EN_CURSO; el estado ARCHIVADO es terminal.' })
+  @ApiConflictResponse({ description: 'El período ya está ARCHIVADO (estado terminal e inmutable) o hubo una actualización concurrente.' })
   archivar(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ArchivarPeriodoDto,

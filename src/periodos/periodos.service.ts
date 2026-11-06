@@ -7,8 +7,9 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, LessThanOrEqual, MoreThan, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -18,6 +19,7 @@ import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
+import { periodoResponse } from './periodo-response.mapper.js';
 
 interface PostgresDriverError {
   code?: string;
@@ -28,19 +30,6 @@ export interface PagedPeriodos {
   total: number;
   page: number;
   limit: number;
-}
-
-function responseFrom(periodo: PeriodoTitulacion): PeriodoResponseDto {
-  return {
-    id: periodo.id,
-    codigo: periodo.codigo,
-    nombre: periodo.nombre,
-    fecha_inicio_postulacion: periodo.fecha_inicio_postulacion,
-    fecha_fin_postulacion: periodo.fecha_fin_postulacion,
-    fecha_inicio_titulacion: periodo.fecha_inicio_titulacion,
-    estado: periodo.estado,
-    max_integrantes_default: periodo.max_integrantes_default,
-  };
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -80,6 +69,29 @@ function datesFrom(dto: CreatePeriodoDto | UpdatePeriodoDto) {
   };
 }
 
+/** El instante está dentro del plazo de postulación [inicio, fin). */
+function enPlazoPostulacion(periodo: PeriodoTitulacion, now: Date): boolean {
+  return now.getTime() >= periodo.fecha_inicio_postulacion.getTime()
+    && now.getTime() < periodo.fecha_fin_postulacion.getTime();
+}
+
+/** El plazo de postulación ya venció (instante >= fecha fin). */
+function plazoPostulacionVencido(periodo: PeriodoTitulacion, now: Date): boolean {
+  return now.getTime() >= periodo.fecha_fin_postulacion.getTime();
+}
+
+/** Responsable de una transición: un usuario (flujo manual) o el sistema (por fechas). */
+type ResponsableTransicion =
+  | { actor: Usuario; ip: string | null; automatico: false }
+  | { actor: null; ip: null; automatico: true };
+
+const SISTEMA: ResponsableTransicion = { actor: null, ip: null, automatico: true };
+
+export interface CandidatosTransicionAutomatica {
+  aperturas: string[];
+  cierres: string[];
+}
+
 /**
  * En POSTULACION_CERRADA solo puede cambiar la fecha fin de postulación (para poder reabrir);
  * los demás campos se aceptan únicamente si repiten el valor actual.
@@ -91,6 +103,7 @@ function assertOnlyEndDateChanges(current: PeriodoTitulacion, dto: UpdatePeriodo
     (dto.codigo === undefined || dto.codigo.trim() === current.codigo) &&
     (dto.nombre === undefined || dto.nombre.trim() === current.nombre) &&
     (dto.max_integrantes_default === undefined || dto.max_integrantes_default === current.max_integrantes_default) &&
+    (dto.facultad_id === undefined || dto.facultad_id === current.facultad_id) &&
     sameDate(dto.fecha_inicio_postulacion, current.fecha_inicio_postulacion) &&
     sameDate(dto.fecha_inicio_titulacion, current.fecha_inicio_titulacion);
   if (!unchanged) {
@@ -107,6 +120,7 @@ export class PeriodosService {
     private readonly repository: Repository<PeriodoTitulacion>,
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   async create(dto: CreatePeriodoDto): Promise<PeriodoResponseDto> {
@@ -116,6 +130,7 @@ export class PeriodosService {
       dates.fecha_fin_postulacion!,
       dates.fecha_inicio_titulacion!,
     );
+    await this.academico.buscarFacultad(this.dataSource, dto.facultad_id);
 
     try {
       const periodo = await this.repository.save(
@@ -125,9 +140,10 @@ export class PeriodosService {
           ...dates,
           estado: PeriodoEstado.BORRADOR,
           max_integrantes_default: dto.max_integrantes_default,
+          facultad_id: dto.facultad_id,
         }),
       );
-      return responseFrom(periodo);
+      return await this.respuesta(periodo);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -143,8 +159,9 @@ export class PeriodosService {
       const pendientes = incluirCondicionados
         ? await this.contarCondicionadosPendientes(periodos.map((periodo) => periodo.id))
         : null;
+      const catalogo = await this.academico.catalogo(this.dataSource);
       return {
-        data: periodos.map((periodo) => this.withPendientes(responseFrom(periodo), pendientes)),
+        data: periodos.map((periodo) => this.withPendientes(periodoResponse(periodo, catalogo), pendientes)),
         total,
         page: query.page,
         limit: query.limit,
@@ -161,7 +178,7 @@ export class PeriodosService {
         throw new NotFoundException('No existe el período solicitado.');
       }
       const pendientes = incluirCondicionados ? await this.contarCondicionadosPendientes([periodo.id]) : null;
-      return this.withPendientes(responseFrom(periodo), pendientes);
+      return this.withPendientes(await this.respuesta(periodo), pendientes);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -189,6 +206,10 @@ export class PeriodosService {
     return `"${value}"`;
   }
 
+  private async respuesta(periodo: PeriodoTitulacion): Promise<PeriodoResponseDto> {
+    return periodoResponse(periodo, await this.academico.catalogo(this.dataSource));
+  }
+
   async update(
     id: string,
     dto: UpdatePeriodoDto,
@@ -214,6 +235,17 @@ export class PeriodosService {
             'Solo se pueden editar períodos en BORRADOR; en POSTULACION_CERRADA solo la fecha fin de postulación.',
           );
         }
+        if (dto.facultad_id !== undefined && dto.facultad_id !== current.facultad_id) {
+          await this.academico.buscarFacultad(this.dataSource, dto.facultad_id);
+          const rows = await manager.query(
+            `SELECT (SELECT count(*)::int FROM ${this.schema()}."tema" WHERE "periodo_id" = $1)
+                  + (SELECT count(*)::int FROM ${this.schema()}."estudiante_habilitado" WHERE "periodo_id" = $1) AS total`,
+            [id],
+          ) as Array<{ total: number }>;
+          if (Number(rows[0]?.total ?? 0) > 0) {
+            throw new ConflictException('No se puede cambiar la facultad: el período ya tiene temas o estudiantes habilitados.');
+          }
+        }
 
         const values = {
           ...(dto.codigo !== undefined ? { codigo: dto.codigo.trim() } : {}),
@@ -222,6 +254,7 @@ export class PeriodosService {
           ...(dto.max_integrantes_default !== undefined
             ? { max_integrantes_default: dto.max_integrantes_default }
             : {}),
+          ...(dto.facultad_id !== undefined ? { facultad_id: dto.facultad_id } : {}),
         };
         const next = { ...current, ...values };
         assertCalendar(
@@ -231,7 +264,7 @@ export class PeriodosService {
         );
         return repository.save(next);
       });
-      return responseFrom(periodo);
+      return await this.respuesta(periodo);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -245,37 +278,21 @@ export class PeriodosService {
   ): Promise<PeriodoResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const repository = manager.getRepository(PeriodoTitulacion);
-        const periodo = await repository.findOne({
-          where: { id },
-          lock: { mode: 'pessimistic_write' },
-        });
+        const periodo = await this.bloquear(manager, id);
         if (!periodo) throw new NotFoundException('No existe el período solicitado.');
         const previous = periodo.estado;
         const reopening = previous === PeriodoEstado.POSTULACION_CERRADA;
         if (previous !== PeriodoEstado.BORRADOR && !reopening) {
           throw new ConflictException('Solo se pueden abrir períodos en BORRADOR o reabrir períodos en POSTULACION_CERRADA.');
         }
-        const now = new Date();
-        if (now < periodo.fecha_inicio_postulacion || now >= periodo.fecha_fin_postulacion) {
+        if (!enPlazoPostulacion(periodo, new Date())) {
           throw new ConflictException(reopening
             ? 'La postulación solo puede reabrirse dentro de las fechas de postulación. Edita primero la fecha fin de postulación del período.'
             : 'El período solo puede abrirse dentro de las fechas de postulación.');
         }
 
         // Las postulaciones existentes se conservan al reabrir.
-        periodo.estado = PeriodoEstado.POSTULACION_ABIERTA;
-        const updated = await repository.save(periodo);
-        await this.auditoria.registrar(manager, {
-          actor,
-          accion: reopening ? 'REABRIR_POSTULACION' : 'ABRIR_POSTULACION',
-          entidad_tipo: 'periodo_titulacion',
-          entidad_id: periodo.id,
-          valores_anteriores: { estado: previous },
-          valores_nuevos: { estado: PeriodoEstado.POSTULACION_ABIERTA },
-          ip_origen: ip,
-        });
-        return responseFrom(updated);
+        return await this.respuesta(await this.aplicarApertura(manager, periodo, { actor, ip, automatico: false }));
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
@@ -290,35 +307,117 @@ export class PeriodosService {
   ): Promise<PeriodoResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const repository = manager.getRepository(PeriodoTitulacion);
-        const periodo = await repository.findOne({
-          where: { id },
-          lock: { mode: 'pessimistic_write' },
-        });
+        const periodo = await this.bloquear(manager, id);
         if (!periodo) throw new NotFoundException('No existe el período solicitado.');
         if (periodo.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
           throw new ConflictException('Solo se pueden cerrar períodos con postulaciones abiertas.');
         }
-        if (Date.now() < periodo.fecha_fin_postulacion.getTime()) {
+        if (!plazoPostulacionVencido(periodo, new Date())) {
           throw new ConflictException('El período solo puede cerrarse después de vencer el plazo de postulación.');
         }
 
-        periodo.estado = PeriodoEstado.POSTULACION_CERRADA;
-        const updated = await repository.save(periodo);
-        await this.auditoria.registrar(manager, {
-          actor,
-          accion: 'CERRAR_POSTULACION',
-          entidad_tipo: 'periodo_titulacion',
-          entidad_id: periodo.id,
-          valores_anteriores: { estado: PeriodoEstado.POSTULACION_ABIERTA },
-          valores_nuevos: { estado: PeriodoEstado.POSTULACION_CERRADA },
-          ip_origen: ip,
-        });
-        return responseFrom(updated);
+        return await this.respuesta(await this.aplicarCierre(manager, periodo, { actor, ip, automatico: false }));
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
+  }
+
+  /**
+   * Períodos que, según la hora indicada, deberían pasar automáticamente de BORRADOR a
+   * POSTULACION_ABIERTA o de POSTULACION_ABIERTA a POSTULACION_CERRADA. Es solo una preselección:
+   * cada transición vuelve a comprobar estado y fechas bajo bloqueo.
+   */
+  async candidatosTransicionAutomatica(now = new Date()): Promise<CandidatosTransicionAutomatica> {
+    const [aperturas, cierres] = await Promise.all([
+      this.repository.find({
+        select: { id: true },
+        where: {
+          estado: PeriodoEstado.BORRADOR,
+          fecha_inicio_postulacion: LessThanOrEqual(now),
+          fecha_fin_postulacion: MoreThan(now),
+        },
+        order: { fecha_inicio_postulacion: 'ASC', id: 'ASC' },
+      }),
+      this.repository.find({
+        select: { id: true },
+        where: { estado: PeriodoEstado.POSTULACION_ABIERTA, fecha_fin_postulacion: LessThanOrEqual(now) },
+        order: { fecha_fin_postulacion: 'ASC', id: 'ASC' },
+      }),
+    ]);
+    return { aperturas: aperturas.map((periodo) => periodo.id), cierres: cierres.map((periodo) => periodo.id) };
+  }
+
+  /**
+   * BORRADOR → POSTULACION_ABIERTA por fecha, sin actor. Idempotente: devuelve `false` sin
+   * cambios si, bajo bloqueo, el período ya no está en BORRADOR o está fuera del plazo. Nunca
+   * reabre POSTULACION_CERRADA; la reapertura sigue siendo manual.
+   */
+  async abrirPostulacionAutomatica(id: string): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const periodo = await this.bloquear(manager, id);
+      if (!periodo || periodo.estado !== PeriodoEstado.BORRADOR || !enPlazoPostulacion(periodo, new Date())) return false;
+      await this.aplicarApertura(manager, periodo, SISTEMA);
+      return true;
+    });
+  }
+
+  /**
+   * POSTULACION_ABIERTA → POSTULACION_CERRADA al vencer el plazo, sin actor. Idempotente:
+   * devuelve `false` sin cambios si, bajo bloqueo, ya no corresponde cerrar.
+   */
+  async cerrarPostulacionAutomatica(id: string): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const periodo = await this.bloquear(manager, id);
+      if (!periodo || periodo.estado !== PeriodoEstado.POSTULACION_ABIERTA || !plazoPostulacionVencido(periodo, new Date())) return false;
+      await this.aplicarCierre(manager, periodo, SISTEMA);
+      return true;
+    });
+  }
+
+  private bloquear(manager: EntityManager, id: string): Promise<PeriodoTitulacion | null> {
+    return manager.getRepository(PeriodoTitulacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+  }
+
+  /** Pasa a POSTULACION_ABIERTA y audita en la misma transacción; el llamador ya validó las reglas. */
+  private async aplicarApertura(
+    manager: EntityManager,
+    periodo: PeriodoTitulacion,
+    responsable: ResponsableTransicion,
+  ): Promise<PeriodoTitulacion> {
+    const previous = periodo.estado;
+    periodo.estado = PeriodoEstado.POSTULACION_ABIERTA;
+    const updated = await manager.getRepository(PeriodoTitulacion).save(periodo);
+    await this.auditoria.registrar(manager, {
+      actor: responsable.actor,
+      accion: previous === PeriodoEstado.POSTULACION_CERRADA ? 'REABRIR_POSTULACION' : 'ABRIR_POSTULACION',
+      entidad_tipo: 'periodo_titulacion',
+      entidad_id: periodo.id,
+      valores_anteriores: { estado: previous },
+      valores_nuevos: { estado: PeriodoEstado.POSTULACION_ABIERTA, ...(responsable.automatico ? { automatico: true } : {}) },
+      ip_origen: responsable.ip,
+    });
+    return updated;
+  }
+
+  /** Pasa a POSTULACION_CERRADA y audita en la misma transacción; el llamador ya validó las reglas. */
+  private async aplicarCierre(
+    manager: EntityManager,
+    periodo: PeriodoTitulacion,
+    responsable: ResponsableTransicion,
+  ): Promise<PeriodoTitulacion> {
+    periodo.estado = PeriodoEstado.POSTULACION_CERRADA;
+    const updated = await manager.getRepository(PeriodoTitulacion).save(periodo);
+    await this.auditoria.registrar(manager, {
+      actor: responsable.actor,
+      accion: 'CERRAR_POSTULACION',
+      entidad_tipo: 'periodo_titulacion',
+      entidad_id: periodo.id,
+      valores_anteriores: { estado: PeriodoEstado.POSTULACION_ABIERTA },
+      valores_nuevos: { estado: PeriodoEstado.POSTULACION_CERRADA, ...(responsable.automatico ? { automatico: true } : {}) },
+      ip_origen: responsable.ip,
+    });
+    return updated;
   }
 
   private handleDatabaseError(error: unknown): never {

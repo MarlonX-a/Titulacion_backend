@@ -9,6 +9,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import { AcademicoService } from '../academico/academico.service.js';
+import { resumenCatalogo, type CatalogoAcademico } from '../academico/catalogo-academico.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { EstudiantesService } from '../estudiantes/estudiantes.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -54,7 +56,7 @@ export interface PagedHabilitados {
  * resolución. Solo se usa en respuestas para ADMIN o para el propio estudiante; los
  * candidatos de invitación (vistos por otros estudiantes) no exponen esos datos.
  */
-function responseFrom(record: EstudianteHabilitado, detallado = true): HabilitadoResponseDto {
+function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico | null, detallado = true): HabilitadoResponseDto {
   const resuelto = record.resuelto_por;
   return {
     id: record.id,
@@ -68,7 +70,7 @@ function responseFrom(record: EstudianteHabilitado, detallado = true): Habilitad
       ...(detallado ? {
         email: record.estudiante.usuario.email,
         cedula: record.estudiante.cedula,
-        carrera: record.estudiante.carrera,
+        carrera: resumenCatalogo(catalogo?.carrera(record.estudiante.carrera_id), record.estudiante.carrera_id),
         nivel: record.estudiante.nivel,
       } : {}),
     },
@@ -103,7 +105,12 @@ export class HabilitadosService {
     private readonly notificaciones: NotificacionesPersistenciaService,
     private readonly postulaciones: PostulacionPersistenciaService,
     private readonly grupos: GrupoIntegrantePersistenciaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
+
+  private async respuesta(record: EstudianteHabilitado): Promise<HabilitadoResponseDto> {
+    return responseFrom(record, await this.academico.catalogo(this.dataSource));
+  }
 
   /** Comprueba y bloquea una habilitación para una operación de grupo dentro de la transacción actual. */
   async getEligibleStudentForGroup(
@@ -147,6 +154,7 @@ export class HabilitadosService {
           dto.estudiante_id,
           manager,
         );
+        await this.academico.assertCarreraEnFacultad(this.dataSource, estudiante.carrera_id, periodo.facultad_id);
         const now = new Date();
         const isRegular = dto.condicion_ingreso === CondicionIngreso.REGULAR;
         if (isRegular && dto.requisito_pendiente != null) {
@@ -169,7 +177,7 @@ export class HabilitadosService {
           });
           if (!current) throw new NotFoundException('No existe esa habilitación en el período indicado.');
           const requisito = isRegular ? null : dto.requisito_pendiente!.trim();
-          return responseFrom(await this.aplicarCondicion(manager, current, dto.condicion_ingreso, requisito, actor, ip, 'REACTIVAR_HABILITACION'));
+          return await this.respuesta(await this.aplicarCondicion(manager, current, dto.condicion_ingreso, requisito, actor, ip, 'REACTIVAR_HABILITACION'));
         }
         const record = await recordRepository.save(recordRepository.create({
           periodo,
@@ -194,7 +202,7 @@ export class HabilitadosService {
           estado: record.estado,
           requisito_pendiente: record.requisito_pendiente,
         }, ip_origen: ip });
-        return responseFrom(record);
+        return await this.respuesta(record);
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
@@ -209,13 +217,15 @@ export class HabilitadosService {
           ...(query.condicion_ingreso ? { condicion_ingreso: query.condicion_ingreso } : {}),
           ...(query.situacion_ingreso ? { situacion_ingreso: query.situacion_ingreso } : {}),
           ...(query.estado ? { estado: query.estado } : {}),
+          ...(query.carrera_id ? { estudiante: { carrera_id: query.carrera_id } } : {}),
         },
         relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
         order: { fecha_habilitacion: 'DESC', id: 'ASC' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
-      return { data: records.map((record) => responseFrom(record)), total, page: query.page, limit: query.limit };
+      const catalogo = await this.academico.catalogo(this.dataSource);
+      return { data: records.map((record) => responseFrom(record, catalogo)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -228,7 +238,7 @@ export class HabilitadosService {
         relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
       });
       if (!record) throw new NotFoundException('No existe esa habilitación en el período indicado.');
-      return responseFrom(record);
+      return await this.respuesta(record);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -262,7 +272,7 @@ export class HabilitadosService {
         .skip((query.page - 1) * query.limit)
         .take(query.limit)
         .getManyAndCount();
-      return { data: records.map((record) => responseFrom(record, false)), total, page: query.page, limit: query.limit };
+      return { data: records.map((record) => responseFrom(record, null, false)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -275,7 +285,7 @@ export class HabilitadosService {
         relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
       });
       if (!record) throw new NotFoundException('No tienes una habilitación en el período indicado.');
-      return responseFrom(record);
+      return await this.respuesta(record);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -337,7 +347,7 @@ export class HabilitadosService {
         } else {
           await this.notificaciones.ingreso(manager, record.id, actor.id);
         }
-        return responseFrom(updated);
+        return await this.respuesta(updated);
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
@@ -414,7 +424,7 @@ export class HabilitadosService {
           relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
         });
         if (!record) throw new NotFoundException('No existe esa habilitación en el período indicado.');
-        return responseFrom(await this.aplicarCondicion(manager, record, dto.condicion_ingreso, requisito, actor, ip, 'ACTUALIZAR_HABILITACION'));
+        return await this.respuesta(await this.aplicarCondicion(manager, record, dto.condicion_ingreso, requisito, actor, ip, 'ACTUALIZAR_HABILITACION'));
       });
     } catch (error: unknown) {
       if (isCode(error, '23514')) {

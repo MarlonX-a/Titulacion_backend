@@ -10,7 +10,7 @@ export async function buildStudentsTemplate(): Promise<Buffer> {
   sheet.getCell('A2').value = 'CARRERA <NOMBRE>';
   sheet.getCell('A1').font = { bold: true, size: 14 };
   sheet.getCell('A2').font = { bold: true };
-  sheet.getCell('A3').value = 'Reemplaza <NOMBRE> por la carrera. Registra los estudiantes desde la fila 7; ACADEMICO e INGLES aceptan SI o NO.';
+  sheet.getCell('A3').value = 'La carrera se elige al importar; la celda de carrera es solo informativa. Registra los estudiantes desde la fila 7; ACADEMICO e INGLES aceptan SI o NO.';
   sheet.getCell('A3').font = { italic: true };
   sheet.columns = [
     { key: 'numero', width: 6 },

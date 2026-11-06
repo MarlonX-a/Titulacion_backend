@@ -79,6 +79,7 @@ export class TemasController {
   @ApiOperation({ summary: 'Listar temas del período' })
   @ApiQuery({ name: 'page', required: false, type: Number, minimum: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, minimum: 1, maximum: 100 })
+  @ApiQuery({ name: 'carrera_id', required: false, type: String, format: 'uuid' })
   @ApiQuery({ name: 'linea_id', required: false, type: String })
   @ApiQuery({ name: 'docente_proponente_id', required: false, type: String })
   @ApiQuery({ name: 'estado', required: false, enum: ['BORRADOR', 'PUBLICADO', 'CERRADO', 'ASIGNADO', 'RETIRADO'] })

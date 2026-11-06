@@ -73,6 +73,7 @@ export class HabilitadosController {
   @ApiQuery({ name: 'condicion_ingreso', required: false, enum: ['REGULAR', 'CONDICIONADO'] })
   @ApiQuery({ name: 'situacion_ingreso', required: false, enum: ['PENDIENTE', 'ADMITIDO', 'NO_ADMITIDO'] })
   @ApiQuery({ name: 'estado', required: false, enum: ['HABILITADO', 'SUSPENDIDO'] })
+  @ApiQuery({ name: 'carrera_id', required: false, type: String, format: 'uuid' })
   @ApiOkResponse({ schema: {
     type: 'object',
     required: ['data', 'total', 'page', 'limit'],

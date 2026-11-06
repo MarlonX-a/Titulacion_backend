@@ -27,13 +27,13 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator.js';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CreateDocenteDto } from './dto/create-docente.dto.js';
 import { UpdateDocenteDto } from './dto/update-docente.dto.js';
 import { DocenteResponseDto } from './dto/docente-response.dto.js';
+import { ListDocentesQueryDto } from './dto/list-docentes-query.dto.js';
 import { DocentesService } from './docentes.service.js';
 
 @ApiTags('Docentes')
@@ -76,6 +76,7 @@ export class DocentesController {
     minimum: 1,
     maximum: 100,
   })
+  @ApiQuery({ name: 'carrera_id', required: false, type: String, format: 'uuid' })
   @ApiBadRequestResponse({ description: 'La paginación no es válida.' })
   @ApiOkResponse({
     schema: {
@@ -92,7 +93,7 @@ export class DocentesController {
       },
     },
   })
-  list(@Query() query: PaginationQueryDto) {
+  list(@Query() query: ListDocentesQueryDto) {
     return this.docentes.list(query);
   }
 
@@ -122,7 +123,7 @@ export class DocentesController {
   @ApiOperation({
     summary: 'Editar un docente',
     description:
-      'Edita nombres, apellidos y estado (ACTIVO/INACTIVO) de la cuenta, y cédula, título, departamento y habilitación para tutoría del perfil. El correo no es editable. INACTIVO revoca las sesiones vigentes y no altera tutorías ni asignaciones existentes.',
+      'Edita nombres, apellidos y estado (ACTIVO/INACTIVO) de la cuenta, y cédula, título, carrera y habilitación para tutoría del perfil. El correo no es editable. INACTIVO revoca las sesiones vigentes y no altera tutorías ni asignaciones existentes.',
   })
   @ApiOkResponse({ type: DocenteResponseDto })
   @ApiBadRequestResponse({ description: 'Cuerpo vacío, campos inválidos o intento de cambiar el correo.' })

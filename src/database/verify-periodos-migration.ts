@@ -14,6 +14,7 @@ import { CreateEstudianteDocente20261002010000 } from './migrations/202610020100
 import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { FACULTAD_VERIFICACION_ID } from './verify-academico.js';
 
 const schema = `test_periodos_${randomBytes(8).toString('hex')}`;
 let schemaCreated = false;
@@ -78,6 +79,7 @@ async function verify(): Promise<void> {
     fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
     fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
     max_integrantes_default: 5,
+    facultad_id: FACULTAD_VERIFICACION_ID,
   };
   const created = await service.create(periodData);
   if (

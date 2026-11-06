@@ -1,5 +1,6 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { construirCatalogo } from '../academico/catalogo-academico.js';
 import { ArchivoPeriodoService } from './archivo-periodo.service.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
@@ -23,7 +24,7 @@ function setup(estado: PeriodoEstado = PeriodoEstado.EN_CURSO, auditoriaFalla = 
   const fakeManager = { getRepository: (entity: unknown) => entity === Usuario ? userRepo : periodRepo };
   const dataSource = { transaction: vi.fn(async (_isolation: string, callback: (manager: typeof fakeManager) => Promise<unknown>) => callback(fakeManager)) };
   const auditoria = { registrar: vi.fn(async () => { if (auditoriaFalla) throw new Error('audit failed'); }) };
-  return { service: new ArchivoPeriodoService(dataSource as never, auditoria as never), actor, periodo, periodRepo, userRepo, dataSource, auditoria };
+  return { service: new ArchivoPeriodoService(dataSource as never, auditoria as never, { catalogo: async () => construirCatalogo([], []) } as never), actor, periodo, periodRepo, userRepo, dataSource, auditoria };
 }
 
 describe('ArchivoPeriodoService', () => {
@@ -35,6 +36,22 @@ describe('ArchivoPeriodoService', () => {
     expect(state.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       accion: 'ARCHIVAR_PERIODO',
       valores_nuevos: { estado: PeriodoEstado.ARCHIVADO, motivo: 'Cierre administrativo' },
+    }));
+  });
+
+  it.each([
+    PeriodoEstado.BORRADOR,
+    PeriodoEstado.POSTULACION_ABIERTA,
+    PeriodoEstado.POSTULACION_CERRADA,
+    PeriodoEstado.EN_CURSO,
+  ])('archiva desde %s y audita el estado anterior', async (estado) => {
+    const state = setup(estado);
+    const result = await state.service.archivar('periodo-id', { motivo: 'Cancelación' }, state.actor as never, null);
+    expect(result.estado).toBe(PeriodoEstado.ARCHIVADO);
+    expect(state.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      accion: 'ARCHIVAR_PERIODO',
+      valores_anteriores: { estado },
+      valores_nuevos: { estado: PeriodoEstado.ARCHIVADO, motivo: 'Cancelación' },
     }));
   });
 

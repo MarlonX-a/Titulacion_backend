@@ -13,7 +13,7 @@ import {
   type ValidatorConstraintInterface,
   type ValidationArguments,
 } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DocentePerfilOpcionalDto } from './docente-perfil-opcional.dto.js';
 
 function trimText(value: unknown): unknown {
@@ -69,6 +69,10 @@ export class CreateDocenteDto extends DocentePerfilOpcionalDto {
   @IsString({ message: 'apellidos debe ser texto.' })
   @Length(1, 100, { message: 'apellidos debe tener entre 1 y 100 caracteres.' })
   apellidos?: string;
+
+  @ApiProperty({ format: 'uuid', description: 'Carrera del catálogo a la que pertenece el docente.' })
+  @IsUUID()
+  carrera_id: string;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()

@@ -64,6 +64,7 @@ import { TemasService } from '../temas/temas.service.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 
 const schema = `test_postulaciones_${randomBytes(8).toString('hex')}`;
 const notifications = { invitacion: async () => undefined, postulacion: async () => undefined, asignacionTema: async () => undefined, tutor: async () => undefined, ingreso: async () => undefined } as unknown as NotificacionesPersistenciaService;
@@ -95,18 +96,18 @@ async function verify(): Promise<void> {
   const adminUser = await userRepo.save(userRepo.create({ email: 'admin@postulaciones.verify', nombres: 'Admin', apellidos: 'Verificador', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-admin', ultimo_acceso: null }));
   const teacherUser = await userRepo.save(userRepo.create({ email: 'docente@postulaciones.verify', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente', ultimo_acceso: null }));
   const teacherRepo = isolated.getRepository(Docente);
-  const teacher = await teacherRepo.save(teacherRepo.create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true }));
+  const teacher = await teacherRepo.save(teacherRepo.create({ usuario: teacherUser, cedula: '0102030400', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: true }));
   const secondTeacherUser = await userRepo.save(userRepo.create({ email: 'docente2@postulaciones.verify', nombres: 'Docente 2', apellidos: 'Alternativo', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente-2', ultimo_acceso: null }));
-  const secondTeacher = await teacherRepo.save(teacherRepo.create({ usuario: secondTeacherUser, cedula: '0102030400'.replace('0400', '0418'), titulo_academico: 'Doctor', departamento: 'Sistemas', habilitado_tutoria: true }));
+  const secondTeacher = await teacherRepo.save(teacherRepo.create({ usuario: secondTeacherUser, cedula: '0102030400'.replace('0400', '0418'), titulo_academico: 'Doctor', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: true }));
   const disabledTeacherUser = await userRepo.save(userRepo.create({ email: 'docente3@postulaciones.verify', nombres: 'Docente 3', apellidos: 'No habilitado', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'postulaciones-docente-3', ultimo_acceso: null }));
-  const disabledTeacher = await teacherRepo.save(teacherRepo.create({ usuario: disabledTeacherUser, cedula: '0102030426', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: false }));
+  const disabledTeacher = await teacherRepo.save(teacherRepo.create({ usuario: disabledTeacherUser, cedula: '0102030426', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: false }));
   const studentRepo = isolated.getRepository(Estudiante);
   const studentUsers: Usuario[] = [];
   const students: Estudiante[] = [];
   for (let index = 0; index < 5; index++) {
     const account = await userRepo.save(userRepo.create({ email: `estudiante${index}@postulaciones.verify`, nombres: `Estudiante ${index}`, apellidos: 'Verificación', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: `postulaciones-student-${index}`, ultimo_acceso: null }));
     studentUsers.push(account);
-    students.push(await studentRepo.save(studentRepo.create({ usuario: account, cedula: ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459'][index]!, matricula: `POST-${index}`, carrera: 'Sistemas', nivel: 8 })));
+    students.push(await studentRepo.save(studentRepo.create({ usuario: account, cedula: ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459'][index]!, matricula: `POST-${index}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 8 })));
   }
   const now = new Date();
   const periodRepo = isolated.getRepository(PeriodoTitulacion);

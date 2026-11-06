@@ -25,11 +25,4 @@ export abstract class DocentePerfilOpcionalDto {
   @IsString()
   @Length(1, 120)
   titulo_academico?: string | null;
-
-  @ApiPropertyOptional({ maxLength: 120, nullable: true })
-  @IsOptional()
-  @Transform(({ value }: { value: unknown }) => optionalText(value))
-  @IsString()
-  @Length(1, 120)
-  departamento?: string | null;
 }

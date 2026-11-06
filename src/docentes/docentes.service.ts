@@ -8,8 +8,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+import { AcademicoService } from '../academico/academico.service.js';
+import { resumenCatalogo, type CatalogoAcademico } from '../academico/catalogo-academico.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { UsuarioResumenDto } from '../common/dto/usuario-resumen.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
@@ -17,6 +19,7 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { UsuariosService } from '../usuarios/usuarios.service.js';
 import { CreateDocenteDto } from './dto/create-docente.dto.js';
 import { DocenteResponseDto } from './dto/docente-response.dto.js';
+import { ListDocentesQueryDto } from './dto/list-docentes-query.dto.js';
 import { UpdateDocenteDto } from './dto/update-docente.dto.js';
 import { Docente } from './entities/docente.entity.js';
 
@@ -34,14 +37,14 @@ export interface PagedDocentes {
 
 type CambiosCuenta = Partial<Pick<Usuario, 'nombres' | 'apellidos' | 'estado'>>;
 type CambiosPerfil = Partial<
-  Pick<Docente, 'cedula' | 'titulo_academico' | 'departamento' | 'habilitado_tutoria'>
+  Pick<Docente, 'cedula' | 'titulo_academico' | 'carrera_id' | 'habilitado_tutoria'>
 >;
 
 const CEDULA_DUPLICADA = 'La cédula ya está registrada en otro docente.';
 const EMAIL_DUPLICADO =
   'Ya existe una cuenta con ese correo; vincúlala con usuario_id.';
 
-function responseFrom(docente: Docente): DocenteResponseDto {
+function responseFrom(docente: Docente, catalogo: CatalogoAcademico): DocenteResponseDto {
   const usuario: UsuarioResumenDto = {
     id: docente.usuario.id,
     email: docente.usuario.email,
@@ -55,7 +58,8 @@ function responseFrom(docente: Docente): DocenteResponseDto {
     usuario,
     cedula: docente.cedula,
     titulo_academico: docente.titulo_academico,
-    departamento: docente.departamento,
+    carrera_id: docente.carrera_id,
+    carrera: resumenCatalogo(catalogo.carrera(docente.carrera_id), docente.carrera_id),
     habilitado_tutoria: docente.habilitado_tutoria,
   };
 }
@@ -74,7 +78,7 @@ function auditValues(docente: Docente, usuario: Usuario): Record<string, unknown
     estado: usuario.estado,
     cedula: docente.cedula,
     titulo_academico: docente.titulo_academico,
-    departamento: docente.departamento,
+    carrera_id: docente.carrera_id,
     habilitado_tutoria: docente.habilitado_tutoria,
   };
 }
@@ -95,9 +99,7 @@ function profileChanges(dto: UpdateDocenteDto, docente: Docente): CambiosPerfil 
   if (dto.titulo_academico !== undefined && dto.titulo_academico !== docente.titulo_academico) {
     changes.titulo_academico = dto.titulo_academico;
   }
-  if (dto.departamento !== undefined && dto.departamento !== docente.departamento) {
-    changes.departamento = dto.departamento;
-  }
+  if (dto.carrera_id !== undefined && dto.carrera_id !== docente.carrera_id) changes.carrera_id = dto.carrera_id;
   if (
     dto.habilitado_tutoria !== undefined &&
     dto.habilitado_tutoria !== docente.habilitado_tutoria
@@ -115,6 +117,7 @@ export class DocentesService {
     private readonly dataSource: DataSource,
     private readonly usuarios: UsuariosService,
     private readonly auditoria: AuditoriaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   /**
@@ -127,6 +130,7 @@ export class DocentesService {
     ip: string | null,
   ): Promise<DocenteResponseDto> {
     try {
+      await this.academico.buscarCarrera(this.dataSource, dto.carrera_id);
       const docente = await this.dataSource.transaction(async (manager) => {
         const docentes = manager.getRepository(Docente);
         const cedula = dto.cedula?.trim() || null;
@@ -141,7 +145,7 @@ export class DocentesService {
             usuario,
             cedula,
             titulo_academico: dto.titulo_academico?.trim() || null,
-            departamento: dto.departamento?.trim() || null,
+            carrera_id: dto.carrera_id,
             habilitado_tutoria: dto.habilitado_tutoria ?? false,
           }),
         );
@@ -156,7 +160,7 @@ export class DocentesService {
         });
         return saved;
       });
-      return responseFrom(docente);
+      return responseFrom(docente, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -182,6 +186,11 @@ export class DocentesService {
         const before = auditValues(docente, usuario);
         const cuenta = accountChanges(dto, usuario);
         const perfil = profileChanges(dto, docente);
+        if (perfil.carrera_id !== undefined) {
+          await this.academico.buscarCarrera(this.dataSource, perfil.carrera_id);
+          const rows = await manager.query(`SELECT count(*)::int AS total FROM ${this.schema(manager)}."tema" WHERE "docente_proponente_id" = $1`, [docente.id]) as Array<{ total: number }>;
+          if (Number(rows[0]?.total ?? 0) > 0) throw new ConflictException('No se puede cambiar la carrera: el docente es proponente de temas.');
+        }
         if (Object.keys(cuenta).length === 0 && Object.keys(perfil).length === 0) {
           return { ...docente, usuario };
         }
@@ -214,22 +223,24 @@ export class DocentesService {
         });
         return { ...docente, usuario };
       });
-      return responseFrom(updated);
+      return responseFrom(updated, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
   }
 
-  async list(query: PaginationQueryDto): Promise<PagedDocentes> {
+  async list(query: ListDocentesQueryDto): Promise<PagedDocentes> {
     try {
       const [docentes, total] = await this.repository.findAndCount({
+        where: query.carrera_id ? { carrera_id: query.carrera_id } : {},
         relations: { usuario: true },
         order: { id: 'ASC' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
+      const catalogo = await this.academico.catalogo(this.dataSource);
       return {
-        data: docentes.map(responseFrom),
+        data: docentes.map((docente) => responseFrom(docente, catalogo)),
         total,
         page: query.page,
         limit: query.limit,
@@ -248,7 +259,7 @@ export class DocentesService {
       if (!docente) {
         throw new NotFoundException('No existe el perfil de docente solicitado.');
       }
-      return responseFrom(docente);
+      return responseFrom(docente, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -263,7 +274,7 @@ export class DocentesService {
       if (!docente) {
         throw new NotFoundException('La cuenta aún no tiene perfil de docente.');
       }
-      return responseFrom(docente);
+      return responseFrom(docente, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -329,6 +340,12 @@ export class DocentesService {
       throw new ConflictException('La cuenta vinculada no tiene rol DOCENTE.');
     }
     return { docente, usuario };
+  }
+
+  private schema(manager: EntityManager): string {
+    const value = (manager.connection.options as PostgresConnectionOptions).schema ?? 'public';
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
+    return `"${value}"`;
   }
 
   private handleDatabaseError(error: unknown): never {

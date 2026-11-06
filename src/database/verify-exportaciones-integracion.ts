@@ -9,6 +9,7 @@ import { loadEnvironment } from '../config/load-environment.js';
 import type { AppEnvironment } from '../config/environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { catalogoSembrado } from './verify-academico.js';
 import { SolicitudExportacion } from '../exportaciones/entities/solicitud-exportacion.entity.js';
 import { ExportacionEstado } from '../exportaciones/enums/exportacion-estado.enum.js';
 import { ExportacionFormato } from '../exportaciones/enums/exportacion-formato.enum.js';
@@ -57,6 +58,7 @@ async function verify(): Promise<void> {
     email: `admin-${suffix}@verification.example`, nombres: 'Admin', apellidos: 'Integración',
     rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: `verify-${suffix}`, ultimo_acceso: null,
   }));
+  const { facultadId } = await catalogoSembrado(isolated, quoteSchema());
   const periodRepo = isolated.getRepository(PeriodoTitulacion);
   const period = await periodRepo.save(periodRepo.create({
     codigo: `VERIFY-${suffix.slice(0, 8)}`, nombre: 'Período de verificación de exportaciones',
@@ -64,6 +66,7 @@ async function verify(): Promise<void> {
     fecha_fin_postulacion: new Date(Date.now() - 3_600_000),
     fecha_inicio_titulacion: new Date(Date.now() + 86_400_000),
     max_integrantes_default: 4,
+    facultad_id: facultadId,
   }));
 
   step = 'conectar Redis y almacenamiento S3';

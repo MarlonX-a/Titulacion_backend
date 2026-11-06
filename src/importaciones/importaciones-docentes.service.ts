@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
 import type { AppEnvironment } from '../config/environment.js';
 import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.js';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -73,12 +74,14 @@ export class ImportacionesDocentesService {
     private readonly auditoria: AuditoriaService,
     config: ConfigService<AppEnvironment, true>,
     @InjectQueue('importaciones') private readonly queue: Queue,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
     this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
   }
 
-  async submit(actor: Usuario, originalName: string, buffer: Buffer, ip: string | null): Promise<{ id: string; estado: EstadoPreparacion }> {
+  async submit(actor: Usuario, originalName: string, buffer: Buffer, ip: string | null, carreraId: string): Promise<{ id: string; estado: EstadoPreparacion }> {
+    await this.academico.buscarCarrera(this.dataSource, carreraId);
     const filename = originalName.replaceAll('\\', '/').split('/').at(-1) ?? 'docentes.xlsx';
     const key = await this.storage.savePrivate(buffer, XLSX_MIME);
     let record: PreparacionImportacion;
@@ -86,7 +89,7 @@ export class ImportacionesDocentesService {
       record = await this.dataSource.transaction(async (manager) => {
         const repository = manager.getRepository(PreparacionImportacion);
         const created = await repository.save(repository.create({
-          periodo: null, tipo: LoteImportacionTipo.DOCENTES, solicitada_por: actor, lote: null,
+          periodo: null, tipo: LoteImportacionTipo.DOCENTES, carrera_id: carreraId, solicitada_por: actor, lote: null,
           nombre_archivo: filename.slice(0, 200), ruta_almacenamiento: key,
           sha256: createHash('sha256').update(buffer).digest('hex'),
           estado: EstadoPreparacion.VALIDANDO, total_filas: 0, filas: null, errores: null,
@@ -94,7 +97,7 @@ export class ImportacionesDocentesService {
         }));
         await this.auditoria.registrar(manager, {
           actor, accion: 'SOLICITAR_IMPORTACION_DOCENTES', entidad_tipo: 'preparacion_importacion', entidad_id: created.id,
-          valores_anteriores: null, valores_nuevos: { tipo: LoteImportacionTipo.DOCENTES, sha256: created.sha256, nombre_archivo: created.nombre_archivo }, ip_origen: ip,
+          valores_anteriores: null, valores_nuevos: { tipo: LoteImportacionTipo.DOCENTES, sha256: created.sha256, nombre_archivo: created.nombre_archivo, carrera_id: carreraId }, ip_origen: ip,
         });
         return created;
       });
@@ -110,11 +113,18 @@ export class ImportacionesDocentesService {
     const repository = this.dataSource.getRepository(PreparacionImportacion);
     const record = await repository.findOne({ where: { id, tipo: LoteImportacionTipo.DOCENTES } });
     if (!record || record.estado !== EstadoPreparacion.VALIDANDO || record.expira_en <= new Date()) return;
+    if (!record.carrera_id) {
+      record.estado = EstadoPreparacion.INVALIDA;
+      record.errores = [{ fila: 0, columna: 'carrera', mensaje: 'La importación no indica la carrera; vuelve a cargar el archivo.' }];
+      await repository.save(record);
+      return;
+    }
+    const carreraId = record.carrera_id;
     try {
       const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
       const parsed = await parseTeachersXlsx(buffer);
       if (parsed.sha256 !== record.sha256) throw new ConflictException('El archivo cambió desde que se envió a validar.');
-      const errors = [...parsed.errors, ...await this.validateExistingRows(parsed.rows)];
+      const errors = [...parsed.errors, ...await this.validateExistingRows(parsed.rows, carreraId)];
       record.total_filas = parsed.rows.length;
       record.filas = parsed.rows;
       record.errores = errors;
@@ -179,7 +189,7 @@ export class ImportacionesDocentesService {
       const wasImported = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
         const preparation = await manager.getRepository(PreparacionImportacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
         if (!preparation || preparation.estado !== EstadoPreparacion.EN_COLA) return false;
-        if ((await this.validateExistingRows(rows, manager)).length > 0) throw new ConflictException('Los datos cambiaron desde la vista previa; vuelve a validar el archivo.');
+        if (!preparation.carrera_id || (await this.validateExistingRows(rows, preparation.carrera_id, manager)).length > 0) throw new ConflictException('Los datos cambiaron desde la vista previa; vuelve a validar el archivo.');
         const now = new Date();
         const loteRepo = manager.getRepository(LoteImportacion);
         const lot = await loteRepo.save(loteRepo.create({
@@ -234,9 +244,9 @@ export class ImportacionesDocentesService {
       if (!user) user = await users.save(users.create({ email: row.email, nombres: row.nombres, apellidos: row.apellidos, rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: null, ultimo_acceso: null }));
       const profile = await teachers.findOne({ where: { usuario: { id: user.id } }, lock: { mode: 'pessimistic_write' } });
       if (!profile) {
-        const saved = await teachers.save(teachers.create({ usuario: user, cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: row.habilitado_tutoria }));
+        const saved = await teachers.save(teachers.create({ usuario: user, cedula: null, titulo_academico: null, carrera_id: record.carrera_id!, habilitado_tutoria: row.habilitado_tutoria }));
         counts.creados += 1;
-        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_DOCENTE', entidad_tipo: 'docente', entidad_id: saved.id, valores_anteriores: null, valores_nuevos: { usuario_id: user.id, email: user.email, nombres: user.nombres, apellidos: user.apellidos, tipo: row.tipo, habilitado_tutoria: saved.habilitado_tutoria, preparacion_id: record.id }, ip_origen: record.ip_origen });
+        await this.auditoria.registrar(manager, { actor: record.solicitada_por, accion: 'IMPORTAR_DOCENTE', entidad_tipo: 'docente', entidad_id: saved.id, valores_anteriores: null, valores_nuevos: { usuario_id: user.id, email: user.email, nombres: user.nombres, apellidos: user.apellidos, tipo: row.tipo, habilitado_tutoria: saved.habilitado_tutoria, carrera_id: saved.carrera_id, preparacion_id: record.id }, ip_origen: record.ip_origen });
       } else if (profile.habilitado_tutoria !== row.habilitado_tutoria) {
         const before = profile.habilitado_tutoria;
         await teachers.update({ id: profile.id }, { habilitado_tutoria: row.habilitado_tutoria });
@@ -258,11 +268,14 @@ export class ImportacionesDocentesService {
 
   /**
    * Un correo generado que pertenece a una cuenta con otro rol, a una cuenta inactiva o a un
-   * docente con otro nombre (sin importar mayúsculas, espacios ni tildes) es un error por fila.
+   * docente con otro nombre (sin importar mayúsculas, espacios ni tildes) es un error por fila. Un
+   * docente existente de otra carrera también: la importación no cambia su carrera.
    */
-  private async validateExistingRows(rows: DocenteExcelRow[], manager: EntityManager = this.dataSource.manager): Promise<ExcelRowError[]> {
+  private async validateExistingRows(rows: DocenteExcelRow[], carreraId: string, manager: EntityManager = this.dataSource.manager): Promise<ExcelRowError[]> {
     const errors: ExcelRowError[] = [];
     const userRepo = manager.getRepository(Usuario);
+    const teacherRepo = manager.getRepository(Docente);
+    const catalogo = await this.academico.catalogo(this.dataSource);
     for (const row of rows) {
       const account = await userRepo.findOne({ where: { email: row.email } });
       if (!account) continue;
@@ -272,6 +285,11 @@ export class ImportacionesDocentesService {
         errors.push({ fila: row.fila, columna: 'DOCENTES', mensaje: `El correo generado (${row.email}) pertenece a una cuenta inactiva; requiere revisión administrativa.` });
       } else if (normalizeExcelText(`${account.nombres} ${account.apellidos}`) !== normalizeExcelText(`${row.nombres} ${row.apellidos}`)) {
         errors.push({ fila: row.fila, columna: 'DOCENTES', mensaje: `El correo generado (${row.email}) ya pertenece a otro docente (${account.nombres} ${account.apellidos}); requiere revisión administrativa.` });
+      } else {
+        const profile = await teacherRepo.findOne({ where: { usuario: { id: account.id } } });
+        if (profile && profile.carrera_id !== carreraId) {
+          errors.push({ fila: row.fila, columna: 'DOCENTES', mensaje: `El docente ya pertenece a la carrera «${catalogo.carrera(profile.carrera_id)?.nombre ?? profile.carrera_id}»; no se cambia desde la importación.` });
+        }
       }
     }
     return errors;

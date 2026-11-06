@@ -44,6 +44,11 @@ import {
   credencialTestRecords,
   correoTestRecords,
   sesionRevocationsTestRecords,
+  FACULTAD_PRUEBA,
+  CARRERA_PRUEBA,
+  CARRERA_PRUEBA_ID,
+  CARRERA_OTRA_FACULTAD_ID,
+  FACULTAD_PRUEBA_ID,
 } from './database-testing.module.js';
 
 describe('Usuarios (e2e)', () => {
@@ -176,6 +181,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: new Date(Date.now() + 7 * day).toISOString(),
         fecha_fin_postulacion: new Date(Date.now() + 30 * day).toISOString(),
         fecha_inicio_titulacion: new Date(Date.now() + 31 * day).toISOString(),
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: 5,
       })
       .expect(201);
@@ -190,7 +196,7 @@ describe('Usuarios (e2e)', () => {
       rol: UsuarioRol.ESTUDIANTE,
     });
     const profile = await authenticated('post', '/estudiantes', 'admin-sub')
-      .send({ usuario_id: account.id, cedula, matricula, carrera: 'Sistemas', nivel: 5 })
+      .send({ usuario_id: account.id, cedula, matricula, carrera_id: CARRERA_PRUEBA_ID, nivel: 5 })
       .expect(201);
     return { account, profile };
   }
@@ -401,7 +407,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: student.id,
         cedula: '0102030400',
         matricula: '  000123  ',
-        carrera: '  Sistemas  ',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 5,
       })
       .expect(201);
@@ -414,7 +420,8 @@ describe('Usuarios (e2e)', () => {
       },
       cedula: '0102030400',
       matricula: '000123',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_PRUEBA_ID,
+      carrera: CARRERA_PRUEBA,
       nivel: 5,
     });
     expect(studentProfile.body.usuario).not.toHaveProperty('id_externo_sso');
@@ -428,7 +435,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: teacher.id,
         cedula: '3002030405',
         titulo_academico: 'Magíster',
-        departamento: 'Ciencias',
+        carrera_id: CARRERA_PRUEBA_ID,
       })
       .expect(201);
     expect(teacherProfile.body.habilitado_tutoria).toBe(false);
@@ -476,7 +483,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: student.id,
         cedula: '0102030400',
         matricula: '1001',
-        carrera: 'Sistemas',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 1,
       })
       .expect(201);
@@ -485,7 +492,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: otherStudent.id,
         cedula: '0102030418',
         matricula: '1002',
-        carrera: 'Sistemas',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 2,
       })
       .expect(201);
@@ -494,7 +501,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: teacher.id,
         cedula: '3002030405',
         titulo_academico: 'Magíster',
-        departamento: 'Ciencias',
+        carrera_id: CARRERA_PRUEBA_ID,
         habilitado_tutoria: true,
       })
       .expect(201);
@@ -536,7 +543,7 @@ describe('Usuarios (e2e)', () => {
       usuario_id: student.id,
       cedula: '0102030400',
       matricula: '2001',
-      carrera: 'Sistemas',
+      carrera_id: CARRERA_PRUEBA_ID,
       nivel: 1,
     };
     await authenticated('post', '/estudiantes', 'admin-sub')
@@ -553,7 +560,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: student.id,
         cedula: '3002030405',
         titulo_academico: 'Magíster',
-        departamento: 'Ciencias',
+        carrera_id: CARRERA_PRUEBA_ID,
       })
       .expect(409);
     await authenticated('post', '/estudiantes', 'admin-sub')
@@ -575,7 +582,7 @@ describe('Usuarios (e2e)', () => {
         usuario_id: 'not-a-uuid',
         cedula: '0102030400',
         matricula: '1',
-        carrera: 'Sistemas',
+        carrera_id: CARRERA_PRUEBA_ID,
         nivel: 1,
         estado: 'ACTIVO',
       })
@@ -598,6 +605,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
         fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
         fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: '5',
       })
       .expect(201);
@@ -609,6 +617,8 @@ describe('Usuarios (e2e)', () => {
       fecha_fin_postulacion: '2026-12-01T04:59:00.000Z',
       fecha_inicio_titulacion: '2026-12-01T13:00:00.000Z',
       max_integrantes_default: 5,
+      facultad_id: FACULTAD_PRUEBA_ID,
+      facultad: FACULTAD_PRUEBA,
       estado: PeriodoEstado.BORRADOR,
     });
   });
@@ -621,6 +631,7 @@ describe('Usuarios (e2e)', () => {
       fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
       fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
       fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+      facultad_id: FACULTAD_PRUEBA_ID,
       max_integrantes_default: 5,
     };
 
@@ -662,6 +673,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
         fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
         fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: 4,
       })
       .expect(201);
@@ -711,6 +723,7 @@ describe('Usuarios (e2e)', () => {
       fecha_inicio_postulacion: start,
       fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
       fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+      facultad_id: FACULTAD_PRUEBA_ID,
       max_integrantes_default: 5,
     });
     await authenticated('post', '/periodos', 'admin-sub')
@@ -757,6 +770,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
         fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
         fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: 5,
       })
       .expect(201);
@@ -1030,19 +1044,19 @@ describe('Usuarios (e2e)', () => {
   it('administra temas en borrador, filtra por docente y conserva historial', async () => {
     addAdmin();
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
-    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'IA', nombre: 'Inteligencia artificial' }).expect(201);
     const period = await createPeriod('TEMAS-1');
     const path = `/periodos/${period.body.id}/temas`;
     const created = await authenticated('post', path, 'admin-sub').send({
-      linea_id: line.body.id,
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id,
       docente_proponente_id: teacherProfile.body.id,
       titulo: '  Sistema de recomendación  ',
       descripcion: '  Descripción del tema  ',
       min_integrantes: 1,
       max_integrantes: 3,
     }).expect(201);
-    expect(created.body).toMatchObject({ estado: 'BORRADOR', titulo: 'Sistema de recomendación', descripcion: 'Descripción del tema', min_integrantes: 1, max_integrantes: 3, linea: { id: line.body.id }, docente_proponente: { id: teacherProfile.body.id, nombres: 'Docente' } });
+    expect(created.body).toMatchObject({ carrera_id: CARRERA_PRUEBA_ID, carrera: CARRERA_PRUEBA, estado: 'BORRADOR', titulo: 'Sistema de recomendación', descripcion: 'Descripción del tema', min_integrantes: 1, max_integrantes: 3, linea: { id: line.body.id }, docente_proponente: { id: teacherProfile.body.id, nombres: 'Docente' } });
     expect(created.body).not.toHaveProperty('docente_proponente.usuario');
 
     await authenticated('get', path, 'docente-sub').expect(200).then((response) => {
@@ -1060,25 +1074,27 @@ describe('Usuarios (e2e)', () => {
     await authenticated('get', `${path}/${created.body.id}/historial`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(2));
 
     await authenticated('post', path, 'admin-sub').send({ ...created.body, id: created.body.id, estado: 'PUBLICADO' }).expect(400);
-    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Inválido', descripcion: 'Inválido', min_integrantes: 3, max_integrantes: 2 }).expect(400);
-    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Número como texto', descripcion: 'Inválido', min_integrantes: '1', max_integrantes: 2 }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Inválido', descripcion: 'Inválido', min_integrantes: 3, max_integrantes: 2 }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_OTRA_FACULTAD_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Otra facultad', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(400)
+      .then((r) => expect(r.body.message).toContain('no pertenece a la facultad'));
+    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Número como texto', descripcion: 'Inválido', min_integrantes: '1', max_integrantes: 2 }).expect(400);
     await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({}).expect(400);
     await authenticated('get', `${path}/${created.body.id}/historial`, 'docente-sub').expect(403);
     await authenticated('get', path, 'student-sub').expect(403);
     await authenticated('patch', `${path}/${created.body.id}`, 'docente-sub').send({ titulo: 'No autorizado' }).expect(403);
     await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: false }).expect(200);
-    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Línea inactiva', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
+    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Línea inactiva', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
     await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: true }).expect(200);
     const inactiveTeacher = addUsuarioTestRecord({ id_externo_sso: 'bootstrap-sub', email: 'inactivo@universidad.edu', nombres: 'Docente', apellidos: 'Inactivo', rol: UsuarioRol.DOCENTE });
-    const inactiveTeacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: inactiveTeacher.id, cedula: '0102030418', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const inactiveTeacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: inactiveTeacher.id, cedula: '0102030418', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     inactiveTeacher.estado = UsuarioEstado.INACTIVO;
-    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: inactiveTeacherProfile.body.id, titulo: 'Docente inactivo', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
-    await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: '00000000-0000-4000-8000-000000000001', titulo: 'Docente inexistente', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(404);
+    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: inactiveTeacherProfile.body.id, titulo: 'Docente inactivo', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
+    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: '00000000-0000-4000-8000-000000000001', titulo: 'Docente inexistente', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(404);
 
     const oldRefsUser = addUsuarioTestRecord({ id_externo_sso: 'other-student-sub', email: 'referencia-anterior@universidad.edu', nombres: 'Docente', apellidos: 'Anterior', rol: UsuarioRol.DOCENTE });
-    const oldRefsTeacher = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: oldRefsUser.id, cedula: '0102030400', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const oldRefsTeacher = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: oldRefsUser.id, cedula: '0102030400', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const replacementLine = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'IA2', nombre: 'Inteligencia artificial aplicada' }).expect(201);
-    const referencesTopic = await authenticated('post', path, 'admin-sub').send({ linea_id: line.body.id, docente_proponente_id: oldRefsTeacher.body.id, titulo: 'Cambio conjunto de referencias', descripcion: 'Tema de prueba', min_integrantes: 1, max_integrantes: 2 }).expect(201);
+    const referencesTopic = await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: oldRefsTeacher.body.id, titulo: 'Cambio conjunto de referencias', descripcion: 'Tema de prueba', min_integrantes: 1, max_integrantes: 2 }).expect(201);
     await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: false }).expect(200);
     oldRefsUser.estado = UsuarioEstado.INACTIVO;
     await authenticated('patch', `${path}/${referencesTopic.body.id}`, 'admin-sub').send({ linea_id: replacementLine.body.id, docente_proponente_id: teacherProfile.body.id }).expect(200);
@@ -1108,7 +1124,7 @@ describe('Usuarios (e2e)', () => {
     const studentNotAdmitted = await createStudentProfile('bootstrap-sub', '0102030426', 'CAT-1003');
     const studentSuspended = await createStudentProfile('inactive-sub', '0102030434', 'CAT-1004');
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
-    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'CAT-IA', nombre: 'Inteligencia artificial' }).expect(201);
     const period = await createPeriod('CATALOGO-1');
     const start = new Date(Date.now() - 60_000);
@@ -1139,7 +1155,7 @@ describe('Usuarios (e2e)', () => {
     suspendedRecord.estado = HabilitadoEstado.SUSPENDIDO;
     const themesPath = `/periodos/${period.body.id}/temas`;
     const tema = await authenticated('post', themesPath, 'admin-sub').send({
-      linea_id: line.body.id,
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id,
       docente_proponente_id: teacherProfile.body.id,
       titulo: 'Tema de catálogo',
       descripcion: 'Descripción de catálogo',
@@ -1169,7 +1185,7 @@ describe('Usuarios (e2e)', () => {
     await authenticated('get', `${themesPath}?estado=BORRADOR`, 'student-sub').expect(403);
     await authenticated('get', `${themesPath}/${tema.body.id}`, 'student-sub').expect(200);
     const draftAfterOpening = await authenticated('post', themesPath, 'admin-sub').send({
-      linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
       titulo: 'Borrador todavía oculto', descripcion: 'Tema no publicado', min_integrantes: 1, max_integrantes: 2,
     }).expect(201);
     await authenticated('get', `${themesPath}/${draftAfterOpening.body.id}`, 'student-sub').expect(404);
@@ -1195,7 +1211,7 @@ describe('Usuarios (e2e)', () => {
   it('rechaza abrir fuera del plazo y rechaza publicaciones y escrituras luego del vencimiento', async () => {
     addAdmin();
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
-    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'CAT-IA', nombre: 'Inteligencia artificial' }).expect(201);
     const period = await createPeriod('CATALOGO-FUERA-PLAZO');
     await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
@@ -1209,20 +1225,20 @@ describe('Usuarios (e2e)', () => {
     }).expect(200);
     await authenticated('post', `/periodos/${expiredPeriod.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
     const tema = await authenticated('post', `/periodos/${period.body.id}/temas`, 'admin-sub').send({
-      linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Tema', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 2,
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Tema', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 2,
     }).expect(201);
     setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_ABIERTA);
     setPeriodoTestFechas(period.body.id, new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 1_000));
     await authenticated('patch', `/periodos/${period.body.id}/temas/${tema.body.id}`, 'admin-sub').send({ titulo: 'Editado' }).expect(409);
     await authenticated('post', `/periodos/${period.body.id}/temas`, 'admin-sub').send({
-      linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Fuera de plazo', descripcion: 'No debe crearse', min_integrantes: 1, max_integrantes: 2,
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Fuera de plazo', descripcion: 'No debe crearse', min_integrantes: 1, max_integrantes: 2,
     }).expect(409);
     await authenticated('post', `/periodos/${period.body.id}/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
   });
 
   async function createOpenTopic(code: string) {
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
-    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', departamento: 'Sistemas' }).expect(201);
+    const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: `${code}-L`, nombre: 'Línea de prueba' }).expect(201);
     const period = await createPeriod(code);
     const start = new Date(Date.now() - 60_000);
@@ -1234,7 +1250,7 @@ describe('Usuarios (e2e)', () => {
     }).expect(200);
     const themesPath = `/periodos/${period.body.id}/temas`;
     const topic = await authenticated('post', themesPath, 'admin-sub').send({
-      linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
       titulo: 'Tema administrable', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 3,
     }).expect(201);
     return { period, themesPath, topic };
@@ -1469,11 +1485,11 @@ describe('Usuarios (e2e)', () => {
   it('crea cuenta DOCENTE, credencial temporal, correo de acceso y perfil en una sola operación', async () => {
     addAdmin();
     const response = await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: ' Nuevo.Docente@ULEAM.edu.ec ', nombres: ' Rosa ', apellidos: 'Mera', cedula: '1316661675', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: true })
+      .send({ email: ' Nuevo.Docente@ULEAM.edu.ec ', nombres: ' Rosa ', apellidos: 'Mera', cedula: '1316661675', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID, habilitado_tutoria: true })
       .expect(201);
     expect(response.body).toMatchObject({
       usuario: { email: 'nuevo.docente@uleam.edu.ec', nombres: 'Rosa', apellidos: 'Mera', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO },
-      cedula: '1316661675', habilitado_tutoria: true,
+      cedula: '1316661675', habilitado_tutoria: true, carrera_id: CARRERA_PRUEBA_ID, carrera: CARRERA_PRUEBA,
     });
     const usuarioId = response.body.usuario.id as string;
     expect(credencialTestRecords().find((item) => item.usuario_id === usuarioId)?.requiere_cambio).toBe(true);
@@ -1483,32 +1499,32 @@ describe('Usuarios (e2e)', () => {
 
     // correo o cédula repetidos: 409 claro y sin cuenta huérfana
     await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: 'nuevo.docente@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .send({ email: 'nuevo.docente@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '0102030400', titulo_academico: 'Ing.', carrera_id: CARRERA_PRUEBA_ID })
       .expect(409).then((r) => expect(r.body.message).toContain('correo'));
     await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: 'otro@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '1316661675', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .send({ email: 'otro@uleam.edu.ec', nombres: 'Otra', apellidos: 'Persona', cedula: '1316661675', titulo_academico: 'Ing.', carrera_id: CARRERA_PRUEBA_ID })
       .expect(409).then((r) => expect(r.body.message).toContain('cédula'));
     await authenticated('get', '/usuarios?limit=100', 'admin-sub').expect(200)
       .then((r) => expect(r.body.data.map((u: { email: string }) => u.email)).not.toContain('otro@uleam.edu.ec'));
   });
 
-  it('crea docentes sin cédula, título ni departamento y permite vaciarlos al editar', async () => {
+  it('crea docentes sin cédula ni título, con su carrera, y permite vaciarlos al editar', async () => {
     addAdmin();
     const first = await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: 'sin.cedula@live.uleam.edu.ec', nombres: 'Edison', apellidos: 'Almeida' })
+      .send({ email: 'sin.cedula@live.uleam.edu.ec', nombres: 'Edison', apellidos: 'Almeida', carrera_id: CARRERA_PRUEBA_ID })
       .expect(201);
-    expect(first.body).toMatchObject({ cedula: null, titulo_academico: null, departamento: null, habilitado_tutoria: false });
+    expect(first.body).toMatchObject({ cedula: null, titulo_academico: null, carrera_id: CARRERA_PRUEBA_ID, carrera: CARRERA_PRUEBA, habilitado_tutoria: false });
     await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: 'otro.sin.cedula@live.uleam.edu.ec', nombres: 'Cesar', apellidos: 'Cedeño', cedula: '', titulo_academico: ' ' })
+      .send({ email: 'otro.sin.cedula@live.uleam.edu.ec', nombres: 'Cesar', apellidos: 'Cedeño', cedula: '', titulo_academico: ' ', carrera_id: CARRERA_PRUEBA_ID })
       .expect(201).then((r) => expect(r.body).toMatchObject({ cedula: null, titulo_academico: null }));
-    await authenticated('patch', `/docentes/${first.body.id as string}`, 'admin-sub').send({ cedula: '1316661675', departamento: 'Sistemas' }).expect(200);
-    const cleared = await authenticated('patch', `/docentes/${first.body.id as string}`, 'admin-sub').send({ cedula: null, departamento: '' }).expect(200);
-    expect(cleared.body).toMatchObject({ cedula: null, departamento: null });
+    await authenticated('patch', `/docentes/${first.body.id as string}`, 'admin-sub').send({ cedula: '1316661675', titulo_academico: 'Magíster' }).expect(200);
+    const cleared = await authenticated('patch', `/docentes/${first.body.id as string}`, 'admin-sub').send({ cedula: null, titulo_academico: '' }).expect(200);
+    expect(cleared.body).toMatchObject({ cedula: null, titulo_academico: null, carrera: CARRERA_PRUEBA });
   });
 
   it('rechaza altas de docente con dominio inválido, datos incompletos o mezcla de usuario_id y cuenta', async () => {
     addAdmin();
-    const base = { cedula: '1316661675', titulo_academico: 'Magíster', departamento: 'Sistemas' };
+    const base = { cedula: '1316661675', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID };
     await authenticated('post', '/docentes', 'admin-sub').send({ ...base, email: 'd@gmail.com', nombres: 'A', apellidos: 'B' }).expect(400);
     await authenticated('post', '/docentes', 'admin-sub').send({ ...base, email: 'd@uleam.edu.ec', nombres: 'A' }).expect(400);
     await authenticated('post', '/docentes', 'admin-sub').send(base).expect(400);
@@ -1521,10 +1537,10 @@ describe('Usuarios (e2e)', () => {
   it('ADMIN edita un docente con auditoría, rechaza el correo y revoca sesiones al desactivarlo', async () => {
     addAdmin();
     const created = await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: 'editable@uleam.edu.ec', nombres: 'Luis', apellidos: 'Vera', cedula: '1316661675', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .send({ email: 'editable@uleam.edu.ec', nombres: 'Luis', apellidos: 'Vera', cedula: '1316661675', titulo_academico: 'Ing.', carrera_id: CARRERA_PRUEBA_ID })
       .expect(201);
     const other = await authenticated('post', '/docentes', 'admin-sub')
-      .send({ email: 'otro.docente@uleam.edu.ec', nombres: 'Ana', apellidos: 'Loor', cedula: '0102030400', titulo_academico: 'Ing.', departamento: 'Sistemas' })
+      .send({ email: 'otro.docente@uleam.edu.ec', nombres: 'Ana', apellidos: 'Loor', cedula: '0102030400', titulo_academico: 'Ing.', carrera_id: CARRERA_PRUEBA_ID })
       .expect(201);
     const id = created.body.id as string;
 

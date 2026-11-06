@@ -8,11 +8,17 @@ import { InicioTitulacionService } from '../periodos/inicio-titulacion.service.j
 import type { HabilitadosService } from '../habilitados/habilitados.service.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { Carrera } from '../academico/entities/carrera.entity.js';
+import { Facultad } from '../academico/entities/facultad.entity.js';
 import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
 import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
 import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
 import { CreateHabilitados20261002030000 } from './migrations/20261002030000-CreateHabilitados.js';
+import { CreateLineaInvestigacion20261002040000 } from './migrations/20261002040000-CreateLineaInvestigacion.js';
+import { CreateTemas20261002050000 } from './migrations/20261002050000-CreateTemas.js';
+import { CreateImportPreparation20261006110000 } from './migrations/20261006110000-CreateImportPreparation.js';
 import { StartPeriodoTitulacion20261016000000 } from './migrations/20261016000000-StartPeriodoTitulacion.js';
+import { FacultadCarrera20261105110000 } from './migrations/20261105110000-FacultadCarrera.js';
 
 const schema = `test_inicio_titulacion_${randomBytes(8).toString('hex')}`;
 let adminDataSource: DatabaseDataSource | undefined;
@@ -44,8 +50,9 @@ async function expectCheckFailure(query: string, params: unknown[] = []): Promis
 async function createPeriod(codeValue: string, state: string, start = new Date(Date.now() - 60_000)): Promise<string> {
   const rows = await isolatedDataSource!.query(`
     INSERT INTO ${identifier()}."periodo_titulacion"
-      ("codigo", "nombre", "fecha_inicio_postulacion", "fecha_fin_postulacion", "fecha_inicio_titulacion", "estado", "max_integrantes_default")
-    VALUES ($1, 'Período de verificación', now() - interval '2 days', now() - interval '1 day', $2, $3, 5)
+      ("codigo", "nombre", "fecha_inicio_postulacion", "fecha_fin_postulacion", "fecha_inicio_titulacion", "estado", "max_integrantes_default", "facultad_id")
+    VALUES ($1, 'Período de verificación', now() - interval '2 days', now() - interval '1 day', $2, $3, 5,
+      (SELECT "id" FROM ${identifier()}."facultad" ORDER BY "codigo" LIMIT 1))
     RETURNING "id"
   `, [codeValue, start, state]) as Array<{ id: string }>;
   return rows[0].id;
@@ -57,8 +64,8 @@ async function createStudent(index: number): Promise<string> {
     VALUES ($1, $2, 'Verificación', 'ESTUDIANTE', $3) RETURNING "id"
   `, [`student${index}@verification.example`, `Estudiante ${index}`, `verify-student-${index}`]) as Array<{ id: string }>;
   const students = await isolatedDataSource!.query(`
-    INSERT INTO ${identifier()}."estudiante" ("usuario_id", "cedula", "matricula", "carrera", "nivel")
-    VALUES ($1, $2, $3, 'Sistemas', 5) RETURNING "id"
+    INSERT INTO ${identifier()}."estudiante" ("usuario_id", "cedula", "matricula", "carrera_id", "nivel")
+    VALUES ($1, $2, $3, (SELECT "id" FROM ${identifier()}."carrera" ORDER BY "codigo" LIMIT 1), 5) RETURNING "id"
   `, [users[0].id, `01020304${String(index).padStart(2, '0')}`, `VERIFY-${index}`]) as Array<{ id: string }>;
   return students[0].id;
 }
@@ -81,12 +88,17 @@ async function verify(): Promise<void> {
   isolatedDataSource = new DatabaseDataSource({
     ...options,
     schema,
-    entities: [PeriodoTitulacion, Usuario],
+    entities: [PeriodoTitulacion, Usuario, Facultad, Carrera],
     migrations: [
       CreateUsuario20261002000000,
       CreateEstudianteDocente20261002010000,
       CreatePeriodoTitulacion20261002020000,
       CreateHabilitados20261002030000,
+      // El catálogo (facultad_id, carrera_id) altera tema y preparacion_importacion: se instalan para aplicarlo.
+      CreateLineaInvestigacion20261002040000,
+      CreateTemas20261002050000,
+      CreateImportPreparation20261006110000,
+      FacultadCarrera20261105110000,
     ],
   });
   await isolatedDataSource.initialize();
@@ -146,7 +158,7 @@ async function verify(): Promise<void> {
 
   const futurePeriod = await createPeriod('FUTURE-BLOCK', 'POSTULACION_CERRADA', new Date(Date.now() + 60_000));
   await expectCheckFailure(`UPDATE ${identifier()}."periodo_titulacion" SET "estado" = 'EN_CURSO' WHERE "id" = $1`, [futurePeriod]);
-  await expectCheckFailure(`INSERT INTO ${identifier()}."periodo_titulacion" ("codigo", "nombre", "fecha_inicio_postulacion", "fecha_fin_postulacion", "fecha_inicio_titulacion", "estado", "max_integrantes_default") VALUES ('DIRECT-INSERT', 'Inválido', now() - interval '2 days', now() - interval '1 day', now() - interval '1 hour', 'EN_CURSO', 5)`);
+  await expectCheckFailure(`INSERT INTO ${identifier()}."periodo_titulacion" ("codigo", "nombre", "fecha_inicio_postulacion", "fecha_fin_postulacion", "fecha_inicio_titulacion", "estado", "max_integrantes_default", "facultad_id") VALUES ('DIRECT-INSERT', 'Inválido', now() - interval '2 days', now() - interval '1 day', now() - interval '1 hour', 'EN_CURSO', 5, (SELECT "id" FROM ${identifier()}."facultad" ORDER BY "codigo" LIMIT 1))`);
 
   const admittedAdmin = adminRows[0].id;
   await isolatedDataSource.query(`

@@ -7,6 +7,7 @@ import { ArchivoPeriodoService } from '../periodos/archivo-periodo.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { ArchivePeriodo20261018100000 } from './migrations/20261018100000-ArchivePeriodo.js';
+import { ArchivePeriodoDesdeCualquierEstado20261029100000 } from './migrations/20261029100000-ArchivePeriodoDesdeCualquierEstado.js';
 
 const schema = `test_archive_${randomBytes(8).toString('hex')}`;
 const q = `"${schema}"`;
@@ -29,9 +30,13 @@ async function expectCheckFailure(action: () => Promise<unknown>): Promise<void>
   throw new Error('PostgreSQL permitió una escritura que debía rechazar.');
 }
 
+async function insertPeriod(id: string, codeValue: string, state: string): Promise<void> {
+  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default","facultad_id") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4,(SELECT "id" FROM ${q}."facultad" ORDER BY "codigo" LIMIT 1))`, [id, codeValue, state]);
+}
+
 async function addPeriod(id: string, codeValue: string, state: string): Promise<void> {
   const initial = state === 'EN_CURSO' || state === 'ARCHIVADO' ? 'POSTULACION_CERRADA' : state;
-  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4)`, [id, codeValue, initial]);
+  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default","facultad_id") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4,(SELECT "id" FROM ${q}."facultad" ORDER BY "codigo" LIMIT 1))`, [id, codeValue, initial]);
   if (state !== initial) await db!.query(`UPDATE ${q}."periodo_titulacion" SET "estado"=$2 WHERE "id"=$1`, [id, state]);
 }
 
@@ -54,10 +59,21 @@ async function verify(): Promise<void> {
   const actor = await db.getRepository(Usuario).findOneByOrFail({ id: actorId });
 
   step = 'transiciones directas y terminalidad PostgreSQL';
-  await expectCheckFailure(() => addPeriod(uuid(), 'ARCHIVE-DIRECT', 'ARCHIVADO'));
-  const invalidTransitionId = uuid();
-  await addPeriod(invalidTransitionId, 'ARCHIVE-INVALID', 'POSTULACION_CERRADA');
-  await expectCheckFailure(() => db!.query(`UPDATE ${q}."periodo_titulacion" SET "estado"='ARCHIVADO' WHERE "id"=$1`, [invalidTransitionId]));
+  await expectCheckFailure(() => insertPeriod(uuid(), 'ARCHIVE-DIRECT', 'ARCHIVADO'));
+  for (const [origin, codeValue] of [['BORRADOR', 'ARCHIVE-D-BORR'], ['POSTULACION_ABIERTA', 'ARCHIVE-D-ABIE'], ['POSTULACION_CERRADA', 'ARCHIVE-D-CERR']] as const) {
+    const directId = uuid();
+    await addPeriod(directId, codeValue, origin);
+    await db.query(`UPDATE ${q}."periodo_titulacion" SET "estado"='ARCHIVADO' WHERE "id"=$1`, [directId]);
+    await expectCheckFailure(() => db!.query(`UPDATE ${q}."periodo_titulacion" SET "estado"=$2 WHERE "id"=$1`, [directId, origin]));
+  }
+
+  step = 'archivo desde BORRADOR mediante el servicio';
+  const draftId = uuid();
+  await addPeriod(draftId, 'ARCHIVE-DRAFT-SVC', 'BORRADOR');
+  const archivedDraft = await service.archivar(draftId, { motivo: 'Período cancelado' }, actor, null);
+  if (archivedDraft.estado !== 'ARCHIVADO') throw new Error('El servicio no archivó un período BORRADOR.');
+  const draftAudit = await db.query(`SELECT "valores_anteriores" FROM ${q}."auditoria" WHERE "entidad_id"=$1 AND "accion"='ARCHIVAR_PERIODO'`, [draftId]) as Array<{ valores_anteriores: { estado?: string } | null }>;
+  if (draftAudit.length !== 1 || draftAudit[0]?.valores_anteriores?.estado !== 'BORRADOR') throw new Error('La auditoría no conservó el estado anterior BORRADOR.');
 
   step = 'archivo atómico con auditoría';
   const archived = await service.archivar(activeId, { motivo: 'Verificación de archivo' }, actor, null);
@@ -92,7 +108,11 @@ async function verify(): Promise<void> {
   step = 'reversión sin pérdida de datos';
   const before = await db.query(`SELECT count(*)::int AS total FROM ${q}."periodo_titulacion"`) as Array<{ total: number }>;
   const runner = db.createQueryRunner(); await runner.connect(); await runner.startTransaction();
-  try { await new ArchivePeriodo20261018100000().down(runner); await runner.commitTransaction(); }
+  try {
+    await new ArchivePeriodoDesdeCualquierEstado20261029100000().down(runner);
+    await new ArchivePeriodo20261018100000().down(runner);
+    await runner.commitTransaction();
+  }
   catch (error: unknown) { await runner.rollbackTransaction(); throw error; }
   finally { await runner.release(); }
   const after = await db.query(`SELECT count(*)::int AS total FROM ${q}."periodo_titulacion"`) as Array<{ total: number }>;

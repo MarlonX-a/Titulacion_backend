@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { DataSource, EntityManager, QueryFailedError } from 'typeorm';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { HabilitadosService } from '../habilitados/habilitados.service.js';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
@@ -15,6 +16,7 @@ import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
+import { periodoResponse } from './periodo-response.mapper.js';
 
 const OBSERVACION_SUSPENSION_INICIO = 'Requisito no resuelto antes del inicio de titulación.';
 
@@ -31,25 +33,13 @@ function schemaOf(manager: EntityManager): string {
   return `"${value}"`;
 }
 
-function responseFrom(periodo: PeriodoTitulacion): PeriodoResponseDto {
-  return {
-    id: periodo.id,
-    codigo: periodo.codigo,
-    nombre: periodo.nombre,
-    fecha_inicio_postulacion: periodo.fecha_inicio_postulacion,
-    fecha_fin_postulacion: periodo.fecha_fin_postulacion,
-    fecha_inicio_titulacion: periodo.fecha_inicio_titulacion,
-    estado: periodo.estado,
-    max_integrantes_default: periodo.max_integrantes_default,
-  };
-}
-
 @Injectable()
 export class InicioTitulacionService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
     private readonly habilitados: HabilitadosService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   async iniciar(
@@ -150,7 +140,7 @@ export class InicioTitulacionService {
         });
         return updated;
       });
-      return responseFrom(periodo);
+      return periodoResponse(periodo, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       if (error instanceof HttpException) throw error;
       if (isCode(error, '40001') || isCode(error, '40P01')) {

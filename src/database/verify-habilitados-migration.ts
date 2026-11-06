@@ -37,6 +37,7 @@ import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-C
 import { CreateAsignacionesTema20261002110000 } from './migrations/20261002110000-CreateAsignacionesTema.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 
 const schema = `test_habilitados_${randomBytes(8).toString('hex')}`;
 const notifications = { invitacion: async () => undefined, postulacion: async () => undefined, asignacionTema: async () => undefined, tutor: async () => undefined, ingreso: async () => undefined } as unknown as NotificacionesPersistenciaService;
@@ -99,7 +100,7 @@ async function verify(): Promise<void> {
       id_externo_sso: `verify-student-${index}`, ultimo_acceso: null,
     }));
     studentProfiles.push(await students.save(students.create({
-      usuario: user, cedula, matricula: `VERIFY-${index}`, carrera: 'Sistemas', nivel: 5,
+      usuario: user, cedula, matricula: `VERIFY-${index}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 5,
     })));
   }
 

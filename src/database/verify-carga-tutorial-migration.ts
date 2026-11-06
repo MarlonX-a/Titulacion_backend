@@ -21,6 +21,7 @@ import { DesactivarConfigCargaTutorial20261020100000 } from './migrations/202610
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
+import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
 
 const schema = `test_carga_${randomBytes(8).toString('hex')}`;
 let schemaCreated = false;
@@ -63,7 +64,7 @@ async function verify(): Promise<void> {
     rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'verify-docente', ultimo_acceso: null,
   }));
   const teacher = await isolated.getRepository(Docente).save(isolated.getRepository(Docente).create({
-    usuario: teacherUser, cedula: '0102030405', titulo_academico: 'Magíster', departamento: 'Sistemas', habilitado_tutoria: false,
+    usuario: teacherUser, cedula: '0102030405', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: false,
   }));
   const periodRepo = isolated.getRepository(PeriodoTitulacion);
   const period = await periodRepo.save(periodRepo.create({

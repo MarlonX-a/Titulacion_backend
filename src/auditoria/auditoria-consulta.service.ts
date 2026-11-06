@@ -14,11 +14,11 @@ interface AuditoriaRow {
   valores_nuevos: Record<string, unknown> | null;
   ip_origen: string | null;
   fecha_hora: Date;
-  actor_id: string;
-  actor_email: string;
-  actor_nombres: string;
-  actor_apellidos: string;
-  actor_rol: UsuarioRol;
+  actor_id: string | null;
+  actor_email: string | null;
+  actor_nombres: string | null;
+  actor_apellidos: string | null;
+  actor_rol: UsuarioRol | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -82,7 +82,8 @@ export class AuditoriaConsultaService {
 
     const s = this.schema();
     const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
-    const from = `FROM ${s}."auditoria" a JOIN ${s}."usuario" u ON u."id" = a."usuario_id"${where}`;
+    // LEFT JOIN: las transiciones automáticas del sistema no tienen usuario responsable.
+    const from = `FROM ${s}."auditoria" a LEFT JOIN ${s}."usuario" u ON u."id" = a."usuario_id"${where}`;
     try {
       const counted = await this.dataSource.query(`SELECT count(*)::int AS total ${from}`, params) as Array<{ total: number | string }>;
       const rows = await this.dataSource.query(
@@ -106,7 +107,9 @@ export class AuditoriaConsultaService {
 function toResponse(row: AuditoriaRow): AuditoriaResponseDto {
   return {
     id: String(row.id),
-    actor: { id: row.actor_id, email: row.actor_email, nombres: row.actor_nombres, apellidos: row.actor_apellidos, rol: row.actor_rol },
+    actor: row.actor_id === null
+      ? null
+      : { id: row.actor_id, email: row.actor_email ?? '', nombres: row.actor_nombres ?? '', apellidos: row.actor_apellidos ?? '', rol: row.actor_rol as UsuarioRol },
     accion: row.accion,
     entidad_tipo: row.entidad_tipo,
     entidad_id: row.entidad_id,
