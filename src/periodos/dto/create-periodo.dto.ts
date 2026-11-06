@@ -1,6 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsString, Length, Max, Min } from 'class-validator';
+import { IsInt, IsString, IsUUID, Length, Max, Min } from 'class-validator';
 import { FechasPeriodoDto } from './fechas-periodo.dto.js';
 
 function trimText(value: unknown): unknown {
@@ -19,6 +19,10 @@ export class CreatePeriodoDto extends FechasPeriodoDto {
   @IsString()
   @Length(1, 120)
   nombre: string;
+
+  @ApiProperty({ format: 'uuid', description: 'Facultad a la que pertenece el período.' })
+  @IsUUID()
+  facultad_id: string;
 
   @ApiProperty({ minimum: 1, maximum: 32767, type: Number })
   @Type(() => Number)

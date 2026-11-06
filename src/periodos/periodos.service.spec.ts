@@ -1,28 +1,44 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PeriodosService } from './periodos.service.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
+import { AcademicoService } from '../academico/academico.service.js';
+import { construirCatalogo } from '../academico/catalogo-academico.js';
 
 const NOW = new Date('2026-05-10T12:00:00Z');
 
-function setup(estado: PeriodoEstado, fechas: { inicio: string; fin: string } = { inicio: '2026-05-01T00:00:00Z', fin: '2026-05-20T00:00:00Z' }) {
+const CATALOGO = construirCatalogo(
+  [{ id: 'fac-1', codigo: 'FAC_1', nombre: 'Facultad Uno' }, { id: 'fac-2', codigo: 'FAC_2', nombre: 'Facultad Dos' }],
+  [],
+);
+
+function setup(estado: PeriodoEstado, fechas: { inicio: string; fin: string } = { inicio: '2026-05-01T00:00:00Z', fin: '2026-05-20T00:00:00Z' }, ocupados = 0) {
   const periodo = {
     id: 'periodo-id', codigo: '2026-1', nombre: 'Período de prueba',
     fecha_inicio_postulacion: new Date(fechas.inicio),
     fecha_fin_postulacion: new Date(fechas.fin),
     fecha_inicio_titulacion: new Date('2026-06-01T00:00:00Z'),
-    max_integrantes_default: 3, estado,
+    max_integrantes_default: 3, estado, facultad_id: 'fac-1',
   };
   const txRepo = {
     findOne: vi.fn(async () => periodo),
     save: vi.fn(async (value: typeof periodo) => ({ ...value })),
   };
-  const manager = { getRepository: () => txRepo };
-  const dataSource = { transaction: vi.fn(async (callback: (tx: typeof manager) => Promise<unknown>) => callback(manager)) };
-  const repository = { find: vi.fn(async () => [] as Array<{ id: string }>) };
+  const manager = { getRepository: () => txRepo, query: vi.fn(async () => [{ total: ocupados }]) };
+  const dataSource = {
+    options: { schema: 'titulacion_dev' },
+    transaction: vi.fn(async (callback: (tx: typeof manager) => Promise<unknown>) => callback(manager)),
+  };
+  const repository = {
+    find: vi.fn(async () => [] as Array<{ id: string }>),
+    create: vi.fn((value: object) => value),
+    save: vi.fn(async (value: object) => ({ id: 'nuevo-id', estado: PeriodoEstado.BORRADOR, ...value })),
+  };
   const auditoria = { registrar: vi.fn(async () => undefined) };
-  const service = new PeriodosService(repository as never, dataSource as never, auditoria as never);
-  return { service, periodo, txRepo, repository, auditoria, dataSource };
+  const academico = new AcademicoService();
+  vi.spyOn(academico, 'catalogo').mockResolvedValue(CATALOGO);
+  const service = new PeriodosService(repository as never, dataSource as never, auditoria as never, academico);
+  return { service, periodo, txRepo, repository, auditoria, dataSource, manager };
 }
 
 describe('PeriodosService transiciones de postulación', () => {
@@ -113,5 +129,49 @@ describe('PeriodosService transiciones de postulación', () => {
     const [aperturas, cierres] = state.repository.find.mock.calls as unknown as Array<[{ where: Record<string, unknown> }]>;
     expect(aperturas[0].where.estado).toBe(PeriodoEstado.BORRADOR);
     expect(cierres[0].where.estado).toBe(PeriodoEstado.POSTULACION_ABIERTA);
+  });
+});
+
+describe('PeriodosService facultad', () => {
+  const dto = {
+    codigo: '2027-1', nombre: 'Período', facultad_id: 'fac-2', max_integrantes_default: 3,
+    fecha_inicio_postulacion: '2027-01-01T08:00:00-05:00', fecha_fin_postulacion: '2027-01-20T08:00:00-05:00', fecha_inicio_titulacion: '2027-02-01T08:00:00-05:00',
+  };
+
+  it('crea el período con su facultad y la expone en la respuesta', async () => {
+    const state = setup(PeriodoEstado.BORRADOR);
+    const created = await state.service.create(dto as never);
+    expect(state.repository.create).toHaveBeenCalledWith(expect.objectContaining({ facultad_id: 'fac-2' }));
+    expect(created).toMatchObject({ facultad_id: 'fac-2', facultad: { id: 'fac-2', nombre: 'Facultad Dos' } });
+  });
+
+  it('rechaza una facultad inexistente con 400 sin guardar', async () => {
+    const state = setup(PeriodoEstado.BORRADOR);
+    await expect(state.service.create({ ...dto, facultad_id: 'otra' } as never)).rejects.toBeInstanceOf(BadRequestException);
+    expect(state.repository.save).not.toHaveBeenCalled();
+  });
+
+  it('cambia la facultad de un BORRADOR sin temas ni habilitaciones', async () => {
+    const state = setup(PeriodoEstado.BORRADOR);
+    const result = await state.service.update('periodo-id', { facultad_id: 'fac-2' } as never);
+    expect(state.txRepo.save).toHaveBeenCalledWith(expect.objectContaining({ facultad_id: 'fac-2' }));
+    expect(result.facultad).toEqual({ id: 'fac-2', nombre: 'Facultad Dos' });
+  });
+
+  it('impide cambiar la facultad si el período ya tiene temas o habilitaciones', async () => {
+    const state = setup(PeriodoEstado.BORRADOR, undefined, 2);
+    await expect(state.service.update('periodo-id', { facultad_id: 'fac-2' } as never)).rejects.toThrow('No se puede cambiar la facultad: el período ya tiene temas o estudiantes habilitados.');
+    expect(state.txRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('en POSTULACION_CERRADA acepta repetir la facultad y rechaza cambiarla', async () => {
+    const cerrado = setup(PeriodoEstado.POSTULACION_CERRADA);
+    await expect(cerrado.service.update('periodo-id', { facultad_id: 'fac-1', fecha_fin_postulacion: '2026-05-25T00:00:00Z' } as never)).resolves.toMatchObject({ facultad_id: 'fac-1' });
+    await expect(setup(PeriodoEstado.POSTULACION_CERRADA).service.update('periodo-id', { facultad_id: 'fac-2' } as never)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rechaza editar la facultad en POSTULACION_ABIERTA', async () => {
+    const state = setup(PeriodoEstado.POSTULACION_ABIERTA);
+    await expect(state.service.update('periodo-id', { facultad_id: 'fac-2' } as never)).rejects.toBeInstanceOf(ConflictException);
   });
 });

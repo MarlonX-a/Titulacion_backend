@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PeriodoEstado } from '../enums/periodo-estado.enum.js';
+import { FacultadResumenDto } from '../../academico/dto/resumen-academico.dto.js';
 
 export class PeriodoResponseDto {
   @ApiProperty({ format: 'uuid' })
@@ -25,6 +26,12 @@ export class PeriodoResponseDto {
 
   @ApiProperty({ minimum: 1, maximum: 32767 })
   max_integrantes_default: number;
+
+  @ApiProperty({ format: 'uuid' })
+  facultad_id: string;
+
+  @ApiProperty({ type: () => FacultadResumenDto })
+  facultad: FacultadResumenDto;
 
   @ApiPropertyOptional({
     minimum: 0,

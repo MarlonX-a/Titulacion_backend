@@ -38,7 +38,7 @@ async function verify(): Promise<void> {
   const userId = '00000000-0000-4000-8000-000000000001';
   const periodId = '00000000-0000-4000-8000-000000000002';
   await db.query(`INSERT INTO ${s}."usuario" ("id","email","nombres","apellidos","rol","estado","id_externo_sso") VALUES ($1,'verificador@uleam.edu.ec','Verificador','Importación','ADMIN','ACTIVO',NULL)`, [userId]);
-  await db.query(`INSERT INTO ${s}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default") VALUES ($1,'VERIFY','Verificación','2026-01-01','2026-02-01','2026-02-01','BORRADOR',3)`, [periodId]);
+  await db.query(`INSERT INTO ${s}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default","facultad_id") VALUES ($1,'VERIFY','Verificación','2026-01-01','2026-02-01','2026-02-01','BORRADOR',3,(SELECT "id" FROM ${s}."facultad" ORDER BY "codigo" LIMIT 1))`, [periodId]);
   const insert = (tipo: string | null, periodo: string | null) => db.query(
     `INSERT INTO ${s}."preparacion_importacion" ("periodo_id","solicitada_por_id","nombre_archivo","ruta_almacenamiento","sha256","estado","expira_en"${tipo ? ',"tipo"' : ''}) VALUES ($1,$2,'a.xlsx','clave',repeat('a',64),'VALIDANDO',now() + interval '1 hour'${tipo ? ',$3' : ''})`,
     tipo ? [periodo, userId, tipo] : [periodo, userId],

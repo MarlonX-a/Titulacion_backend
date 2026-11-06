@@ -1,8 +1,10 @@
-import { Check, Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Facultad } from '../../academico/entities/facultad.entity.js';
 import { PeriodoEstado } from '../enums/periodo-estado.enum.js';
 
 @Entity({ name: 'periodo_titulacion' })
 @Index('UQ_periodo_titulacion_codigo', ['codigo'], { unique: true })
+@Index('IDX_periodo_titulacion_facultad', ['facultad_id'])
 @Check(
   'CHK_periodo_titulacion_inicio_fin_postulacion',
   '"fecha_fin_postulacion" > "fecha_inicio_postulacion"',
@@ -43,4 +45,11 @@ export class PeriodoTitulacion {
 
   @Column({ type: 'smallint', name: 'max_integrantes_default' })
   max_integrantes_default: number;
+
+  @Column({ type: 'uuid', name: 'facultad_id' })
+  facultad_id: string;
+
+  @ManyToOne(() => Facultad, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'facultad_id', foreignKeyConstraintName: 'FK_periodo_titulacion_facultad' })
+  facultad?: Facultad;
 }

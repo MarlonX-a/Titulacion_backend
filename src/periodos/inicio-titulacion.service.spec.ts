@@ -1,5 +1,6 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { construirCatalogo } from '../academico/catalogo-academico.js';
 import { HabilitadoEstado } from '../habilitados/enums/habilitado-estado.enum.js';
 import { SituacionIngreso } from '../habilitados/enums/situacion-ingreso.enum.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
@@ -30,7 +31,7 @@ function setup(estado = PeriodoEstado.POSTULACION_CERRADA, pending: Array<{ id: 
   const dataSource = { transaction: vi.fn(async (_level: string, callback: (m: typeof manager) => Promise<unknown>) => callback(manager)) };
   const auditoria = { registrar: vi.fn(async (_manager: unknown, entry: { accion: string }) => { calls.push(`audit:${entry.accion}`); }) };
   const habilitados = { aplicarNoAdmision: vi.fn(async (_manager: unknown, habilitacion: { id: string }) => { calls.push(`no-admision:${habilitacion.id}`); }) };
-  const service = new InicioTitulacionService(dataSource as never, auditoria as never, habilitados as never);
+  const service = new InicioTitulacionService(dataSource as never, auditoria as never, habilitados as never, { catalogo: async () => construirCatalogo([], []) } as never);
   return { service, calls, query, auditoria, dataSource, habilitados, repository };
 }
 

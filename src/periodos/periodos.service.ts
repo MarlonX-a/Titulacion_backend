@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, LessThanOrEqual, MoreThan, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -18,6 +19,7 @@ import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
+import { periodoResponse } from './periodo-response.mapper.js';
 
 interface PostgresDriverError {
   code?: string;
@@ -28,19 +30,6 @@ export interface PagedPeriodos {
   total: number;
   page: number;
   limit: number;
-}
-
-function responseFrom(periodo: PeriodoTitulacion): PeriodoResponseDto {
-  return {
-    id: periodo.id,
-    codigo: periodo.codigo,
-    nombre: periodo.nombre,
-    fecha_inicio_postulacion: periodo.fecha_inicio_postulacion,
-    fecha_fin_postulacion: periodo.fecha_fin_postulacion,
-    fecha_inicio_titulacion: periodo.fecha_inicio_titulacion,
-    estado: periodo.estado,
-    max_integrantes_default: periodo.max_integrantes_default,
-  };
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -114,6 +103,7 @@ function assertOnlyEndDateChanges(current: PeriodoTitulacion, dto: UpdatePeriodo
     (dto.codigo === undefined || dto.codigo.trim() === current.codigo) &&
     (dto.nombre === undefined || dto.nombre.trim() === current.nombre) &&
     (dto.max_integrantes_default === undefined || dto.max_integrantes_default === current.max_integrantes_default) &&
+    (dto.facultad_id === undefined || dto.facultad_id === current.facultad_id) &&
     sameDate(dto.fecha_inicio_postulacion, current.fecha_inicio_postulacion) &&
     sameDate(dto.fecha_inicio_titulacion, current.fecha_inicio_titulacion);
   if (!unchanged) {
@@ -130,6 +120,7 @@ export class PeriodosService {
     private readonly repository: Repository<PeriodoTitulacion>,
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   async create(dto: CreatePeriodoDto): Promise<PeriodoResponseDto> {
@@ -139,6 +130,7 @@ export class PeriodosService {
       dates.fecha_fin_postulacion!,
       dates.fecha_inicio_titulacion!,
     );
+    await this.academico.buscarFacultad(this.dataSource, dto.facultad_id);
 
     try {
       const periodo = await this.repository.save(
@@ -148,9 +140,10 @@ export class PeriodosService {
           ...dates,
           estado: PeriodoEstado.BORRADOR,
           max_integrantes_default: dto.max_integrantes_default,
+          facultad_id: dto.facultad_id,
         }),
       );
-      return responseFrom(periodo);
+      return await this.respuesta(periodo);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -166,8 +159,9 @@ export class PeriodosService {
       const pendientes = incluirCondicionados
         ? await this.contarCondicionadosPendientes(periodos.map((periodo) => periodo.id))
         : null;
+      const catalogo = await this.academico.catalogo(this.dataSource);
       return {
-        data: periodos.map((periodo) => this.withPendientes(responseFrom(periodo), pendientes)),
+        data: periodos.map((periodo) => this.withPendientes(periodoResponse(periodo, catalogo), pendientes)),
         total,
         page: query.page,
         limit: query.limit,
@@ -184,7 +178,7 @@ export class PeriodosService {
         throw new NotFoundException('No existe el período solicitado.');
       }
       const pendientes = incluirCondicionados ? await this.contarCondicionadosPendientes([periodo.id]) : null;
-      return this.withPendientes(responseFrom(periodo), pendientes);
+      return this.withPendientes(await this.respuesta(periodo), pendientes);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -212,6 +206,10 @@ export class PeriodosService {
     return `"${value}"`;
   }
 
+  private async respuesta(periodo: PeriodoTitulacion): Promise<PeriodoResponseDto> {
+    return periodoResponse(periodo, await this.academico.catalogo(this.dataSource));
+  }
+
   async update(
     id: string,
     dto: UpdatePeriodoDto,
@@ -237,6 +235,17 @@ export class PeriodosService {
             'Solo se pueden editar períodos en BORRADOR; en POSTULACION_CERRADA solo la fecha fin de postulación.',
           );
         }
+        if (dto.facultad_id !== undefined && dto.facultad_id !== current.facultad_id) {
+          await this.academico.buscarFacultad(this.dataSource, dto.facultad_id);
+          const rows = await manager.query(
+            `SELECT (SELECT count(*)::int FROM ${this.schema()}."tema" WHERE "periodo_id" = $1)
+                  + (SELECT count(*)::int FROM ${this.schema()}."estudiante_habilitado" WHERE "periodo_id" = $1) AS total`,
+            [id],
+          ) as Array<{ total: number }>;
+          if (Number(rows[0]?.total ?? 0) > 0) {
+            throw new ConflictException('No se puede cambiar la facultad: el período ya tiene temas o estudiantes habilitados.');
+          }
+        }
 
         const values = {
           ...(dto.codigo !== undefined ? { codigo: dto.codigo.trim() } : {}),
@@ -245,6 +254,7 @@ export class PeriodosService {
           ...(dto.max_integrantes_default !== undefined
             ? { max_integrantes_default: dto.max_integrantes_default }
             : {}),
+          ...(dto.facultad_id !== undefined ? { facultad_id: dto.facultad_id } : {}),
         };
         const next = { ...current, ...values };
         assertCalendar(
@@ -254,7 +264,7 @@ export class PeriodosService {
         );
         return repository.save(next);
       });
-      return responseFrom(periodo);
+      return await this.respuesta(periodo);
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -282,7 +292,7 @@ export class PeriodosService {
         }
 
         // Las postulaciones existentes se conservan al reabrir.
-        return responseFrom(await this.aplicarApertura(manager, periodo, { actor, ip, automatico: false }));
+        return await this.respuesta(await this.aplicarApertura(manager, periodo, { actor, ip, automatico: false }));
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
@@ -306,7 +316,7 @@ export class PeriodosService {
           throw new ConflictException('El período solo puede cerrarse después de vencer el plazo de postulación.');
         }
 
-        return responseFrom(await this.aplicarCierre(manager, periodo, { actor, ip, automatico: false }));
+        return await this.respuesta(await this.aplicarCierre(manager, periodo, { actor, ip, automatico: false }));
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);

@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { DataSource, QueryFailedError } from 'typeorm';
+import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
@@ -14,21 +15,9 @@ import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import type { ArchivarPeriodoDto } from './dto/archivar-periodo.dto.js';
 import type { PeriodoResponseDto } from './dto/periodo-response.dto.js';
+import { periodoResponse } from './periodo-response.mapper.js';
 
 interface PostgresError { code?: string }
-
-function responseFrom(periodo: PeriodoTitulacion): PeriodoResponseDto {
-  return {
-    id: periodo.id,
-    codigo: periodo.codigo,
-    nombre: periodo.nombre,
-    fecha_inicio_postulacion: periodo.fecha_inicio_postulacion,
-    fecha_fin_postulacion: periodo.fecha_fin_postulacion,
-    fecha_inicio_titulacion: periodo.fecha_inicio_titulacion,
-    estado: periodo.estado,
-    max_integrantes_default: periodo.max_integrantes_default,
-  };
-}
 
 function postgresCode(error: unknown): string | undefined {
   return error instanceof QueryFailedError
@@ -41,6 +30,7 @@ export class ArchivoPeriodoService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
+    private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
   async archivar(
@@ -83,7 +73,7 @@ export class ArchivoPeriodoService {
         });
         return updated;
       });
-      return responseFrom(periodo);
+      return periodoResponse(periodo, await this.academico.catalogo(this.dataSource));
     } catch (error: unknown) {
       if (error instanceof HttpException) throw error;
       if (postgresCode(error) === '40001' || postgresCode(error) === '40P01') {

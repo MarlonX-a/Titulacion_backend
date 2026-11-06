@@ -31,12 +31,12 @@ async function expectCheckFailure(action: () => Promise<unknown>): Promise<void>
 }
 
 async function insertPeriod(id: string, codeValue: string, state: string): Promise<void> {
-  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4)`, [id, codeValue, state]);
+  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default","facultad_id") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4,(SELECT "id" FROM ${q}."facultad" ORDER BY "codigo" LIMIT 1))`, [id, codeValue, state]);
 }
 
 async function addPeriod(id: string, codeValue: string, state: string): Promise<void> {
   const initial = state === 'EN_CURSO' || state === 'ARCHIVADO' ? 'POSTULACION_CERRADA' : state;
-  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4)`, [id, codeValue, initial]);
+  await db!.query(`INSERT INTO ${q}."periodo_titulacion" ("id","codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","estado","max_integrantes_default","facultad_id") VALUES ($1,$2,'Período verificador',now()-interval '3 days',now()-interval '2 days',now()-interval '1 day',$3,4,(SELECT "id" FROM ${q}."facultad" ORDER BY "codigo" LIMIT 1))`, [id, codeValue, initial]);
   if (state !== initial) await db!.query(`UPDATE ${q}."periodo_titulacion" SET "estado"=$2 WHERE "id"=$1`, [id, state]);
 }
 

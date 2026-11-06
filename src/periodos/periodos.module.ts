@@ -1,6 +1,7 @@
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AcademicoModule } from '../academico/academico.module.js';
 import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { ColasModule } from '../colas/colas.module.js';
 import { PeriodosController } from './periodos.controller.js';
@@ -21,7 +22,7 @@ const queueProviders = testMode
   : [TransicionesPeriodoWorker];
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PeriodoTitulacion]), AuditoriaModule, HabilitadosModule, ConflictosModule, ...queueModules],
+  imports: [TypeOrmModule.forFeature([PeriodoTitulacion]), AuditoriaModule, AcademicoModule, HabilitadosModule, ConflictosModule, ...queueModules],
   controllers: [PeriodosController],
   providers: [PeriodosService, InicioTitulacionService, ArchivoPeriodoService, ResumenPeriodoService, TransicionesPeriodoService, ...queueProviders],
 })

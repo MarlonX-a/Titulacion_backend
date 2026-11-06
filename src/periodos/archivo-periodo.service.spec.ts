@@ -1,5 +1,6 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { construirCatalogo } from '../academico/catalogo-academico.js';
 import { ArchivoPeriodoService } from './archivo-periodo.service.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
@@ -23,7 +24,7 @@ function setup(estado: PeriodoEstado = PeriodoEstado.EN_CURSO, auditoriaFalla = 
   const fakeManager = { getRepository: (entity: unknown) => entity === Usuario ? userRepo : periodRepo };
   const dataSource = { transaction: vi.fn(async (_isolation: string, callback: (manager: typeof fakeManager) => Promise<unknown>) => callback(fakeManager)) };
   const auditoria = { registrar: vi.fn(async () => { if (auditoriaFalla) throw new Error('audit failed'); }) };
-  return { service: new ArchivoPeriodoService(dataSource as never, auditoria as never), actor, periodo, periodRepo, userRepo, dataSource, auditoria };
+  return { service: new ArchivoPeriodoService(dataSource as never, auditoria as never, { catalogo: async () => construirCatalogo([], []) } as never), actor, periodo, periodRepo, userRepo, dataSource, auditoria };
 }
 
 describe('ArchivoPeriodoService', () => {

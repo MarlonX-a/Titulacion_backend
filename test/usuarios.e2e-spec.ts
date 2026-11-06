@@ -44,6 +44,8 @@ import {
   credencialTestRecords,
   correoTestRecords,
   sesionRevocationsTestRecords,
+  FACULTAD_PRUEBA,
+  FACULTAD_PRUEBA_ID,
 } from './database-testing.module.js';
 
 describe('Usuarios (e2e)', () => {
@@ -176,6 +178,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: new Date(Date.now() + 7 * day).toISOString(),
         fecha_fin_postulacion: new Date(Date.now() + 30 * day).toISOString(),
         fecha_inicio_titulacion: new Date(Date.now() + 31 * day).toISOString(),
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: 5,
       })
       .expect(201);
@@ -598,6 +601,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
         fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
         fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: '5',
       })
       .expect(201);
@@ -609,6 +613,8 @@ describe('Usuarios (e2e)', () => {
       fecha_fin_postulacion: '2026-12-01T04:59:00.000Z',
       fecha_inicio_titulacion: '2026-12-01T13:00:00.000Z',
       max_integrantes_default: 5,
+      facultad_id: FACULTAD_PRUEBA_ID,
+      facultad: FACULTAD_PRUEBA,
       estado: PeriodoEstado.BORRADOR,
     });
   });
@@ -621,6 +627,7 @@ describe('Usuarios (e2e)', () => {
       fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
       fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
       fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+      facultad_id: FACULTAD_PRUEBA_ID,
       max_integrantes_default: 5,
     };
 
@@ -662,6 +669,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
         fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
         fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: 4,
       })
       .expect(201);
@@ -711,6 +719,7 @@ describe('Usuarios (e2e)', () => {
       fecha_inicio_postulacion: start,
       fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
       fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+      facultad_id: FACULTAD_PRUEBA_ID,
       max_integrantes_default: 5,
     });
     await authenticated('post', '/periodos', 'admin-sub')
@@ -757,6 +766,7 @@ describe('Usuarios (e2e)', () => {
         fecha_inicio_postulacion: '2026-11-02T08:00:00-05:00',
         fecha_fin_postulacion: '2026-11-30T23:59:00-05:00',
         fecha_inicio_titulacion: '2026-12-01T08:00:00-05:00',
+        facultad_id: FACULTAD_PRUEBA_ID,
         max_integrantes_default: 5,
       })
       .expect(201);

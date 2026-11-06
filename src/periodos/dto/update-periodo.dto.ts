@@ -3,6 +3,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsISO8601,
   IsInt,
+  IsUUID,
   IsString,
   Length,
   Matches,
@@ -34,6 +35,11 @@ export class UpdatePeriodoDto {
   @IsString()
   @Length(1, 120)
   nombre?: string;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'Solo en BORRADOR y sin temas ni habilitaciones.' })
+  @ValidateIf(isSupplied)
+  @IsUUID()
+  facultad_id?: string;
 
   @ApiPropertyOptional({
     format: 'date-time',
