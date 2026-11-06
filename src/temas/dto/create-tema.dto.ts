@@ -1,11 +1,12 @@
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsString, IsUUID, Length, Max, Min } from 'class-validator';
+import { IsEnum, IsString, IsUUID, Length } from 'class-validator';
+import { TipoTema } from '../enums/tipo-tema.enum.js';
 
 const trim = ({ value }: { value: unknown }): unknown => typeof value === 'string' ? value.trim() : value;
 
 export class CreateTemaDto {
-  @ApiProperty({ format: 'uuid', description: 'Carrera de la facultad del período; el docente proponente debe ser de la misma carrera.' })
+  @ApiProperty({ format: 'uuid', description: 'Carrera del banco; el docente proponente debe ser de la misma carrera.' })
   @IsUUID()
   carrera_id: string;
 
@@ -16,6 +17,10 @@ export class CreateTemaDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   docente_proponente_id: string;
+
+  @ApiProperty({ enum: TipoTema, description: 'INDIVIDUAL = 1 integrante, PAREJA = 2, GRUPO = 3 hasta el máximo del período.' })
+  @IsEnum(TipoTema)
+  tipo: TipoTema;
 
   @ApiProperty({ maxLength: 250 })
   @Transform(trim)
@@ -28,16 +33,4 @@ export class CreateTemaDto {
   @IsString()
   @Length(1, 20_000)
   descripcion: string;
-
-  @ApiProperty({ minimum: 1, maximum: 32767, type: Number })
-  @IsInt()
-  @Min(1)
-  @Max(32767)
-  min_integrantes: number;
-
-  @ApiProperty({ minimum: 1, maximum: 32767, type: Number })
-  @IsInt()
-  @Min(1)
-  @Max(32767)
-  max_integrantes: number;
 }
