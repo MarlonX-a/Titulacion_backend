@@ -55,6 +55,11 @@ function schemaFrom(options: unknown): string {
   return `"${value}"`;
 }
 
+/** SQL predicate (alias `p` = postulacion) excluding applications of ARCHIVADO periods, which are immutable history. */
+function notArchived(schema: string): string {
+  return `NOT EXISTS (SELECT 1 FROM ${schema}."periodo_titulacion" pe WHERE pe."id"=p."periodo_id" AND pe."estado"='ARCHIVADO')`;
+}
+
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof QueryFailedError && (error.driverError as PostgresDriverError).code === code;
 }
@@ -346,8 +351,9 @@ export class TemasService {
 
   /** Applications are locked in id order after the topic, as in the assignment flow. */
   private async rejectOpenApplications(manager: EntityManager, temaId: string, observacion: string, accion: string, actor: Usuario, ip: string | null): Promise<void> {
+    const schema = schemaFrom(manager.connection.options);
     const rows = await manager.query(
-      `SELECT "id" FROM ${schemaFrom(manager.connection.options)}."postulacion" WHERE "tema_id"=$1 AND "estado" IN ('PENDIENTE','EN_CONFLICTO') ORDER BY "id" FOR UPDATE`,
+      `SELECT p."id" FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)} ORDER BY p."id" FOR UPDATE OF p`,
       [temaId],
     ) as Array<{ id: string }>;
     const repository = manager.getRepository(Postulacion);
@@ -367,8 +373,9 @@ export class TemasService {
   }
 
   private async openApplications(manager: EntityManager, temaId: string): Promise<number> {
+    const schema = schemaFrom(manager.connection.options);
     const rows = await manager.query(
-      `SELECT count(*)::int AS total FROM ${schemaFrom(manager.connection.options)}."postulacion" WHERE "tema_id"=$1 AND "estado" IN ('PENDIENTE','EN_CONFLICTO')`,
+      `SELECT count(*)::int AS total FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}`,
       [temaId],
     ) as Array<{ total: number }>;
     return Number(rows[0]?.total ?? 0);
@@ -438,7 +445,7 @@ export class TemasService {
     const ids = responses.map((item) => item.id);
     const schema = schemaFrom(this.dataSource.options);
     const stats = await this.dataSource.query(
-      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND ($1::uuid IS NULL OR p."periodo_id"=$1) AND p."estado" IN ('PENDIENTE','EN_CONFLICTO')) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."id"=ANY($2::uuid[])`,
+      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND ($1::uuid IS NULL OR p."periodo_id"=$1) AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."id"=ANY($2::uuid[])`,
       [periodoId, ids],
     ) as Array<{ id: string; disponible: boolean; postulaciones_abiertas: number }>;
     const byId = new Map(stats.map((row) => [row.id, row]));

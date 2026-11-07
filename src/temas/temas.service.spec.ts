@@ -23,7 +23,7 @@ interface SetupOptions {
   abiertas?: number;
   docenteCarrera?: string;
   encontrado?: boolean;
-  postulaciones?: Array<{ id: string; estado: EstadoPostulacion; observacion: string | null }>;
+  postulaciones?: Array<{ id: string; estado: EstadoPostulacion; observacion: string | null; archivado?: boolean }>;
 }
 
 const ABIERTAS = [EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO];
@@ -50,9 +50,12 @@ function setup(options: SetupOptions = {}) {
     findOneBy: vi.fn(async ({ id }: { id: string }) => postulaciones.find((item) => item.id === id) ?? null),
     save: vi.fn(async (value: unknown) => value),
   };
+  // Emulates the SQL predicate that excludes applications of ARCHIVADO periods.
   const query = vi.fn(async (sql: string, _params?: unknown[]) => {
-    if (sql.includes('count(*)')) return [{ total: options.abiertas ?? 0 }];
-    return postulaciones.filter((item) => ABIERTAS.includes(item.estado)).map(({ id }) => ({ id }));
+    const excludesArchived = sql.includes(`pe."estado"='ARCHIVADO'`);
+    const open = postulaciones.filter((item) => ABIERTAS.includes(item.estado) && !(excludesArchived && item.archivado));
+    if (sql.includes('count(*)')) return [{ total: options.abiertas ?? open.length }];
+    return open.map(({ id }) => ({ id }));
   });
   const repos = new Map<unknown, unknown>([
     [Tema, temaRepo],
@@ -133,6 +136,13 @@ describe('TemasService: regla de edición', () => {
     expect(state.temaRepo.save).not.toHaveBeenCalled();
   });
 
+  it('allows changing tipo when the only open applications belong to ARCHIVADO periods', async () => {
+    const state = setup({ postulaciones: [{ id: 'p-archived', estado: EstadoPostulacion.PENDIENTE, observacion: null, archivado: true }] });
+    const result = await state.service.update('tema-id', { tipo: TipoTema.PAREJA } as never, state.actor as never, null);
+    expect(result).toMatchObject({ tipo: TipoTema.PAREJA });
+    expect(state.query).toHaveBeenCalledWith(expect.stringContaining(`pe."estado"='ARCHIVADO'`), ['tema-id']);
+  });
+
   it('cambia el tipo cuando no hay postulaciones abiertas', async () => {
     const state = setup();
     const result = await state.service.update('tema-id', { tipo: TipoTema.PAREJA } as never, state.actor as never, null);
@@ -162,6 +172,21 @@ describe('TemasService: cierre, retiro y reapertura', () => {
     expect(state.notificaciones.postulacion).toHaveBeenCalledTimes(2);
     expect(state.notificaciones.postulacion).toHaveBeenCalledWith(expect.anything(), 'p1', NotificacionTipo.POSTULACION_RECHAZADA, 'admin-id');
     expect(state.historialRepo.save).toHaveBeenCalledWith(expect.objectContaining({ estado_anterior: EstadoTema.PUBLICADO, estado_nuevo: EstadoTema.CERRADO, cambios: expect.objectContaining({ motivo: 'Docente no disponible' }) }));
+  });
+
+  it('ignores open applications of ARCHIVADO periods when closing a topic', async () => {
+    const state = setup({
+      postulaciones: [
+        { id: 'p-open', estado: EstadoPostulacion.PENDIENTE, observacion: null },
+        { id: 'p-archived', estado: EstadoPostulacion.PENDIENTE, observacion: null, archivado: true },
+      ],
+    });
+    await state.service.close('tema-id', { motivo: 'Cierre' }, state.actor as never, null);
+    expect(state.query.mock.calls[0]![0]).toContain(`"periodo_titulacion" pe WHERE pe."id"=p."periodo_id" AND pe."estado"='ARCHIVADO'`);
+    expect(state.postulaciones.map((item) => item.estado)).toEqual([EstadoPostulacion.RECHAZADA, EstadoPostulacion.PENDIENTE]);
+    expect(state.postulacionRepo.save).toHaveBeenCalledTimes(1);
+    expect(state.notificaciones.postulacion).toHaveBeenCalledTimes(1);
+    expect(state.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'RECHAZAR_POSTULACION_POR_CIERRE_TEMA', entidad_id: 'p-open' }));
   });
 
   it('retira temas BORRADOR y CERRADO, pero no uno ya RETIRADO', async () => {
