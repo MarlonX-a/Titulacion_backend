@@ -28,6 +28,8 @@ export interface TemporarySchemaVerification {
   cleanupSubject: string;
   /** Mensaje informativo cuando la verificación termina sin errores. */
   success: string;
+  /** Registers the application entities on the isolated connection so services and repositories can run. */
+  withEntities?: boolean;
   verify(context: TemporarySchemaContext): Promise<void>;
 }
 
@@ -55,7 +57,7 @@ export async function runTemporarySchemaVerification(verification: TemporarySche
     await adminSource.initialize();
     await adminSource.query(`CREATE SCHEMA ${schemaSql()}`);
     created = true;
-    const db = new DatabaseDataSource({ ...options, schema, entities: [] });
+    const db = new DatabaseDataSource({ ...options, schema, entities: verification.withEntities ? options.entities : [] });
     isolated = db;
     await db.initialize();
     await db.runMigrations({ transaction: 'all' });
