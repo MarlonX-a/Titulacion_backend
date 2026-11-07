@@ -579,6 +579,13 @@ Cierre, retiro y reapertura (RF-21/RF-25), solo ADMIN y con motivo obligatorio
   `RECHAZAR_POSTULACION_POR_CIERRE_TEMA` / `..._POR_RETIRO_TEMA` y aviso
   `POSTULACION_RECHAZADA`. El tema registra historial (con `cambios.motivo`) y
   auditoría `CERRAR_TEMA` / `RETIRAR_TEMA`.
+- Las postulaciones de períodos ARCHIVADOS son historial inmutable: el cierre y el
+  retiro no las modifican, no bloquean el cambio de `tipo`/`carrera_id` y no cuentan
+  en `postulaciones_abiertas`.
+- Al asignar un tema (`ASIGNAR_TEMA`), en la misma transacción se rechazan sus
+  postulaciones PENDIENTE o EN_CONFLICTO de otros períodos no archivados, con
+  observación «Tema asignado en otro período: motivo», auditoría
+  `RECHAZAR_POSTULACION_POR_ASIGNACION_TEMA` y aviso `POSTULACION_RECHAZADA`.
 - Reabrir: `POST .../temas/:id/publicar` sobre un tema CERRADO lo devuelve a
   PUBLICADO (auditoría `REABRIR_TEMA`, historial) si no tiene asignación VIGENTE;
   las postulaciones rechazadas no se reactivan. Publicar un BORRADOR exige

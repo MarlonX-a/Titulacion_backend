@@ -132,6 +132,7 @@ export class AsignacionesTemaService {
           await this.auditoria.registrar(manager, { actor, accion: 'RECHAZAR_POSTULACION_POR_ASIGNACION', entidad_tipo: 'postulacion', entidad_id: loser.id, valores_anteriores: previous, valores_nuevos: { estado: loser.estado, observacion: loser.observacion }, ip_origen: ip });
           await this.notificaciones.postulacion(manager, loser.id, NotificacionTipo.POSTULACION_RECHAZADA, actor.id);
         }
+        await this.persistencia.rechazarAbiertasDeOtrosPeriodos(manager, topic.id, periodoId, dto.motivo, actor, ip);
         return assignment.id;
       });
       return this.getById(periodoId, id, actor, true);

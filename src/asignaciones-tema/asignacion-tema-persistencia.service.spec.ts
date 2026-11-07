@@ -88,3 +88,51 @@ describe('AsignacionTemaPersistenciaService', () => {
     await expect(state.service.bloquearParaAnulacion(state.manager as never, 'periodo-id', 'otra')).resolves.toBeNull();
   });
 });
+
+describe('AsignacionTemaPersistenciaService.rechazarAbiertasDeOtrosPeriodos', () => {
+  function setupCrossPeriod() {
+    const actor = { id: 'admin-id' };
+    const applications = [
+      { id: 'p-other-open', periodo_id: 'periodo-b', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, archivado: false },
+      { id: 'p-other-conflict', periodo_id: 'periodo-b', estado: EstadoPostulacion.EN_CONFLICTO, observacion: null as string | null, archivado: false },
+      { id: 'p-archived', periodo_id: 'periodo-viejo', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, archivado: true },
+      { id: 'p-same-period', periodo_id: 'periodo-a', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, archivado: false },
+    ];
+    // Emulates the SQL filters: other period, open states, and ARCHIVADO periods excluded.
+    const query = vi.fn(async (sql: string, params: [string, string]) => applications
+      .filter((item) => item.periodo_id !== params[1] && [EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(item.estado))
+      .filter((item) => !(sql.includes(`pe."estado"='ARCHIVADO'`) && item.archivado))
+      .map(({ id }) => ({ id })));
+    const repo = {
+      findOneBy: vi.fn(async ({ id }: { id: string }) => applications.find((item) => item.id === id) ?? null),
+      save: vi.fn(async (value: unknown) => value),
+    };
+    const manager = { connection: { options: { schema: 'titulacion_dev' } }, query, getRepository: () => repo };
+    const auditoria = { registrar: vi.fn(async () => undefined) };
+    const notificaciones = { postulacion: vi.fn(async () => undefined) };
+    const service = new AsignacionTemaPersistenciaService(auditoria as never, {} as never, notificaciones as never);
+    return { service, actor, applications, query, repo, manager, auditoria, notificaciones };
+  }
+
+  it('rejects open applications of other open periods, leaves archived ones untouched, and writes audit and notification', async () => {
+    const state = setupCrossPeriod();
+    await state.service.rechazarAbiertasDeOtrosPeriodos(state.manager as never, 'tema-id', 'periodo-a', '  Resolución 12  ', state.actor as never, '127.0.0.1');
+
+    expect(state.query.mock.calls[0]![0]).toContain('FOR UPDATE OF p');
+    expect(state.query.mock.calls[0]![1]).toEqual(['tema-id', 'periodo-a']);
+    expect(state.applications.map((item) => [item.id, item.estado])).toEqual([
+      ['p-other-open', EstadoPostulacion.RECHAZADA],
+      ['p-other-conflict', EstadoPostulacion.RECHAZADA],
+      ['p-archived', EstadoPostulacion.PENDIENTE],
+      ['p-same-period', EstadoPostulacion.PENDIENTE],
+    ]);
+    expect(state.applications[0]!.observacion).toBe('Tema asignado en otro período: Resolución 12');
+    expect(state.auditoria.registrar).toHaveBeenCalledTimes(2);
+    expect(state.auditoria.registrar).toHaveBeenCalledWith(state.manager, expect.objectContaining({
+      accion: 'RECHAZAR_POSTULACION_POR_ASIGNACION_TEMA', entidad_tipo: 'postulacion', entidad_id: 'p-other-conflict',
+      valores_anteriores: { estado: EstadoPostulacion.EN_CONFLICTO, observacion: null }, ip_origen: '127.0.0.1',
+    }));
+    expect(state.notificaciones.postulacion).toHaveBeenCalledTimes(2);
+    expect(state.notificaciones.postulacion).toHaveBeenCalledWith(state.manager, 'p-other-open', NotificacionTipo.POSTULACION_RECHAZADA, 'admin-id');
+  });
+});
