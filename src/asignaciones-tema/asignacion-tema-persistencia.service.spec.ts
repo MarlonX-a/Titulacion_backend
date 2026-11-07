@@ -5,6 +5,7 @@ import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enu
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { TipoTema } from '../temas/enums/tipo-tema.enum.js';
 import { AsignacionTemaPersistenciaService } from './asignacion-tema-persistencia.service.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
@@ -19,8 +20,8 @@ function setup() {
   };
   const application = { id: 'postulacion-id', estado: EstadoPostulacion.ACEPTADA, observacion: 'Asignación aprobada' };
   const topic = {
-    id: 'tema-id', periodo: { id: 'periodo-id' }, linea: { id: 'linea-id' }, docente_proponente: { id: 'docente-id' },
-    titulo: 'Tema', estado: EstadoTema.ASIGNADO, min_integrantes: 1, max_integrantes: 3,
+    id: 'tema-id', linea: { id: 'linea-id' }, docente_proponente: { id: 'docente-id' },
+    titulo: 'Tema', estado: EstadoTema.ASIGNADO, tipo: TipoTema.GRUPO,
   };
   const repos = {
     assignment: { findOneByOrFail: vi.fn(async () => assignment), save: vi.fn(async (value: unknown) => value) },
@@ -60,6 +61,9 @@ describe('AsignacionTemaPersistenciaService', () => {
     expect(state.tutores.anularPorAsignacionTema).toHaveBeenCalledWith(state.manager, 'periodo-id', 'asignacion-id', 'Desistimiento del grupo', state.actor, '127.0.0.1');
     expect(state.application).toMatchObject({ estado: EstadoPostulacion.ANULADA, observacion: 'Desistimiento del grupo' });
     expect(state.topic.estado).toBe(EstadoTema.PUBLICADO);
+    const historial = JSON.stringify(state.repos.history.save.mock.calls[0]![0]);
+    expect(historial).toContain('"tipo":"GRUPO"');
+    expect(historial).not.toContain('"periodo_id"');
     expect(state.repos.history.save).toHaveBeenCalledWith(expect.objectContaining({ estado_anterior: EstadoTema.ASIGNADO, estado_nuevo: EstadoTema.PUBLICADO }));
     const acciones = state.auditoria.registrar.mock.calls.map((call) => ((call as unknown[])[1] as { accion: string }).accion);
     expect(acciones).toEqual(['ANULAR_ASIGNACION_TEMA', 'ANULAR_POSTULACION_MANUAL', 'REPUBLICAR_TEMA_ANULACION']);
@@ -82,5 +86,53 @@ describe('AsignacionTemaPersistenciaService', () => {
     expect(state.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE OF t,p,a'), ['asignacion-id', 'periodo-id']);
     state.query.mockResolvedValueOnce([] as never);
     await expect(state.service.bloquearParaAnulacion(state.manager as never, 'periodo-id', 'otra')).resolves.toBeNull();
+  });
+});
+
+describe('AsignacionTemaPersistenciaService.rechazarAbiertasDeOtrosPeriodos', () => {
+  function setupCrossPeriod() {
+    const actor = { id: 'admin-id' };
+    const applications = [
+      { id: 'p-other-open', periodo_id: 'periodo-b', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, archivado: false },
+      { id: 'p-other-conflict', periodo_id: 'periodo-b', estado: EstadoPostulacion.EN_CONFLICTO, observacion: null as string | null, archivado: false },
+      { id: 'p-archived', periodo_id: 'periodo-viejo', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, archivado: true },
+      { id: 'p-same-period', periodo_id: 'periodo-a', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, archivado: false },
+    ];
+    // Emulates the SQL filters: other period, open states, and ARCHIVADO periods excluded.
+    const query = vi.fn(async (sql: string, params: [string, string]) => applications
+      .filter((item) => item.periodo_id !== params[1] && [EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(item.estado))
+      .filter((item) => !(sql.includes(`pe."estado"='ARCHIVADO'`) && item.archivado))
+      .map(({ id }) => ({ id })));
+    const repo = {
+      findOneBy: vi.fn(async ({ id }: { id: string }) => applications.find((item) => item.id === id) ?? null),
+      save: vi.fn(async (value: unknown) => value),
+    };
+    const manager = { connection: { options: { schema: 'titulacion_dev' } }, query, getRepository: () => repo };
+    const auditoria = { registrar: vi.fn(async () => undefined) };
+    const notificaciones = { postulacion: vi.fn(async () => undefined) };
+    const service = new AsignacionTemaPersistenciaService(auditoria as never, {} as never, notificaciones as never);
+    return { service, actor, applications, query, repo, manager, auditoria, notificaciones };
+  }
+
+  it('rejects open applications of other open periods, leaves archived ones untouched, and writes audit and notification', async () => {
+    const state = setupCrossPeriod();
+    await state.service.rechazarAbiertasDeOtrosPeriodos(state.manager as never, 'tema-id', 'periodo-a', '  Resolución 12  ', state.actor as never, '127.0.0.1');
+
+    expect(state.query.mock.calls[0]![0]).toContain('FOR UPDATE OF p');
+    expect(state.query.mock.calls[0]![1]).toEqual(['tema-id', 'periodo-a']);
+    expect(state.applications.map((item) => [item.id, item.estado])).toEqual([
+      ['p-other-open', EstadoPostulacion.RECHAZADA],
+      ['p-other-conflict', EstadoPostulacion.RECHAZADA],
+      ['p-archived', EstadoPostulacion.PENDIENTE],
+      ['p-same-period', EstadoPostulacion.PENDIENTE],
+    ]);
+    expect(state.applications[0]!.observacion).toBe('Tema asignado en otro período: Resolución 12');
+    expect(state.auditoria.registrar).toHaveBeenCalledTimes(2);
+    expect(state.auditoria.registrar).toHaveBeenCalledWith(state.manager, expect.objectContaining({
+      accion: 'RECHAZAR_POSTULACION_POR_ASIGNACION_TEMA', entidad_tipo: 'postulacion', entidad_id: 'p-other-conflict',
+      valores_anteriores: { estado: EstadoPostulacion.EN_CONFLICTO, observacion: null }, ip_origen: '127.0.0.1',
+    }));
+    expect(state.notificaciones.postulacion).toHaveBeenCalledTimes(2);
+    expect(state.notificaciones.postulacion).toHaveBeenCalledWith(state.manager, 'p-other-open', NotificacionTipo.POSTULACION_RECHAZADA, 'admin-id');
   });
 });

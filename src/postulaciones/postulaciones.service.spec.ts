@@ -8,13 +8,14 @@ import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entit
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { TipoTema } from '../temas/enums/tipo-tema.enum.js';
 import { Postulacion } from './entities/postulacion.entity.js';
 import { ModalidadPostulacion } from './enums/modalidad-postulacion.enum.js';
 import { PostulacionesService } from './postulaciones.service.js';
 
-function setup(carreraEstudiante: string) {
-  const periodo = { id: 'periodo-id', estado: PeriodoEstado.POSTULACION_ABIERTA, facultad_id: 'fac-vida', fecha_inicio_postulacion: new Date(Date.now() - 3_600_000), fecha_fin_postulacion: new Date(Date.now() + 3_600_000) };
-  const tema = { id: 'tema-id', estado: EstadoTema.PUBLICADO, carrera_id: 'car-software', min_integrantes: 1, max_integrantes: 3 };
+function setup(carreraEstudiante: string, tipo: TipoTema = TipoTema.INDIVIDUAL) {
+  const periodo = { id: 'periodo-id', estado: PeriodoEstado.POSTULACION_ABIERTA, facultad_id: 'fac-vida', max_integrantes_default: 4, fecha_inicio_postulacion: new Date(Date.now() - 3_600_000), fecha_fin_postulacion: new Date(Date.now() + 3_600_000) };
+  const tema = { id: 'tema-id', estado: EstadoTema.PUBLICADO, carrera_id: 'car-software', tipo };
   const repos = new Map<unknown, unknown>([
     [PeriodoTitulacion, { findOne: vi.fn(async () => periodo) }],
     [Tema, { findOne: vi.fn(async () => tema) }],
@@ -55,5 +56,21 @@ describe('PostulacionesService carrera', () => {
     // getRecord vuelve a leer con el repositorio vacío del test, por eso termina en 404 tras registrar.
     await expect(state.service.create('periodo-id', { id: 'user-id' } as never, dto as never, null)).rejects.toBeInstanceOf(NotFoundException);
     expect(state.tutores.agregar).toHaveBeenCalled();
+  });
+});
+
+describe('PostulacionesService rango de integrantes por tipo', () => {
+  it('rechaza una postulación individual a un tema PAREJA', async () => {
+    const state = setup('car-software', TipoTema.PAREJA);
+    await expect(state.service.create('periodo-id', { id: 'user-id' } as never, dto as never, null))
+      .rejects.toThrow('El tema PAREJA admite 2 integrante(s); la solicitud tiene 1.');
+    expect(state.tutores.agregar).not.toHaveBeenCalled();
+  });
+
+  it('rechaza una postulación individual a un tema GRUPO', async () => {
+    const state = setup('car-software', TipoTema.GRUPO);
+    await expect(state.service.create('periodo-id', { id: 'user-id' } as never, dto as never, null))
+      .rejects.toThrow('El tema GRUPO admite entre 3 y 4 integrante(s); la solicitud tiene 1.');
+    expect(state.tutores.agregar).not.toHaveBeenCalled();
   });
 });

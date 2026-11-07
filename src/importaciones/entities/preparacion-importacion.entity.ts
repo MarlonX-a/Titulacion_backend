@@ -10,7 +10,7 @@ export class PreparacionImportacion {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** Obligatorio para ESTUDIANTES; las importaciones de DOCENTES no pertenecen a un período. */
+  /** Required for ESTUDIANTES; DOCENTES and TEMAS imports do not belong to a period. */
   @ManyToOne(() => PeriodoTitulacion, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'periodo_id' })
   periodo: PeriodoTitulacion | null;

@@ -293,6 +293,7 @@ function matchesRecord(record: Record<string, unknown>, where: Record<string, un
     const actual = record[key];
     if (value instanceof FindOperator) {
       const expected = value.value;
+      if (value.type === 'in') return Array.isArray(expected) && expected.includes(actual);
       if (typeof actual !== 'number' || typeof expected !== 'number') return false;
       if (value.type === 'lessThanOrEqual') return actual <= expected;
       if (value.type === 'moreThanOrEqual') return actual >= expected;

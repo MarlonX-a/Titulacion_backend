@@ -379,6 +379,20 @@ para valores no nulos). Un DOCENTE existente con el mismo correo solo actualiza
 `habilitado_tutoria` (auditoría `ACTUALIZAR_DOCENTE_IMPORTACION`) o se omite si no cambia; un
 correo de otro rol es error por fila.
 
+Importación de temas (`GET /importaciones/temas/plantilla`): hoja con encabezados `Nro.`,
+`Docente`, `Temas`, `Carrera` y `Observación`, detectados por texto en las primeras 20 filas.
+`POST /importaciones/temas/validar` (multipart `archivo`, `carrera_id`, `linea_id`, `tipo`) es
+síncrono y devuelve la vista previa: la carrera elegida prevalece y la columna `Carrera` solo
+genera advertencia; `Temas` es obligatorio (≤ 250) y `Observación` es la descripción (si falta,
+se usa el título). El docente se empareja con los DOCENTE activos de la carrera por nombre
+normalizado (sin tildes, mayúsculas, guiones ni títulos); con cero o varios candidatos la fila
+queda `PENDIENTE_DOCENTE` y se resuelve con `PATCH /importaciones/temas/:id/docentes`
+(`{ resoluciones: [{ nombre_excel, docente_id }] }`, se aplica a todas las filas con ese nombre).
+`POST /importaciones/temas/:id/confirmar` se rechaza con errores o docentes pendientes y crea en
+una transacción SERIALIZABLE los temas PUBLICADOS con `lote_importacion_id`, historial y
+auditoría `IMPORTAR_TEMA`; los títulos ya existentes en la carrera o repetidos en el archivo se
+omiten. El lote es `lote_importacion` de tipo `TEMAS` sin período.
+
 ---
 
 ## Períodos
@@ -534,32 +548,48 @@ Un tema está disponible cuando:
 1. está PUBLICADO;
 2. no tiene una asignación VIGENTE.
 
-Debe cumplirse:
+Los temas forman un banco por carrera (`tema.carrera_id`) que no pertenece a un período
+(migración `20261106100000-BancoTemas`): el período de uso queda en `postulacion` y
+`asignacion_tema`. El `tipo` (`INDIVIDUAL`, `PAREJA`, `GRUPO`) define los integrantes:
+INDIVIDUAL = 1, PAREJA = 2, GRUPO = 3 hasta `max_integrantes_default` del período al que se
+postula (`src/temas/integrantes-tema.ts`, replicado en los triggers de postulación y
+asignación). Un tema sin asignación VIGENTE vuelve a estar disponible en todos los períodos de
+su carrera. API: `/temas` (`GET` con `periodo_id`, `carrera_id`, `linea_id`,
+`docente_proponente_id`, `estado`, `tipo`, `disponible`); el ESTUDIANTE debe enviar `periodo_id`
+y solo ve temas PUBLICADOS de su carrera. ADMIN edita (`PATCH /temas/:id`) cualquier tema sin
+asignación VIGENTE; `tipo` y `carrera_id` no cambian con postulaciones abiertas; cada edición
+registra historial y auditoría.
 
-min_integrantes >= 1
-
-max_integrantes >= min_integrantes
+La migración asigna el `tipo` de los temas existentes por `max_integrantes`: 1 → INDIVIDUAL,
+2 → PAREJA, >= 3 → GRUPO. `up` aborta antes de cualquier cambio si una postulación activa
+(PENDIENTE/EN_CONFLICTO/ACEPTADA o con asignación VIGENTE) no encaja en el rango derivado.
 
 Los cambios relevantes del tema deben conservarse en el historial.
 
 Cierre, retiro y reapertura (RF-21/RF-25), solo ADMIN y con motivo obligatorio
-(`POST /periodos/:periodoId/temas/:id/cerrar` y `/retirar`, cuerpo `{ motivo }`):
+(`POST /temas/:id/cerrar` y `/retirar`, cuerpo `{ motivo }`):
 
 - CERRAR: PUBLICADO → CERRADO. RETIRAR: BORRADOR, PUBLICADO o CERRADO → RETIRADO
   (terminal).
-- Se rechazan con 409 si el período está ARCHIVADO o el tema tiene asignación
-  VIGENTE (estado ASIGNADO); no aplica la ventana de plazo de administración de
-  temas.
-- En la misma transacción SERIALIZABLE (período → tema → postulaciones en orden
+- Se rechazan con 409 si el tema tiene asignación VIGENTE (estado ASIGNADO); no
+  dependen de un período.
+- En la misma transacción SERIALIZABLE (tema → postulaciones de cualquier período en orden
   de id, `FOR UPDATE`), las postulaciones PENDIENTE o EN_CONFLICTO del tema pasan
   a RECHAZADA con observación «Tema cerrado|retirado: motivo», auditoría
   `RECHAZAR_POSTULACION_POR_CIERRE_TEMA` / `..._POR_RETIRO_TEMA` y aviso
   `POSTULACION_RECHAZADA`. El tema registra historial (con `cambios.motivo`) y
   auditoría `CERRAR_TEMA` / `RETIRAR_TEMA`.
+- Las postulaciones de períodos ARCHIVADOS son historial inmutable: el cierre y el
+  retiro no las modifican, no bloquean el cambio de `tipo`/`carrera_id` y no cuentan
+  en `postulaciones_abiertas`.
+- Al asignar un tema (`ASIGNAR_TEMA`), en la misma transacción se rechazan sus
+  postulaciones PENDIENTE o EN_CONFLICTO de otros períodos no archivados, con
+  observación «Tema asignado en otro período: motivo», auditoría
+  `RECHAZAR_POSTULACION_POR_ASIGNACION_TEMA` y aviso `POSTULACION_RECHAZADA`.
 - Reabrir: `POST .../temas/:id/publicar` sobre un tema CERRADO lo devuelve a
-  PUBLICADO (auditoría `REABRIR_TEMA`, historial) si no tiene asignación VIGENTE
-  y el período no está ARCHIVADO; las postulaciones rechazadas no se reactivan.
-  Publicar un BORRADOR conserva sus reglas de plazo y referencias activas.
+  PUBLICADO (auditoría `REABRIR_TEMA`, historial) si no tiene asignación VIGENTE;
+  las postulaciones rechazadas no se reactivan. Publicar un BORRADOR exige
+  referencias activas (línea y docente) y no depende del plazo de un período.
 
 Ningún trigger de PostgreSQL restringe estas transiciones de tema; las de
 postulación (PENDIENTE/EN_CONFLICTO → RECHAZADA con observación) ya estaban
@@ -588,11 +618,8 @@ Postulación grupal:
 
 num_integrantes >= 2
 
-El número de integrantes debe estar dentro de:
-
-[min_integrantes, max_integrantes]
-
-del tema.
+El número de integrantes debe corresponder al `tipo` del tema: INDIVIDUAL = 1,
+PAREJA = 2, GRUPO = 3 hasta `max_integrantes_default` del período de la postulación.
 
 Un estudiante o grupo puede tener como máximo una postulación activa.
 

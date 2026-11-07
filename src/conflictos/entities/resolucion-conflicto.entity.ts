@@ -5,7 +5,7 @@ import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 import { CriterioConflicto } from '../enums/criterio-conflicto.enum.js';
 
 @Entity({ name: 'resolucion_conflicto' })
-@Index('UQ_resolucion_conflicto_tema', ['tema'], { unique: true })
+@Index('UQ_resolucion_conflicto_tema_periodo', ['tema', 'periodo'], { unique: true })
 @Index('UQ_resolucion_conflicto_id_tema', ['id', 'tema'], { unique: true })
 @Check('CHK_resolucion_conflicto_justificacion', 'length(btrim("justificacion")) > 0')
 export class ResolucionConflicto {
