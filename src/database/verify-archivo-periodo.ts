@@ -7,6 +7,7 @@ import { ArchivoPeriodoService } from '../periodos/archivo-periodo.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { ArchivePeriodo20261018100000 } from './migrations/20261018100000-ArchivePeriodo.js';
+import { BancoTemas20261106100000 } from './migrations/20261106100000-BancoTemas.js';
 import { ArchivePeriodoDesdeCualquierEstado20261029100000 } from './migrations/20261029100000-ArchivePeriodoDesdeCualquierEstado.js';
 
 const schema = `test_archive_${randomBytes(8).toString('hex')}`;
@@ -109,6 +110,8 @@ async function verify(): Promise<void> {
   const before = await db.query(`SELECT count(*)::int AS total FROM ${q}."periodo_titulacion"`) as Array<{ total: number }>;
   const runner = db.createQueryRunner(); await runner.connect(); await runner.startTransaction();
   try {
+    // The topic bank migration dropped the archived-period topic trigger; restore it before reverting older migrations.
+    await new BancoTemas20261106100000().down(runner);
     await new ArchivePeriodoDesdeCualquierEstado20261029100000().down(runner);
     await new ArchivePeriodo20261018100000().down(runner);
     await runner.commitTransaction();
