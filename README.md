@@ -259,7 +259,7 @@ DTO existe únicamente en las pruebas, no en la aplicación.
 `POST /auth/login` acepta correo y contraseña. La contraseña se almacena con
 Argon2id. Una clave temporal enviada por correo permite obtener un token de
 primer acceso válido diez minutos, limitado a `POST /auth/change-initial-password`.
-Las contraseñas personales admiten entre 15 y 128 caracteres; no se recortan ni
+Las contraseñas personales admiten entre 8 y 128 caracteres; no se recortan ni
 normalizan.
 
 Los tokens de acceso RS256 duran 15 minutos. La sesión tiene un máximo absoluto

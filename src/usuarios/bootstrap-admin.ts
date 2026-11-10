@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     prompts.close();
     const password = await secretQuestion('Contraseña personal (no se mostrará): ');
     const confirmation = await secretQuestion('Confirma la contraseña: ');
-    if (password !== confirmation || password.length < 15 || password.length > 128) throw new Error('Las contraseñas no coinciden o no cumplen la longitud mínima de 15 caracteres.');
+    if (password !== confirmation || password.length < 8 || password.length > 128) throw new Error('Las contraseñas no coinciden o no cumplen la longitud mínima de 8 caracteres.');
     details = { email, nombres, apellidos, rol: UsuarioRol.ADMIN, password };
   } finally {
     prompts.close();
