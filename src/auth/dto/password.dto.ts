@@ -3,16 +3,16 @@ import { IsEmail, IsString, Length } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class NewPasswordDto {
-  @ApiProperty({ minLength: 15, maxLength: 128 })
+  @ApiProperty({ minLength: 8, maxLength: 128 })
   @IsString()
-  @Length(15, 128)
+  @Length(8, 128)
   password: string;
 }
 
 export class ChangePasswordDto extends NewPasswordDto {
-  @ApiProperty({ minLength: 15, maxLength: 128 })
+  @ApiProperty({ minLength: 8, maxLength: 128 })
   @IsString()
-  @Length(15, 128)
+  @Length(8, 128)
   current_password: string;
 }
 
