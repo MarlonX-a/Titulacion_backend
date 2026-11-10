@@ -32,14 +32,14 @@ export class ReportesService {
       }
       case ExportacionTipo.TEMAS_OFERTADOS:
       case ExportacionTipo.TEMAS_DISPONIBLES: {
-        const conditions = [`t."periodo_id"=$1`];
+        const conditions = [`t."carrera_id" IN (SELECT c."id" FROM ${s}."carrera" c JOIN ${s}."periodo_titulacion" pe ON pe."facultad_id"=c."facultad_id" WHERE pe."id"=$1)`];
         if (tipo === ExportacionTipo.TEMAS_DISPONIBLES) conditions.push(`t."estado"='PUBLICADO'`, `NOT EXISTS (SELECT 1 FROM ${s}."asignacion_tema" atv WHERE atv."tema_id"=t."id" AND atv."estado"='VIGENTE')`);
         else conditions.push(`EXISTS (SELECT 1 FROM ${s}."tema_historial" th WHERE th."tema_id"=t."id" AND th."estado_nuevo"='PUBLICADO')`);
         if (filtros.estado && tipo === ExportacionTipo.TEMAS_OFERTADOS) conditions.push(`t."estado"=${add(filtros.estado)}`);
         if (filtros.linea_id) conditions.push(`t."linea_id"=${add(filtros.linea_id)}`);
         if (filtros.docente_proponente_id) conditions.push(`t."docente_proponente_id"=${add(filtros.docente_proponente_id)}`);
-        sql = `SELECT t."id" AS "Tema", t."titulo" AS "Título", t."descripcion" AS "Descripción", t."estado" AS "Estado", t."min_integrantes" AS "Mínimo de integrantes", t."max_integrantes" AS "Máximo de integrantes", l."codigo" AS "Código de línea", l."nombre" AS "Línea", u."nombres" AS "Nombres del proponente", u."apellidos" AS "Apellidos del proponente" FROM ${s}."tema" t JOIN ${s}."linea_investigacion" l ON l."id"=t."linea_id" JOIN ${s}."docente" d ON d."id"=t."docente_proponente_id" JOIN ${s}."usuario" u ON u."id"=d."usuario_id" WHERE ${conditions.join(' AND ')} ORDER BY t."id"`;
-        columnas = ['Tema','Título','Descripción','Estado','Mínimo de integrantes','Máximo de integrantes','Código de línea','Línea','Nombres del proponente','Apellidos del proponente']; break;
+        sql = `SELECT t."id" AS "Tema", t."titulo" AS "Título", t."descripcion" AS "Descripción", t."estado" AS "Estado", t."tipo" AS "Tipo", l."codigo" AS "Código de línea", l."nombre" AS "Línea", u."nombres" AS "Nombres del proponente", u."apellidos" AS "Apellidos del proponente" FROM ${s}."tema" t JOIN ${s}."linea_investigacion" l ON l."id"=t."linea_id" JOIN ${s}."docente" d ON d."id"=t."docente_proponente_id" JOIN ${s}."usuario" u ON u."id"=d."usuario_id" WHERE ${conditions.join(' AND ')} ORDER BY t."id"`;
+        columnas = ['Tema','Título','Descripción','Estado','Tipo','Código de línea','Línea','Nombres del proponente','Apellidos del proponente']; break;
       }
       case ExportacionTipo.TEMAS_ASIGNADOS: {
         const conditions = [`a."periodo_id"=$1`];

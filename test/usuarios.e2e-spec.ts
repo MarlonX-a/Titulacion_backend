@@ -1041,22 +1041,18 @@ describe('Usuarios (e2e)', () => {
     expect(docs.body.paths['/lineas-investigacion/{id}'].patch).toBeDefined();
   });
 
-  it('administra temas en borrador, filtra por docente y conserva historial', async () => {
+  it('administra el banco de temas, filtra por docente y conserva historial', async () => {
     addAdmin();
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
     const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'IA', nombre: 'Inteligencia artificial' }).expect(201);
-    const period = await createPeriod('TEMAS-1');
-    const path = `/periodos/${period.body.id}/temas`;
+    const path = '/temas';
+    const base = { carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id };
     const created = await authenticated('post', path, 'admin-sub').send({
-      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id,
-      docente_proponente_id: teacherProfile.body.id,
-      titulo: '  Sistema de recomendación  ',
-      descripcion: '  Descripción del tema  ',
-      min_integrantes: 1,
-      max_integrantes: 3,
+      ...base, titulo: '  Sistema de recomendación  ', descripcion: '  Descripción del tema  ', tipo: 'GRUPO',
     }).expect(201);
-    expect(created.body).toMatchObject({ carrera_id: CARRERA_PRUEBA_ID, carrera: CARRERA_PRUEBA, estado: 'BORRADOR', titulo: 'Sistema de recomendación', descripcion: 'Descripción del tema', min_integrantes: 1, max_integrantes: 3, linea: { id: line.body.id }, docente_proponente: { id: teacherProfile.body.id, nombres: 'Docente' } });
+    expect(created.body).toMatchObject({ carrera_id: CARRERA_PRUEBA_ID, carrera: CARRERA_PRUEBA, estado: 'BORRADOR', titulo: 'Sistema de recomendación', descripcion: 'Descripción del tema', tipo: 'GRUPO', min_integrantes: 3, max_integrantes: null, linea: { id: line.body.id }, docente_proponente: { id: teacherProfile.body.id, nombres: 'Docente' } });
+    expect(created.body).not.toHaveProperty('periodo_id');
     expect(created.body).not.toHaveProperty('docente_proponente.usuario');
 
     await authenticated('get', path, 'docente-sub').expect(200).then((response) => {
@@ -1070,52 +1066,59 @@ describe('Usuarios (e2e)', () => {
     });
     const noOp = await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({ titulo: 'Sistema de recomendación' }).expect(200);
     expect(noOp.body.id).toBe(created.body.id);
-    await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({ max_integrantes: 4 }).expect(200);
+    await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({ tipo: 'PAREJA' }).expect(200)
+      .then((response) => expect(response.body).toMatchObject({ tipo: 'PAREJA', min_integrantes: 2, max_integrantes: 2 }));
     await authenticated('get', `${path}/${created.body.id}/historial`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(2));
+    await authenticated('get', `${path}?tipo=PAREJA`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(1));
+    await authenticated('get', `${path}?tipo=GRUPO`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(0));
+    await authenticated('get', `${path}?disponible=false`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(1));
+    await authenticated('get', `${path}?disponible=true`, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(0));
 
     await authenticated('post', path, 'admin-sub').send({ ...created.body, id: created.body.id, estado: 'PUBLICADO' }).expect(400);
-    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Inválido', descripcion: 'Inválido', min_integrantes: 3, max_integrantes: 2 }).expect(400);
-    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_OTRA_FACULTAD_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Otra facultad', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(400)
-      .then((r) => expect(r.body.message).toContain('no pertenece a la facultad'));
-    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Número como texto', descripcion: 'Inválido', min_integrantes: '1', max_integrantes: 2 }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ ...base, titulo: 'Inválido', descripcion: 'Inválido', tipo: 'TRIO' }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ ...base, titulo: 'Campos obsoletos', descripcion: 'Inválido', tipo: 'GRUPO', min_integrantes: 1 }).expect(400);
+    await authenticated('post', path, 'admin-sub').send({ ...base, carrera_id: CARRERA_OTRA_FACULTAD_ID, titulo: 'Otra carrera', descripcion: 'No debe crear', tipo: 'INDIVIDUAL' }).expect(400)
+      .then((r) => expect(r.body.message).toContain('no coincide con la carrera del tema'));
+    await authenticated('get', `${path}?disponible=quizas`, 'admin-sub').expect(400);
     await authenticated('patch', `${path}/${created.body.id}`, 'admin-sub').send({}).expect(400);
     await authenticated('get', `${path}/${created.body.id}/historial`, 'docente-sub').expect(403);
-    await authenticated('get', path, 'student-sub').expect(403);
     await authenticated('patch', `${path}/${created.body.id}`, 'docente-sub').send({ titulo: 'No autorizado' }).expect(403);
     await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: false }).expect(200);
-    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Línea inactiva', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
+    await authenticated('post', path, 'admin-sub').send({ ...base, titulo: 'Línea inactiva', descripcion: 'No debe crear', tipo: 'INDIVIDUAL' }).expect(409);
     await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: true }).expect(200);
     const inactiveTeacher = addUsuarioTestRecord({ id_externo_sso: 'bootstrap-sub', email: 'inactivo@universidad.edu', nombres: 'Docente', apellidos: 'Inactivo', rol: UsuarioRol.DOCENTE });
     const inactiveTeacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: inactiveTeacher.id, cedula: '0102030418', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     inactiveTeacher.estado = UsuarioEstado.INACTIVO;
-    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: inactiveTeacherProfile.body.id, titulo: 'Docente inactivo', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(409);
-    await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: '00000000-0000-4000-8000-000000000001', titulo: 'Docente inexistente', descripcion: 'No debe crear', min_integrantes: 1, max_integrantes: 1 }).expect(404);
+    await authenticated('post', path, 'admin-sub').send({ ...base, docente_proponente_id: inactiveTeacherProfile.body.id, titulo: 'Docente inactivo', descripcion: 'No debe crear', tipo: 'INDIVIDUAL' }).expect(409);
+    await authenticated('post', path, 'admin-sub').send({ ...base, docente_proponente_id: '00000000-0000-4000-8000-000000000001', titulo: 'Docente inexistente', descripcion: 'No debe crear', tipo: 'INDIVIDUAL' }).expect(404);
 
     const oldRefsUser = addUsuarioTestRecord({ id_externo_sso: 'other-student-sub', email: 'referencia-anterior@universidad.edu', nombres: 'Docente', apellidos: 'Anterior', rol: UsuarioRol.DOCENTE });
     const oldRefsTeacher = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: oldRefsUser.id, cedula: '0102030400', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const replacementLine = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'IA2', nombre: 'Inteligencia artificial aplicada' }).expect(201);
-    const referencesTopic = await authenticated('post', path, 'admin-sub').send({ carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: oldRefsTeacher.body.id, titulo: 'Cambio conjunto de referencias', descripcion: 'Tema de prueba', min_integrantes: 1, max_integrantes: 2 }).expect(201);
+    const referencesTopic = await authenticated('post', path, 'admin-sub').send({ ...base, docente_proponente_id: oldRefsTeacher.body.id, titulo: 'Cambio conjunto de referencias', descripcion: 'Tema de prueba', tipo: 'PAREJA' }).expect(201);
     await authenticated('patch', `/lineas-investigacion/${line.body.id}`, 'admin-sub').send({ activa: false }).expect(200);
     oldRefsUser.estado = UsuarioEstado.INACTIVO;
     await authenticated('patch', `${path}/${referencesTopic.body.id}`, 'admin-sub').send({ linea_id: replacementLine.body.id, docente_proponente_id: teacherProfile.body.id }).expect(200);
 
     const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
     expect(docs.body.components.schemas.TemaResponseDto).toBeDefined();
-    expect(docs.body.paths['/periodos/{periodoId}/temas'].post).toBeDefined();
-    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/historial'].get).toBeDefined();
-    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/publicar'].post).toBeDefined();
+    expect(docs.body.paths['/temas'].post).toBeDefined();
+    expect(docs.body.paths['/temas'].get).toBeDefined();
+    expect(docs.body.paths['/temas/{id}/historial'].get).toBeDefined();
+    expect(docs.body.paths['/temas/{id}/publicar'].post).toBeDefined();
+    expect(docs.body.paths['/temas/{id}/cerrar'].post).toBeDefined();
+    expect(docs.body.paths['/temas/{id}/retirar'].post).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/temas']).toBeUndefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/abrir-postulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/cerrar-postulacion'].post).toBeDefined();
-    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/cerrar'].post).toBeDefined();
-    expect(docs.body.paths['/periodos/{periodoId}/temas/{id}/retirar'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/asignaciones-tema/{id}/anular'].post).toBeDefined();
     expect(docs.body.paths['/periodos/{id}/iniciar-titulacion'].post.responses['200']).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/conflictos'].get).toBeDefined();
     expect(docs.body.paths['/periodos/{periodoId}/temas/{temaId}/conflicto/resolver'].post).toBeDefined();
   });
 
-  it('abre períodos dentro del plazo, publica temas y muestra el catálogo a estudiantes habilitados', async () => {
+  it('publica temas del banco y muestra el catálogo de su carrera a estudiantes habilitados', async () => {
     addAdmin();
     addUsuarioTestRecord({ id_externo_sso: 'not-registered', email: 'sin-perfil@universidad.edu', nombres: 'Sin', apellidos: 'Perfil', rol: UsuarioRol.ESTUDIANTE });
     const student = await createStudentProfile();
@@ -1153,43 +1156,41 @@ describe('Usuarios (e2e)', () => {
     if (!notAdmittedRecord || !suspendedRecord) throw new Error('No se encontraron habilitaciones preparadas para las pruebas de acceso.');
     notAdmittedRecord.situacion_ingreso = SituacionIngreso.NO_ADMITIDO;
     suspendedRecord.estado = HabilitadoEstado.SUSPENDIDO;
-    const themesPath = `/periodos/${period.body.id}/temas`;
-    const tema = await authenticated('post', themesPath, 'admin-sub').send({
-      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id,
-      docente_proponente_id: teacherProfile.body.id,
-      titulo: 'Tema de catálogo',
-      descripcion: 'Descripción de catálogo',
-      min_integrantes: 2,
-      max_integrantes: 4,
+    const tema = await authenticated('post', '/temas', 'admin-sub').send({
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
+      titulo: 'Tema de catálogo', descripcion: 'Descripción de catálogo', tipo: 'GRUPO',
     }).expect(201);
+    const catalogPath = `/temas?periodo_id=${period.body.id}`;
 
-    await authenticated('post', `${themesPath}/${tema.body.id}/publicar`, 'admin-sub').send({ estado: 'PUBLICADO' }).expect(400);
-    const published = await authenticated('post', `${themesPath}/${tema.body.id}/publicar`, 'admin-sub').expect(200);
+    await authenticated('post', `/temas/${tema.body.id}/publicar`, 'admin-sub').send({ estado: 'PUBLICADO' }).expect(400);
+    const published = await authenticated('post', `/temas/${tema.body.id}/publicar`, 'admin-sub').expect(200);
     expect(published.body.estado).toBe('PUBLICADO');
-    await authenticated('post', `${themesPath}/${tema.body.id}/publicar`, 'admin-sub').expect(409);
-    await authenticated('post', `${themesPath}/${tema.body.id}/publicar`, 'docente-sub').expect(403);
-    await authenticated('get', themesPath, 'student-sub').expect(403);
+    await authenticated('post', `/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
+    await authenticated('post', `/temas/${tema.body.id}/publicar`, 'docente-sub').expect(403);
+    await authenticated('get', catalogPath, 'student-sub').expect(403);
+    await authenticated('get', '/temas', 'student-sub').expect(400);
 
     await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').send({ estado: 'POSTULACION_ABIERTA' }).expect(400);
     const opened = await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(200);
     expect(opened.body.estado).toBe(PeriodoEstado.POSTULACION_ABIERTA);
     await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
     await authenticated('post', `/periodos/${period.body.id}/cerrar-postulacion`, 'admin-sub').expect(409);
-    const studentCatalog = await authenticated('get', `${themesPath}?num_integrantes=3`, 'student-sub').expect(200);
-    expect(studentCatalog.body).toMatchObject({ total: 1, data: [{ id: tema.body.id, estado: 'PUBLICADO' }] });
-    await authenticated('get', themesPath, 'other-student-sub').expect(403);
-    await authenticated('get', themesPath, 'bootstrap-sub').expect(403);
-    await authenticated('get', themesPath, 'inactive-sub').expect(403);
-    await authenticated('get', themesPath, 'not-registered').expect(403);
-    await authenticated('get', `${themesPath}?num_integrantes=5`, 'student-sub').expect(200).then((response) => expect(response.body.total).toBe(0));
-    await authenticated('get', `${themesPath}?estado=BORRADOR`, 'student-sub').expect(403);
-    await authenticated('get', `${themesPath}/${tema.body.id}`, 'student-sub').expect(200);
-    const draftAfterOpening = await authenticated('post', themesPath, 'admin-sub').send({
+    const studentCatalog = await authenticated('get', `${catalogPath}&tipo=GRUPO`, 'student-sub').expect(200);
+    expect(studentCatalog.body).toMatchObject({ total: 1, data: [{ id: tema.body.id, estado: 'PUBLICADO', tipo: 'GRUPO', min_integrantes: 3, max_integrantes: 5 }] });
+    await authenticated('get', catalogPath, 'other-student-sub').expect(403);
+    await authenticated('get', catalogPath, 'bootstrap-sub').expect(403);
+    await authenticated('get', catalogPath, 'inactive-sub').expect(403);
+    await authenticated('get', catalogPath, 'not-registered').expect(403);
+    await authenticated('get', `${catalogPath}&tipo=PAREJA`, 'student-sub').expect(200).then((response) => expect(response.body.total).toBe(0));
+    await authenticated('get', `${catalogPath}&estado=BORRADOR`, 'student-sub').expect(403);
+    await authenticated('get', `/temas/${tema.body.id}?periodo_id=${period.body.id}`, 'student-sub').expect(200);
+    await authenticated('get', `/temas/${tema.body.id}`, 'student-sub').expect(400);
+    const draftAfterOpening = await authenticated('post', '/temas', 'admin-sub').send({
       carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
-      titulo: 'Borrador todavía oculto', descripcion: 'Tema no publicado', min_integrantes: 1, max_integrantes: 2,
+      titulo: 'Borrador todavía oculto', descripcion: 'Tema no publicado', tipo: 'INDIVIDUAL',
     }).expect(201);
-    await authenticated('get', `${themesPath}/${draftAfterOpening.body.id}`, 'student-sub').expect(404);
-    await authenticated('get', `${themesPath}/${tema.body.id}/historial`, 'admin-sub').expect(200).then((response) => {
+    await authenticated('get', `/temas/${draftAfterOpening.body.id}?periodo_id=${period.body.id}`, 'student-sub').expect(404);
+    await authenticated('get', `/temas/${tema.body.id}/historial`, 'admin-sub').expect(200).then((response) => {
       expect(response.body.data.map((item: { estado_anterior: string | null; estado_nuevo: string }) => [item.estado_anterior, item.estado_nuevo])).toEqual([
         [null, 'BORRADOR'], ['BORRADOR', 'PUBLICADO'],
       ]);
@@ -1204,62 +1205,43 @@ describe('Usuarios (e2e)', () => {
     await authenticated('post', `/periodos/${period.body.id}/cerrar-postulacion`, 'admin-sub').expect(409);
     await authenticated('post', `/periodos/${period.body.id}/habilitados/${conditionalAfterClose.body.id}/resolver-ingreso`, 'admin-sub')
       .send({ situacion_ingreso: SituacionIngreso.ADMITIDO }).expect(200);
-    await authenticated('get', themesPath, 'student-sub').expect(403);
-    await authenticated('get', themesPath, 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(2));
+    await authenticated('get', catalogPath, 'student-sub').expect(403);
+    await authenticated('get', '/temas', 'admin-sub').expect(200).then((response) => expect(response.body.total).toBe(2));
   });
 
-  it('rechaza abrir fuera del plazo y rechaza publicaciones y escrituras luego del vencimiento', async () => {
+  it('administra los temas del banco sin depender del plazo ni del estado de un período', async () => {
     addAdmin();
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
     const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: 'CAT-IA', nombre: 'Inteligencia artificial' }).expect(201);
     const period = await createPeriod('CATALOGO-FUERA-PLAZO');
     await authenticated('post', `/periodos/${period.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
-    const expiredPeriod = await createPeriod('CATALOGO-VENCIDO');
-    const expiredStart = new Date(Date.now() - 2 * 60 * 60_000);
-    const expiredEnd = new Date(Date.now() - 60 * 60_000);
-    await authenticated('patch', `/periodos/${expiredPeriod.body.id}`, 'admin-sub').send({
-      fecha_inicio_postulacion: expiredStart.toISOString(),
-      fecha_fin_postulacion: expiredEnd.toISOString(),
-      fecha_inicio_titulacion: new Date(expiredEnd.getTime() + 60_000).toISOString(),
-    }).expect(200);
-    await authenticated('post', `/periodos/${expiredPeriod.body.id}/abrir-postulacion`, 'admin-sub').expect(409);
-    const tema = await authenticated('post', `/periodos/${period.body.id}/temas`, 'admin-sub').send({
-      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Tema', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 2,
+    const tema = await authenticated('post', '/temas', 'admin-sub').send({
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Tema', descripcion: 'Descripción', tipo: 'INDIVIDUAL',
     }).expect(201);
-    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_ABIERTA);
-    setPeriodoTestFechas(period.body.id, new Date(Date.now() - 60 * 60_000), new Date(Date.now() - 1_000));
-    await authenticated('patch', `/periodos/${period.body.id}/temas/${tema.body.id}`, 'admin-sub').send({ titulo: 'Editado' }).expect(409);
-    await authenticated('post', `/periodos/${period.body.id}/temas`, 'admin-sub').send({
-      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Fuera de plazo', descripcion: 'No debe crearse', min_integrantes: 1, max_integrantes: 2,
-    }).expect(409);
-    await authenticated('post', `/periodos/${period.body.id}/temas/${tema.body.id}/publicar`, 'admin-sub').expect(409);
+    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
+    await authenticated('patch', `/temas/${tema.body.id}`, 'admin-sub').send({ titulo: 'Editado' }).expect(200);
+    await authenticated('post', `/temas/${tema.body.id}/publicar`, 'admin-sub').expect(200);
+    await authenticated('patch', `/temas/${tema.body.id}`, 'admin-sub').send({ descripcion: 'Editado ya publicado' }).expect(200);
+    await authenticated('post', '/temas', 'admin-sub').send({
+      carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id, titulo: 'Otro tema', descripcion: 'Descripción', tipo: 'PAREJA',
+    }).expect(201);
   });
 
-  async function createOpenTopic(code: string) {
+  async function createBankTopic(code: string) {
     const teacher = addUsuarioTestRecord({ id_externo_sso: 'docente-sub', email: 'docente@universidad.edu', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE });
     const teacherProfile = await authenticated('post', '/docentes', 'admin-sub').send({ usuario_id: teacher.id, cedula: '3002030405', titulo_academico: 'Magíster', carrera_id: CARRERA_PRUEBA_ID }).expect(201);
     const line = await authenticated('post', '/lineas-investigacion', 'admin-sub').send({ codigo: `${code}-L`, nombre: 'Línea de prueba' }).expect(201);
-    const period = await createPeriod(code);
-    const start = new Date(Date.now() - 60_000);
-    const end = new Date(Date.now() + 60 * 60_000);
-    await authenticated('patch', `/periodos/${period.body.id}`, 'admin-sub').send({
-      fecha_inicio_postulacion: start.toISOString(),
-      fecha_fin_postulacion: end.toISOString(),
-      fecha_inicio_titulacion: new Date(end.getTime() + 60 * 60_000).toISOString(),
-    }).expect(200);
-    const themesPath = `/periodos/${period.body.id}/temas`;
-    const topic = await authenticated('post', themesPath, 'admin-sub').send({
+    const topic = await authenticated('post', '/temas', 'admin-sub').send({
       carrera_id: CARRERA_PRUEBA_ID, linea_id: line.body.id, docente_proponente_id: teacherProfile.body.id,
-      titulo: 'Tema administrable', descripcion: 'Descripción', min_integrantes: 1, max_integrantes: 3,
+      titulo: 'Tema administrable', descripcion: 'Descripción', tipo: 'GRUPO',
     }).expect(201);
-    return { period, themesPath, topic };
+    return { topic, topicPath: `/temas/${topic.body.id}` };
   }
 
   it('cierra, reabre y retira temas con motivo, historial y auditoría (RF-21/RF-25)', async () => {
     addAdmin();
-    const { period, themesPath, topic } = await createOpenTopic('TEMAS-CIERRE');
-    const topicPath = `${themesPath}/${topic.body.id}`;
+    const { topic, topicPath } = await createBankTopic('TEMAS-CIERRE');
     await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Borrador' }).expect(409);
     await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(200);
 
@@ -1270,18 +1252,14 @@ describe('Usuarios (e2e)', () => {
     expect(closed.body.estado).toBe(EstadoTema.CERRADO);
     await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Otra vez' }).expect(409);
 
-    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
     const reopened = await authenticated('post', `${topicPath}/publicar`, 'admin-sub').expect(200);
     expect(reopened.body.estado).toBe(EstadoTema.PUBLICADO);
 
     setTemaTestEstado(topic.body.id, EstadoTema.ASIGNADO);
     await authenticated('post', `${topicPath}/cerrar`, 'admin-sub').send({ motivo: 'Asignado' }).expect(409);
     await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Asignado' }).expect(409);
+    await authenticated('patch', topicPath, 'admin-sub').send({ titulo: 'Bloqueado por asignación' }).expect(409);
     setTemaTestEstado(topic.body.id, EstadoTema.PUBLICADO);
-
-    setPeriodoTestEstado(period.body.id, PeriodoEstado.ARCHIVADO);
-    await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Archivado' }).expect(409);
-    setPeriodoTestEstado(period.body.id, PeriodoEstado.POSTULACION_CERRADA);
 
     const withdrawn = await authenticated('post', `${topicPath}/retirar`, 'admin-sub').send({ motivo: 'Docente no disponible' }).expect(200);
     expect(withdrawn.body.estado).toBe(EstadoTema.RETIRADO);

@@ -60,6 +60,7 @@ import { PeriodosService } from '../periodos/periodos.service.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { TipoTema } from '../temas/enums/tipo-tema.enum.js';
 import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
 import { TutorPropuesto } from '../postulaciones/entities/tutor-propuesto.entity.js';
 import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enum.js';
@@ -122,7 +123,7 @@ async function verify(): Promise<void> {
   const period = await isolated.getRepository(PeriodoTitulacion).save(isolated.getRepository(PeriodoTitulacion).create({ codigo: 'CF-VERIFY', nombre: 'Verificación de conflictos', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 60_000), fecha_inicio_titulacion: new Date(now.getTime() + 600_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 3 }));
   for (const student of students) await isolated.getRepository(EstudianteHabilitado).save(isolated.getRepository(EstudianteHabilitado).create({ periodo: period, estudiante: student, origen: HabilitadoOrigen.MANUAL, lote_importacion: null, estado: HabilitadoEstado.HABILITADO, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito pendiente', situacion_ingreso: SituacionIngreso.PENDIENTE, fecha_habilitacion: now, fecha_resolucion_ingreso: null, resuelto_por: null, observacion_ingreso: null }));
   const line = await isolated.getRepository(LineaInvestigacion).save(isolated.getRepository(LineaInvestigacion).create({ codigo: 'CF', nombre: 'Conflictos', descripcion: null, activa: true }));
-  const topic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ periodo: period, linea: line, docente_proponente: teacher, titulo: 'Tema de evaluación', descripcion: 'Tema para verificar competencia', min_integrantes: 1, max_integrantes: 1, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const topic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema de evaluación', descripcion: 'Tema para verificar competencia', tipo: TipoTema.INDIVIDUAL, estado: EstadoTema.PUBLICADO, creado_en: now }));
   const appRepo = isolated.getRepository(Postulacion); const apps: Postulacion[] = [];
   for (const student of students.slice(0, 2)) {
     const application = appRepo.create({ tema: topic, periodo: period, grupo: null, estudiante: student, num_integrantes: 1, registrada_por: student.usuario, estado: EstadoPostulacion.PENDIENTE, observacion: null });
@@ -134,8 +135,8 @@ async function verify(): Promise<void> {
     apps.splice(0, apps.length, ...saved);
   });
 
-  const singleTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ periodo: period, linea: line, docente_proponente: teacher, titulo: 'Tema individual', descripcion: 'Tema para candidatura única.', min_integrantes: 1, max_integrantes: 1, estado: EstadoTema.PUBLICADO, creado_en: now }));
-  const groupTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ periodo: period, linea: line, docente_proponente: teacher, titulo: 'Tema grupal', descripcion: 'Tema para candidatura grupal.', min_integrantes: 2, max_integrantes: 3, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const singleTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema individual', descripcion: 'Tema para candidatura única.', tipo: TipoTema.INDIVIDUAL, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const groupTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema grupal', descripcion: 'Tema para candidatura grupal.', tipo: TipoTema.GRUPO, estado: EstadoTema.PUBLICADO, creado_en: now }));
   const group = await isolated.transaction(async (manager) => {
     const created = await manager.getRepository(Grupo).save(manager.getRepository(Grupo).create({ periodo: period, nombre: 'Grupo asignación', estado: GrupoEstado.ACTIVO }));
     await manager.getRepository(GrupoIntegrante).save([
@@ -175,7 +176,7 @@ async function verify(): Promise<void> {
   if (auditCount !== 1) throw new Error('No se registró exactamente una auditoría de resolución.');
 
   step = 'restricción de ganadora fuera de participantes';
-  const secondTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ periodo: period, linea: line, docente_proponente: teacher, titulo: 'Tema sin candidaturas', descripcion: 'Tema separado para probar integridad referencial.', min_integrantes: 1, max_integrantes: 1, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const secondTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema sin candidaturas', descripcion: 'Tema separado para probar integridad referencial.', tipo: TipoTema.INDIVIDUAL, estado: EstadoTema.PUBLICADO, creado_en: now }));
   const wrongWinner = await isolated.query(`INSERT INTO ${schemaSql()}."resolucion_conflicto" ("tema_id","periodo_id","resuelto_por_id","criterio_aplicado","postulacion_ganadora_id","justificacion") VALUES ($1,$2,$3,'SORTEO',$4,'Ganadora ajena')`, [secondTopic.id, period.id, adminUser.id, '00000000-0000-4000-8000-000000000000']).then(() => false, (error: unknown) => code(error) === '23503');
   if (!wrongWinner) throw new Error('La referencia de ganadora ajena no produjo una violación FK 23503 independiente.');
 
@@ -408,7 +409,7 @@ async function verify(): Promise<void> {
   step = 'protección de solapamiento entre grupo e individuo';
   const otherPeriod = await isolated.getRepository(PeriodoTitulacion).save(isolated.getRepository(PeriodoTitulacion).create({ codigo: 'CF-CROSS', nombre: 'Verificación de solapamiento', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 300_000), fecha_inicio_titulacion: new Date(now.getTime() + 600_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 3 }));
   await isolated.getRepository(EstudianteHabilitado).save(isolated.getRepository(EstudianteHabilitado).create({ periodo: otherPeriod, estudiante: students[3]!, origen: HabilitadoOrigen.MANUAL, lote_importacion: null, estado: HabilitadoEstado.HABILITADO, condicion_ingreso: CondicionIngreso.REGULAR, requisito_pendiente: null, situacion_ingreso: SituacionIngreso.ADMITIDO, fecha_habilitacion: now, fecha_resolucion_ingreso: now, resuelto_por: adminUser, observacion_ingreso: null }));
-  const otherTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ periodo: otherPeriod, linea: line, docente_proponente: teacher, titulo: 'Tema del otro período', descripcion: 'Prueba de asignación individual cruzada.', min_integrantes: 1, max_integrantes: 1, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const otherTopic = await isolated.getRepository(Tema).save(isolated.getRepository(Tema).create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema del otro período', descripcion: 'Prueba de asignación individual cruzada.', tipo: TipoTema.INDIVIDUAL, estado: EstadoTema.PUBLICADO, creado_en: now }));
   const crossApplication = await isolated.transaction(async (manager) => {
     const item = await manager.getRepository(Postulacion).save(manager.getRepository(Postulacion).create({ tema: otherTopic, periodo: otherPeriod, grupo: null, estudiante: students[3]!, num_integrantes: 1, registrada_por: students[3]!.usuario, estado: EstadoPostulacion.PENDIENTE, observacion: null }));
     await manager.getRepository(TutorPropuesto).insert({ postulacion: { id: item.id }, docente: { id: teacher.id }, orden_prioridad: 1 });

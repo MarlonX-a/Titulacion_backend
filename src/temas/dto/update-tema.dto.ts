@@ -1,12 +1,13 @@
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsString, IsUUID, Length, Max, Min, ValidateIf } from 'class-validator';
+import { IsEnum, IsString, IsUUID, Length, ValidateIf } from 'class-validator';
+import { TipoTema } from '../enums/tipo-tema.enum.js';
 
 const supplied = (_object: object, value: unknown): boolean => value !== undefined;
 const trim = ({ value }: { value: unknown }): unknown => typeof value === 'string' ? value.trim() : value;
 
 export class UpdateTemaDto {
-  @ApiPropertyOptional({ format: 'uuid', description: 'Debe pertenecer a la facultad del período y coincidir con la del docente proponente.' })
+  @ApiPropertyOptional({ format: 'uuid', description: 'Debe coincidir con la carrera del docente proponente; no cambia con postulaciones abiertas.' })
   @ValidateIf(supplied)
   @IsUUID()
   carrera_id?: string;
@@ -21,6 +22,11 @@ export class UpdateTemaDto {
   @IsUUID()
   docente_proponente_id?: string;
 
+  @ApiPropertyOptional({ enum: TipoTema, description: 'No cambia con postulaciones abiertas.' })
+  @ValidateIf(supplied)
+  @IsEnum(TipoTema)
+  tipo?: TipoTema;
+
   @ApiPropertyOptional({ maxLength: 250 })
   @ValidateIf(supplied)
   @Transform(trim)
@@ -34,18 +40,4 @@ export class UpdateTemaDto {
   @IsString()
   @Length(1, 20_000)
   descripcion?: string;
-
-  @ApiPropertyOptional({ minimum: 1, maximum: 32767, type: Number })
-  @ValidateIf(supplied)
-  @IsInt()
-  @Min(1)
-  @Max(32767)
-  min_integrantes?: number;
-
-  @ApiPropertyOptional({ minimum: 1, maximum: 32767, type: Number })
-  @ValidateIf(supplied)
-  @IsInt()
-  @Min(1)
-  @Max(32767)
-  max_integrantes?: number;
 }

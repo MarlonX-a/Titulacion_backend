@@ -36,6 +36,16 @@ describe('ResumenPeriodoService', () => {
     expect(query.mock.calls[0][1]).toEqual([periodoId]);
   });
 
+  it('counts topics by state through the period applications, not a tema.periodo_id column', async () => {
+    const { service, query } = setup({ existe: true, estudiantes_habilitados: 0, condicionados_pendientes: 0, asignaciones_vigentes: 0, tutores_asignados: 0 });
+
+    await service.obtener(periodoId);
+
+    const sql = query.mock.calls[0][0] as string;
+    expect(sql).not.toMatch(/FROM "titulacion_dev"\."tema" WHERE "periodo_id"/);
+    expect(sql).toContain('"titulacion_dev"."postulacion" p WHERE p."tema_id"=t."id" AND p."periodo_id"=$1');
+  });
+
   it('responde 404 cuando el período no existe', async () => {
     const { service, conflictos } = setup({ existe: false });
     await expect(service.obtener(periodoId)).rejects.toBeInstanceOf(NotFoundException);

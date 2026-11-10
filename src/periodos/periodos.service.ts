@@ -238,12 +238,11 @@ export class PeriodosService {
         if (dto.facultad_id !== undefined && dto.facultad_id !== current.facultad_id) {
           await this.academico.buscarFacultad(this.dataSource, dto.facultad_id);
           const rows = await manager.query(
-            `SELECT (SELECT count(*)::int FROM ${this.schema()}."tema" WHERE "periodo_id" = $1)
-                  + (SELECT count(*)::int FROM ${this.schema()}."estudiante_habilitado" WHERE "periodo_id" = $1) AS total`,
+            `SELECT count(*)::int AS total FROM ${this.schema()}."estudiante_habilitado" WHERE "periodo_id" = $1`,
             [id],
           ) as Array<{ total: number }>;
           if (Number(rows[0]?.total ?? 0) > 0) {
-            throw new ConflictException('No se puede cambiar la facultad: el período ya tiene temas o estudiantes habilitados.');
+            throw new ConflictException('No se puede cambiar la facultad: el período ya tiene estudiantes habilitados.');
           }
         }
 

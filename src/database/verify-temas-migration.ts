@@ -1,179 +1,133 @@
-import { randomBytes } from 'node:crypto';
-import { HttpException, ServiceUnavailableException } from '@nestjs/common';
-import { QueryFailedError } from 'typeorm';
-import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
-import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
-import { AuditoriaService } from '../auditoria/auditoria.service.js';
-import { Docente } from '../docentes/entities/docente.entity.js';
-import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
-import { EstudianteHabilitado } from '../habilitados/entities/estudiante-habilitado.entity.js';
-import { LoteImportacion } from '../importaciones/entities/lote-importacion.entity.js';
-import { LineaInvestigacion } from '../lineas-investigacion/entities/linea-investigacion.entity.js';
-import { CreateLineaInvestigacion20261002040000 } from './migrations/20261002040000-CreateLineaInvestigacion.js';
-import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
-import { CreateHabilitados20261002030000 } from './migrations/20261002030000-CreateHabilitados.js';
-import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
-import { CreateTemas20261002050000 } from './migrations/20261002050000-CreateTemas.js';
-import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
-import { loadEnvironment } from '../config/load-environment.js';
-import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
-import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
-import { CreateTemaDto } from '../temas/dto/create-tema.dto.js';
-import { UpdateTemaDto } from '../temas/dto/update-tema.dto.js';
-import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
-import { Tema } from '../temas/entities/tema.entity.js';
-import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
-import { TemasService } from '../temas/temas.service.js';
-import { PeriodosService } from '../periodos/periodos.service.js';
-import type { AbrirPostulacionDto } from '../periodos/dto/abrir-postulacion.dto.js';
-import type { PublicarTemaDto } from '../temas/dto/publicar-tema.dto.js';
-import { Usuario } from '../usuarios/entities/usuario.entity.js';
-import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
-import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
-import { createDatabaseOptions } from './database.options.js';
-import { DatabaseDataSource } from './database-data-source.js';
-import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
+import { catalogoSembrado } from './verify-academico.js';
+import { pgErrorCode as code, runTemporarySchemaVerification } from './verify-temp-schema.js';
 
-const schema = `test_temas_${randomBytes(8).toString('hex')}`;
-let admin: DatabaseDataSource | undefined;
-let isolated: DatabaseDataSource | undefined;
-let createdSchema = false;
-let step = 'conexión y migraciones';
+const FKS_NUEVAS = ['FK_postulacion_tema', 'FK_resolucion_conflicto_tema', 'FK_asignacion_tema_tema', 'FK_tema_lote_importacion'];
+const FKS_ANTERIORES = ['FK_postulacion_tema_periodo', 'FK_resolucion_conflicto_tema_periodo', 'FK_asignacion_tema_tema_periodo', 'FK_tema_periodo'];
 
-function schemaSql(): string {
-  if (!/^test_temas_[a-f0-9]{16}$/.test(schema)) throw new Error('El esquema temporal no es válido.');
-  return `"${schema}"`;
-}
+await runTemporarySchemaVerification({
+  prefix: 'test_banco_temas',
+  subject: 'del banco de temas',
+  cleanupSubject: 'del banco de temas',
+  success: 'Migración del banco de temas (tipo, temas sin período, claves foráneas, triggers por tipo, importación TEMAS y reversión protegida) verificada en esquema temporal.',
+  async verify({ db, schema, schemaSql: s, step }) {
+    step('columnas del banco');
+    const columnas = await db.query(
+      `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'tema' AND column_name = ANY($2::text[])`,
+      [schema, ['tipo', 'lote_importacion_id', 'periodo_id', 'min_integrantes', 'max_integrantes']],
+    ) as Array<{ column_name: string; is_nullable: string }>;
+    const nullable = new Map(columnas.map((c) => [c.column_name, c.is_nullable]));
+    if (nullable.size !== 2 || nullable.get('tipo') !== 'NO' || nullable.get('lote_importacion_id') !== 'YES') {
+      throw new Error('tema debe tener tipo NOT NULL y lote_importacion_id opcional, sin periodo_id ni límites de integrantes.');
+    }
 
-function code(error: unknown): string | undefined {
-  return error instanceof QueryFailedError ? (error.driverError as { code?: string }).code : undefined;
-}
+    step('claves foráneas');
+    const fks = await db.query(
+      `SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema = $1 AND constraint_type = 'FOREIGN KEY' AND constraint_name = ANY($2::text[])`,
+      [schema, [...FKS_NUEVAS, ...FKS_ANTERIORES]],
+    ) as Array<{ constraint_name: string }>;
+    const nombres = fks.map((fk) => fk.constraint_name).sort();
+    if (JSON.stringify(nombres) !== JSON.stringify([...FKS_NUEVAS].sort())) throw new Error(`Claves foráneas inesperadas: ${nombres.join(', ')}.`);
 
-async function verify(): Promise<void> {
-  const options = createDatabaseOptions(loadEnvironment());
-  admin = new DatabaseDataSource({ ...options, schema: 'public', entities: [], migrations: [] });
-  await admin.initialize();
-  await admin.query(`CREATE SCHEMA ${schemaSql()}`);
-  createdSchema = true;
-  isolated = new DatabaseDataSource({
-    ...options,
-    schema,
-    entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, TemaHistorial],
-    migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000],
-  });
-  await isolated.initialize();
-  await isolated.runMigrations({ transaction: 'all' });
+    step('importación TEMAS');
+    const valores = await db.query(`SELECT unnest(enum_range(NULL::${s}."lote_importacion_tipo_enum"))::text AS valor`) as Array<{ valor: string }>;
+    if (!valores.some((v) => v.valor === 'TEMAS')) throw new Error('lote_importacion_tipo_enum no incluye TEMAS.');
+    const check = await db.query(
+      `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = $1 AND c.conname = 'CHK_preparacion_importacion_periodo_tipo'`,
+      [schema],
+    ) as Array<{ def: string }>;
+    if (!check[0]?.def.includes('TEMAS')) throw new Error('La preparación de importación no admite TEMAS sin período.');
 
-  const users = isolated.getRepository(Usuario);
-  const actor = await users.save(users.create({ email: 'admin@temas.verify', nombres: 'Admin', apellidos: 'Verificación', rol: UsuarioRol.ADMIN, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'temas-admin', ultimo_acceso: null }));
-  const docenteUser = await users.save(users.create({ email: 'docente@temas.verify', nombres: 'Docente', apellidos: 'Proponente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: 'temas-docente', ultimo_acceso: null }));
-  const docentes = isolated.getRepository(Docente);
-  const docente = await docentes.save(docentes.create({ usuario: docenteUser, cedula: '0102030400', titulo_academico: 'Magíster', carrera_id: CARRERA_VERIFICACION_ID, habilitado_tutoria: false }));
-  const lineas = isolated.getRepository(LineaInvestigacion);
-  const linea = await lineas.save(lineas.create({ codigo: 'IA', nombre: 'Inteligencia artificial', descripcion: null, activa: true }));
-  const periodos = isolated.getRepository(PeriodoTitulacion);
-  const periodo = await periodos.save(periodos.create({ codigo: 'TEMAS-VERIFY', nombre: 'Verificación temas', fecha_inicio_postulacion: new Date('2026-11-02T13:00:00Z'), fecha_fin_postulacion: new Date('2026-12-01T04:59:00Z'), fecha_inicio_titulacion: new Date('2026-12-01T13:00:00Z'), estado: PeriodoEstado.BORRADOR, max_integrantes_default: 5 }));
-  const auditoria = new AuditoriaService();
-  const service = new TemasService(
-    isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), docentes,
-    isolated.getRepository(Estudiante), isolated.getRepository(EstudianteHabilitado),
-    isolated.getRepository(PeriodoTitulacion), isolated, auditoria,
-    { postulacion: () => Promise.resolve() } as unknown as NotificacionesPersistenciaService,
-  );
-  const periodosService = new PeriodosService(periodos, isolated, auditoria);
-  const dto = { carrera_id: CARRERA_VERIFICACION_ID, linea_id: linea.id, docente_proponente_id: docente.id, titulo: '  Sistema inteligente  ', descripcion: '  Descripción de verificación  ', min_integrantes: 1, max_integrantes: 3 } as CreateTemaDto;
+    step('triggers por tipo');
+    const funciones = await db.query(
+      `SELECT p.proname, pg_get_functiondef(p.oid) AS def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1 AND p.proname = ANY($2::text[])`,
+      [schema, ['validar_postulacion_y_bloquear_periodo', 'proteger_asignacion_tema']],
+    ) as Array<{ proname: string; def: string }>;
+    if (funciones.length !== 2 || funciones.some((f) => !f.def.includes('"tipo"') || f.def.includes('AND "periodo_id"=NEW."periodo_id" FOR UPDATE') || f.def.includes('t."periodo_id"=NEW."periodo_id" FOR UPDATE'))) {
+      throw new Error('Los triggers de postulación y asignación no derivan el rango del tipo del tema.');
+    }
+    const archivado = await db.query(
+      `SELECT 1 FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = 'tema' AND tg.tgname = 'TRG_tema_bloquear_periodo_archivado'`,
+      [schema],
+    ) as unknown[];
+    if (archivado.length !== 0) throw new Error('tema conserva el trigger de período archivado.');
 
-  step = 'alta e historial inicial';
-  const created = await service.create(periodo.id, dto, actor, null);
-  if (created.estado !== 'BORRADOR' || created.titulo !== 'Sistema inteligente') throw new Error('El borrador no se creó normalizado.');
-  if (await isolated.getRepository(TemaHistorial).count() !== 1 || await isolated.getRepository(Auditoria).count() !== 1) throw new Error('La creación no registró historial y auditoría.');
+    step('tema sin período');
+    const { carreraId } = await catalogoSembrado(db, s);
+    const [usuario] = await db.query(`INSERT INTO ${s}."usuario" ("email","nombres","apellidos","rol","estado") VALUES ('docente.banco@uleam.edu.ec','Docente','Banco','DOCENTE','ACTIVO') RETURNING "id"`) as Array<{ id: string }>;
+    const [docente] = await db.query(`INSERT INTO ${s}."docente" ("usuario_id","carrera_id") VALUES ($1,$2) RETURNING "id"`, [usuario!.id, carreraId]) as Array<{ id: string }>;
+    const [linea] = await db.query(`INSERT INTO ${s}."linea_investigacion" ("codigo","nombre") VALUES ('BANCO','Banco de temas') RETURNING "id"`) as Array<{ id: string }>;
+    await db.query(
+      `INSERT INTO ${s}."tema" ("carrera_id","linea_id","docente_proponente_id","titulo","descripcion","tipo") VALUES ($1,$2,$3,'Tema del banco','Descripción del banco','GRUPO')`,
+      [carreraId, linea!.id, docente!.id],
+    );
+    let tipoInvalido = false;
+    try {
+      await db.query(`INSERT INTO ${s}."tema" ("carrera_id","linea_id","docente_proponente_id","titulo","descripcion","tipo") VALUES ($1,$2,$3,'Tipo inválido','Descripción','TRIO')`, [carreraId, linea!.id, docente!.id]);
+    } catch (error: unknown) { tipoInvalido = code(error) === '22P02'; }
+    if (!tipoInvalido) throw new Error('PostgreSQL aceptó un tipo de tema desconocido.');
 
-  step = 'edición e historial';
-  const beforeNoOp = await isolated.getRepository(TemaHistorial).count();
-  await service.update(periodo.id, created.id, { titulo: 'Sistema inteligente' } as UpdateTemaDto, actor, null);
-  if (await isolated.getRepository(TemaHistorial).count() !== beforeNoOp) throw new Error('La edición sin cambios añadió historial.');
-  await service.update(periodo.id, created.id, { max_integrantes: 4 } as UpdateTemaDto, actor, '127.0.0.1');
-  if (await isolated.getRepository(TemaHistorial).count() !== 2 || await isolated.getRepository(Auditoria).count() !== 2) throw new Error('La edición no fue trazable.');
+    step('reversión protegida');
+    let protegida = false;
+    try { await db.undoLastMigration({ transaction: 'all' }); }
+    catch (error: unknown) { protegida = error instanceof Error && error.message.includes('no tienen una asignación'); }
+    if (!protegida) throw new Error('La reversión no protegió los temas sin asignación.');
 
-  step = 'apertura y publicación concurrentes';
-  const now = Date.now();
-  periodo.fecha_inicio_postulacion = new Date(now - 60_000);
-  periodo.fecha_fin_postulacion = new Date(now + 5 * 60_000);
-  periodo.fecha_inicio_titulacion = new Date(now + 10 * 60_000);
-  await periodos.save(periodo);
-  const openingAuditCount = await isolated.getRepository(Auditoria).count();
-  const openFailFn = `${schemaSql()}."rechazar_auditoria_apertura"`;
-  const auditTable = `${schemaSql()}."auditoria"`;
-  await isolated.query(`CREATE FUNCTION ${openFailFn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo de auditoría'; END; $$`);
-  await isolated.query(`CREATE TRIGGER "TRG_verify_open_audit_failure" BEFORE INSERT ON ${auditTable} FOR EACH ROW EXECUTE FUNCTION ${openFailFn}()`);
-  let openControlled = false;
-  try { await periodosService.abrirPostulacion(periodo.id, {} as AbrirPostulacionDto, actor, null); } catch (error: unknown) { openControlled = error instanceof ServiceUnavailableException; }
-  await isolated.query(`DROP TRIGGER "TRG_verify_open_audit_failure" ON ${auditTable}`);
-  await isolated.query(`DROP FUNCTION ${openFailFn}()`);
-  if (!openControlled || (await periodos.findOneBy({ id: periodo.id }))?.estado !== PeriodoEstado.BORRADOR || await isolated.getRepository(Auditoria).count() !== openingAuditCount) {
-    throw new Error('La apertura dejó el período actualizado sin su auditoría.');
-  }
-  const abrir = () => periodosService.abrirPostulacion(periodo.id, {} as AbrirPostulacionDto, actor, null);
-  const aperturas = await Promise.allSettled([abrir(), abrir()]);
-  if (aperturas.filter((result) => result.status === 'fulfilled').length !== 1 || (await periodos.findOneBy({ id: periodo.id }))?.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
-    throw new Error('La apertura concurrente no produjo una sola transición exitosa.');
-  }
-  const publicar = () => service.publish(periodo.id, created.id, {} as PublicarTemaDto, actor, null);
-  const publicaciones = await Promise.allSettled([publicar(), publicar()]);
-  if (publicaciones.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('La publicación concurrente produjo más de una transición exitosa.');
-  if ((await isolated.getRepository(Tema).findOneBy({ id: created.id }))?.estado !== EstadoTema.PUBLICADO) throw new Error('El tema no quedó publicado.');
-  const publishHistory = await isolated.getRepository(TemaHistorial).findOne({ where: { tema: { id: created.id }, estado_nuevo: EstadoTema.PUBLICADO } });
-  if (publishHistory?.estado_anterior !== EstadoTema.BORRADOR) throw new Error('El historial de publicación no conservó BORRADOR como estado anterior.');
+    step('reversión sin datos');
+    await db.query(`DELETE FROM ${s}."tema"`);
+    await db.undoLastMigration({ transaction: 'all' });
+    const restaurado = await db.query(
+      `SELECT (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'tema' AND column_name IN ('periodo_id','min_integrantes','max_integrantes')) AS columnas, (SELECT count(*)::int FROM unnest(enum_range(NULL::${s}."lote_importacion_tipo_enum")) v WHERE v::text = 'TEMAS') AS temas`,
+      [schema],
+    ) as Array<{ columnas: number; temas: number }>;
+    if (Number(restaurado[0]?.columnas) !== 3 || Number(restaurado[0]?.temas) !== 0) throw new Error('La reversión no restauró el modelo por período.');
 
-  step = 'publicación atómica de estado, historial y auditoría';
-  const secondDraft = await service.create(periodo.id, dto, actor, null);
-  const historyBeforeFailedPublish = await isolated.getRepository(TemaHistorial).count();
-  const auditsBeforeFailedPublish = await isolated.getRepository(Auditoria).count();
-  const publishFailFn = `${schemaSql()}."rechazar_auditoria_publicacion"`;
-  await isolated.query(`CREATE FUNCTION ${publishFailFn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo de auditoría'; END; $$`);
-  await isolated.query(`CREATE TRIGGER "TRG_verify_publication_audit_failure" BEFORE INSERT ON ${auditTable} FOR EACH ROW EXECUTE FUNCTION ${publishFailFn}()`);
-  let publishControlled = false;
-  try { await service.publish(periodo.id, secondDraft.id, {} as PublicarTemaDto, actor, null); } catch (error: unknown) { publishControlled = error instanceof ServiceUnavailableException; }
-  await isolated.query(`DROP TRIGGER "TRG_verify_publication_audit_failure" ON ${auditTable}`);
-  await isolated.query(`DROP FUNCTION ${publishFailFn}()`);
-  if (!publishControlled || (await isolated.getRepository(Tema).findOneBy({ id: secondDraft.id }))?.estado !== EstadoTema.BORRADOR || await isolated.getRepository(TemaHistorial).count() !== historyBeforeFailedPublish || await isolated.getRepository(Auditoria).count() !== auditsBeforeFailedPublish) {
-    throw new Error('La publicación dejó estado, historial o auditoría parcialmente persistidos.');
-  }
+    // Con el modelo por período restaurado (migración anterior a 20261106100000) se prueba el respaldo de datos.
+    step('fixtures del modelo por período');
+    const [periodo] = await db.query(
+      `INSERT INTO ${s}."periodo_titulacion" ("codigo","nombre","fecha_inicio_postulacion","fecha_fin_postulacion","fecha_inicio_titulacion","max_integrantes_default","facultad_id") VALUES ('BANCO','Período banco','2026-01-01','2026-02-01','2026-02-01',5,$1) RETURNING "id"`,
+      [(await catalogoSembrado(db, s)).facultadId],
+    ) as Array<{ id: string }>;
+    const [usuarioEst] = await db.query(`INSERT INTO ${s}."usuario" ("email","nombres","apellidos","rol","estado") VALUES ('est.banco@live.uleam.edu.ec','Est','Banco','ESTUDIANTE','ACTIVO') RETURNING "id"`) as Array<{ id: string }>;
+    const [estudiante] = await db.query(`INSERT INTO ${s}."estudiante" ("usuario_id","cedula","matricula","carrera_id","nivel") VALUES ($1,'0102030499','BANCO-1',$2,5) RETURNING "id"`, [usuarioEst!.id, carreraId]) as Array<{ id: string }>;
+    await db.query(`INSERT INTO ${s}."estudiante_habilitado" ("periodo_id","estudiante_id","origen","estado","condicion_ingreso","requisito_pendiente","situacion_ingreso") VALUES ($1,$2,'MANUAL','HABILITADO','CONDICIONADO','Pendiente','PENDIENTE')`, [periodo!.id, estudiante!.id]);
+    const crearTema = async (titulo: string, min: number, max: number): Promise<string> => {
+      const [fila] = await db.query(
+        `INSERT INTO ${s}."tema" ("periodo_id","carrera_id","linea_id","docente_proponente_id","titulo","descripcion","min_integrantes","max_integrantes") VALUES ($1,$2,$3,$4,$5,'Descripción',$6,$7) RETURNING "id"`,
+        [periodo!.id, carreraId, linea!.id, docente!.id, titulo, min, max],
+      ) as Array<{ id: string }>;
+      return fila!.id;
+    };
+    const crearPostulacion = async (temaId: string, estado: string): Promise<void> => {
+      await db.query(`ALTER TABLE ${s}."postulacion" DISABLE TRIGGER USER`);
+      await db.query(`INSERT INTO ${s}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id","estado") VALUES ($1,$2,$3,1,$4,$5)`, [temaId, periodo!.id, estudiante!.id, usuarioEst!.id, estado]);
+      await db.query(`ALTER TABLE ${s}."postulacion" ENABLE TRIGGER USER`);
+    };
 
-  step = 'restricciones de rango';
-  let rejected = false;
-  try { await isolated.query(`INSERT INTO ${schemaSql()}."tema" ("periodo_id", "linea_id", "docente_proponente_id", "titulo", "descripcion", "min_integrantes", "max_integrantes") VALUES ($1,$2,$3,'Inválido','Descripción',4,2)`, [periodo.id, linea.id, docente.id]); } catch (error: unknown) { rejected = code(error) === '23514'; }
-  if (!rejected) throw new Error('PostgreSQL aceptó límites incompatibles.');
+    step('guarda: postulación activa fuera del rango del tipo');
+    const temaPareja = await crearTema('Tema 1-2 con postulación individual', 1, 2);
+    await crearPostulacion(temaPareja, 'PENDIENTE');
+    let mensajeGuarda = '';
+    try { await db.runMigrations({ transaction: 'all' }); }
+    catch (error: unknown) { mensajeGuarda = error instanceof Error ? error.message : ''; }
+    if (!mensajeGuarda.includes('No se puede migrar al banco de temas') || !mensajeGuarda.includes(temaPareja)) throw new Error('La migración no abortó por una postulación activa fuera del rango del tipo.');
+    const intactas = await db.query(`SELECT count(*)::int AS total FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'tema' AND column_name IN ('periodo_id','min_integrantes','max_integrantes')`, [schema]) as Array<{ total: number }>;
+    if (Number(intactas[0]?.total) !== 3) throw new Error('La guarda abortada dejó cambios en el esquema.');
 
-  step = 'atomicidad tema-historial-auditoría';
-  const fn = `${schemaSql()}."rechazar_auditoria_temas"`;
-  await isolated.query(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fallo de auditoría'; END; $$`);
-  await isolated.query(`CREATE TRIGGER "TRG_verify_temas_audit_failure" BEFORE INSERT ON ${auditTable} FOR EACH ROW EXECUTE FUNCTION ${fn}()`);
-  let controlled = false;
-  try { await service.create(periodo.id, { ...dto, titulo: 'No persistir' }, actor, null); } catch (error: unknown) { controlled = error instanceof ServiceUnavailableException; }
-  await isolated.query(`DROP TRIGGER "TRG_verify_temas_audit_failure" ON ${auditTable}`);
-  await isolated.query(`DROP FUNCTION ${fn}()`);
-  if (!controlled || await isolated.getRepository(Tema).findOneBy({ titulo: 'No persistir' })) throw new Error('El tema quedó persistido sin auditoría.');
-
-  step = 'reversión protegida';
-  let protectedDown = false;
-  try { await isolated.undoLastMigration(); } catch (error: unknown) { protectedDown = error instanceof Error && error.message.includes('tablas de temas contienen registros'); }
-  if (!protectedDown) throw new Error('La reversión no protegió los datos de temas.');
-}
-
-async function cleanup(): Promise<void> {
-  let failed = false;
-  if (isolated?.isInitialized) { try { await isolated.destroy(); } catch { failed = true; } }
-  if (createdSchema && admin?.isInitialized) { try { await admin.query(`DROP SCHEMA ${schemaSql()} CASCADE`); } catch { failed = true; } }
-  if (admin?.isInitialized) { try { await admin.destroy(); } catch { failed = true; } }
-  if (failed) throw new Error('No se pudo limpiar el esquema temporal de verificación.');
-}
-
-let verified = false;
-try { await verify(); verified = true; } catch (error: unknown) {
-  const cause = error instanceof HttpException ? error.cause : error;
-  const detail = cause instanceof QueryFailedError ? `error PostgreSQL ${code(cause) ?? 'desconocido'}` : error instanceof Error ? error.message : 'error desconocido';
-  console.error(`Falló la verificación aislada durante ${step}: ${detail}. No se modificó el esquema configurado.`);
-  process.exitCode = 1;
-} finally { try { await cleanup(); } catch { console.error('No se pudo limpiar el esquema temporal de verificación.'); process.exitCode = 1; } }
-if (verified && process.exitCode !== 1) console.info('Migraciones, restricciones, historiales, apertura y publicación concurrentes, auditoría atómica y reversión de temas verificadas en esquema temporal.');
+    step('mapeo de tipo (INDIVIDUAL, PAREJA, GRUPO)');
+    await db.query(`ALTER TABLE ${s}."postulacion" DISABLE TRIGGER USER`);
+    await db.query(`DELETE FROM ${s}."postulacion"`);
+    await db.query(`ALTER TABLE ${s}."postulacion" ENABLE TRIGGER USER`);
+    await db.query(`DELETE FROM ${s}."tema"`);
+    const temaIndividual = await crearTema('Tema 1-1', 1, 1);
+    const temaParejaOk = await crearTema('Tema 1-2', 1, 2);
+    const temaPareja22 = await crearTema('Tema 2-2', 2, 2);
+    const temaGrupo = await crearTema('Tema 3-5', 3, 5);
+    await crearPostulacion(temaIndividual, 'ACEPTADA');
+    await db.runMigrations({ transaction: 'all' });
+    const tipos = await db.query(`SELECT "id", "tipo"::text AS tipo FROM ${s}."tema"`) as Array<{ id: string; tipo: string }>;
+    const tipoDe = (id: string): string | undefined => tipos.find((tema) => tema.id === id)?.tipo;
+    if (tipoDe(temaIndividual) !== 'INDIVIDUAL' || tipoDe(temaParejaOk) !== 'PAREJA' || tipoDe(temaPareja22) !== 'PAREJA' || tipoDe(temaGrupo) !== 'GRUPO') {
+      throw new Error(`Mapeo de tipo inesperado: ${JSON.stringify(tipos)}.`);
+    }
+  },
+});

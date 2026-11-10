@@ -81,7 +81,11 @@ export class ResumenPeriodoService {
       ${agrupar('"estado"', 'estudiante_habilitado')} AS habilitados_por_estado,
       ${agrupar('"condicion_ingreso"', 'estudiante_habilitado')} AS habilitados_por_condicion,
       ${agrupar('"situacion_ingreso"', 'estudiante_habilitado')} AS habilitados_por_situacion,
-      ${agrupar('"estado"', 'tema')} AS temas_por_estado,
+      (SELECT jsonb_object_agg(x.clave, x.total) FROM (
+        SELECT t."estado"::text AS clave, count(*)::int AS total FROM ${s}."tema" t
+        WHERE EXISTS (SELECT 1 FROM ${s}."postulacion" p WHERE p."tema_id"=t."id" AND p."periodo_id"=$1)
+        GROUP BY t."estado"
+      ) x) AS temas_por_estado,
       ${agrupar('"estado"', 'postulacion')} AS postulaciones_por_estado,
       (SELECT count(*)::int FROM ${s}."asignacion_tema" WHERE "periodo_id"=$1 AND "estado"='VIGENTE') AS asignaciones_vigentes,
       (SELECT count(*)::int FROM ${s}."asignacion_tema" a WHERE a."periodo_id"=$1 AND a."estado"='VIGENTE'

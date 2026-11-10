@@ -22,6 +22,7 @@ import { ConflictoParticipante } from '../conflictos/entities/conflicto-particip
 import { Tema } from '../temas/entities/tema.entity.js';
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { admiteIntegrantes } from '../temas/integrantes-tema.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
@@ -37,7 +38,7 @@ import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enu
 
 interface PgError { code?: string; }
 const relations = {
-  tema: { periodo: true, linea: true, docente_proponente: { usuario: true } },
+  tema: { linea: true, docente_proponente: { usuario: true } },
   postulacion: true, grupo: true, estudiante: { usuario: true }, aprobada_por: true, anulada_por: true,
 } as const;
 
@@ -62,9 +63,9 @@ export class AsignacionesTemaService {
         const found = await manager.getRepository(Postulacion).findOne({ where: { id: postulacionId, periodo: { id: periodoId } }, relations: { tema: true, grupo: true, estudiante: true, periodo: true } });
         if (!found) throw new NotFoundException('No existe esa postulación en el período indicado.');
         const topicRepo = manager.getRepository(Tema);
-        const topicLock = await topicRepo.findOne({ where: { id: found.tema.id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
+        const topicLock = await topicRepo.findOne({ where: { id: found.tema.id }, lock: { mode: 'pessimistic_write' } });
         if (!topicLock) throw new NotFoundException('No existe el tema de esa postulación.');
-        const topic = await topicRepo.findOne({ where: { id: topicLock.id }, relations: { periodo: true, linea: true, docente_proponente: { usuario: true } } });
+        const topic = await topicRepo.findOne({ where: { id: topicLock.id }, relations: { linea: true, docente_proponente: { usuario: true } } });
         if (!topic) throw new NotFoundException('No existe el tema de esa postulación.');
         if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('Solo se asignan postulaciones a temas PUBLICADOS.');
         const initial = found.grupo ? await manager.getRepository(Grupo).findOne({ where: { id: found.grupo.id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } }) : null;
@@ -131,6 +132,7 @@ export class AsignacionesTemaService {
           await this.auditoria.registrar(manager, { actor, accion: 'RECHAZAR_POSTULACION_POR_ASIGNACION', entidad_tipo: 'postulacion', entidad_id: loser.id, valores_anteriores: previous, valores_nuevos: { estado: loser.estado, observacion: loser.observacion }, ip_origen: ip });
           await this.notificaciones.postulacion(manager, loser.id, NotificacionTipo.POSTULACION_RECHAZADA, actor.id);
         }
+        await this.persistencia.rechazarAbiertasDeOtrosPeriodos(manager, topic.id, periodoId, dto.motivo, actor, ip);
         return assignment.id;
       });
       return this.getById(periodoId, id, actor, true);
@@ -216,13 +218,13 @@ export class AsignacionesTemaService {
       if (members.length < 2 || members.length !== app.num_integrantes || members.filter((member) => member.rol_en_grupo === GrupoIntegranteRol.REPRESENTANTE).length !== 1) throw new ConflictException('La composición o representación del grupo cambió desde su postulación.');
       const ids = members.map((member) => member.estudiante.id).sort();
       await this.validateParticipants(manager, app.periodo.id, ids, start);
-      if (ids.length < topic.min_integrantes || ids.length > topic.max_integrantes) throw new ConflictException('La composición ya no está dentro del rango del tema.');
+      if (!admiteIntegrantes(topic.tipo, ids.length, app.periodo.max_integrantes_default)) throw new ConflictException('La composición ya no está dentro del rango del tema.');
       return ids;
     }
     if (!app.estudiante) throw new ConflictException('La modalidad de la postulación no es válida.');
     const ids = [app.estudiante.id];
     await this.validateParticipants(manager, app.periodo.id, ids, start);
-    if (1 < topic.min_integrantes || 1 > topic.max_integrantes) throw new ConflictException('El tema no admite una postulación individual.');
+    if (!admiteIntegrantes(topic.tipo, 1, app.periodo.max_integrantes_default)) throw new ConflictException('El tema no admite una postulación individual.');
     return ids;
   }
 
@@ -237,7 +239,7 @@ export class AsignacionesTemaService {
 
   private async isCandidateEligible(manager: EntityManager, app: Postulacion, topic: Tema, start: Date): Promise<boolean> {
     try {
-      if (app.estado !== EstadoPostulacion.PENDIENTE || app.num_integrantes < topic.min_integrantes || app.num_integrantes > topic.max_integrantes) return false;
+      if (app.estado !== EstadoPostulacion.PENDIENTE || !admiteIntegrantes(topic.tipo, app.num_integrantes, app.periodo.max_integrantes_default)) return false;
       await this.validateApplication(manager, app, topic, start);
       return true;
     } catch { return false; }
@@ -261,7 +263,7 @@ export class AsignacionesTemaService {
     };
   }
 
-  private topicValues(topic: Tema): Record<string, unknown> { return { periodo_id: topic.periodo.id, linea_id: topic.linea.id, docente_proponente_id: topic.docente_proponente.id, titulo: topic.titulo, descripcion: topic.descripcion, min_integrantes: topic.min_integrantes, max_integrantes: topic.max_integrantes, estado: topic.estado, creado_en: topic.creado_en }; }
+  private topicValues(topic: Tema): Record<string, unknown> { return { carrera_id: topic.carrera_id, linea_id: topic.linea.id, docente_proponente_id: topic.docente_proponente.id, tipo: topic.tipo, titulo: topic.titulo, descripcion: topic.descripcion, estado: topic.estado, creado_en: topic.creado_en }; }
   private schema(manager: EntityManager): string { const value = (manager.connection.options as PostgresConnectionOptions).schema ?? 'public'; if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.'); return `"${value}"`; }
   private handleDatabaseError(error: unknown): never {
     if (error instanceof HttpException) throw error;

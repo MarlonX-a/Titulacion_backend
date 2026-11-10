@@ -3,10 +3,10 @@ import { DataSource, EntityManager, In, QueryFailedError } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
+import { rangoIntegrantesSql } from '../temas/integrantes-tema.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
-import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
 import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enum.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { CriterioConflicto } from './enums/criterio-conflicto.enum.js';
@@ -103,10 +103,10 @@ export class ConflictosService {
         const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodoId }, lock: { mode: 'pessimistic_write' } });
         if (!period) throw new NotFoundException('No existe el período indicado.');
         if (period.estado !== PeriodoEstado.POSTULACION_CERRADA) throw new ConflictException('Solo se resuelven conflictos con el período en POSTULACION_CERRADA.');
-        const topic = await manager.getRepository(Tema).findOne({ where: { id: temaId, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
+        const topic = await manager.getRepository(Tema).findOne({ where: { id: temaId }, lock: { mode: 'pessimistic_write' } });
         if (!topic) throw new NotFoundException('No existe el tema en el período indicado.');
         if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('Solo se resuelven conflictos de temas PUBLICADOS.');
-        const exists = await manager.getRepository(ResolucionConflicto).findOneBy({ tema: { id: temaId } });
+        const exists = await manager.getRepository(ResolucionConflicto).findOneBy({ tema: { id: temaId }, periodo: { id: periodoId } });
         if (exists) throw new ConflictException('El conflicto de este tema ya tiene una resolución registrada.');
 
         const inputIds = dto.participantes.map((item) => item.postulacion_id);
@@ -132,7 +132,7 @@ export class ConflictosService {
         const participantRepo = manager.getRepository(ConflictoParticipante);
         await participantRepo.insert(dto.participantes.map((item) => ({
           resolucion_conflicto_id: resolution.id, tema_id: temaId,
-          postulacion: { id: item.postulacion_id } as Postulacion,
+          postulacion: { id: item.postulacion_id },
           puntaje_criterio: item.puntaje_criterio === undefined ? null : item.puntaje_criterio.toFixed(2),
         })));
         const before = rows.filter((row) => row.elegible).map((row) => ({ postulacion_id: row.id, fecha_postulacion: row.fecha_postulacion }));
@@ -142,13 +142,16 @@ export class ConflictosService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
+  /** Topics of a period = bank topics with at least one application in that period. */
   private async topicRows(manager: EntityManager, periodoId: string): Promise<TopicRow[]> {
-    const rows = await manager.query(`SELECT t."id",t."titulo",t."estado"::text AS estado,t."creado_en",t."min_integrantes",t."max_integrantes",r."id" AS resolucion_id,r."postulacion_ganadora_id",r."criterio_aplicado"::text AS criterio_aplicado,r."justificacion",r."fecha_resolucion",COALESCE(array_agg(p."id") FILTER (WHERE p."id" IS NOT NULL AND elig."elegible"), ARRAY[]::uuid[]) AS elegibles FROM ${this.schema(manager)}."tema" t LEFT JOIN ${this.schema(manager)}."resolucion_conflicto" r ON r."tema_id"=t."id" LEFT JOIN ${this.schema(manager)}."postulacion" p ON p."tema_id"=t."id" AND p."periodo_id"=t."periodo_id" AND p."estado"='PENDIENTE' LEFT JOIN LATERAL (SELECT ${this.eligibilitySql(manager,'p','t')} AS elegible) elig ON true WHERE t."periodo_id"=$1 GROUP BY t."id",r."id" ORDER BY t."creado_en" DESC,t."id" ASC`, [periodoId]) as TopicRow[];
+    const s = this.schema(manager);
+    const rango = rangoIntegrantesSql('t', 'pe."max_integrantes_default"');
+    const rows = await manager.query(`SELECT t."id",t."titulo",t."estado"::text AS estado,t."creado_en",${rango.min} AS min_integrantes,${rango.max} AS max_integrantes,r."id" AS resolucion_id,r."postulacion_ganadora_id",r."criterio_aplicado"::text AS criterio_aplicado,r."justificacion",r."fecha_resolucion",COALESCE(array_agg(p."id") FILTER (WHERE p."id" IS NOT NULL AND elig."elegible"), ARRAY[]::uuid[]) AS elegibles FROM ${s}."tema" t JOIN ${s}."periodo_titulacion" pe ON pe."id"=$1 LEFT JOIN ${s}."resolucion_conflicto" r ON r."tema_id"=t."id" AND r."periodo_id"=$1 LEFT JOIN ${s}."postulacion" p ON p."tema_id"=t."id" AND p."periodo_id"=$1 AND p."estado"='PENDIENTE' LEFT JOIN LATERAL (SELECT ${this.eligibilitySql(manager,'p','t')} AS elegible) elig ON true WHERE EXISTS (SELECT 1 FROM ${s}."postulacion" px WHERE px."tema_id"=t."id" AND px."periodo_id"=$1) GROUP BY t."id",r."id",pe."max_integrantes_default" ORDER BY t."creado_en" DESC,t."id" ASC`, [periodoId]) as TopicRow[];
     return rows;
   }
 
   private async topicRow(manager: EntityManager, periodoId: string, temaId: string): Promise<TopicRow> {
-    const topic = await manager.getRepository(Tema).findOneBy({ id: temaId, periodo: { id: periodoId } });
+    const topic = await manager.getRepository(Tema).findOneBy({ id: temaId });
     if (!topic) throw new NotFoundException('No existe el tema en el período indicado.');
     const rows = await this.topicRows(manager, periodoId);
     const row = rows.find((item) => item.id === temaId);
@@ -163,7 +166,8 @@ export class ConflictosService {
 
   private eligibilitySql(manager: EntityManager, p: string, t: string): string {
     const s = this.schema(manager);
-    return `(${p}."estado"='PENDIENTE' AND ${t}."estado"='PUBLICADO' AND ${p}."num_integrantes" BETWEEN ${t}."min_integrantes" AND ${t}."max_integrantes" AND CASE WHEN ${p}."estudiante_id" IS NOT NULL THEN ${p}."num_integrantes"=1 AND EXISTS (SELECT 1 FROM ${s}."estudiante_habilitado" h JOIN ${s}."estudiante" e ON e."id"=h."estudiante_id" JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE h."periodo_id"=${p}."periodo_id" AND h."estudiante_id"=${p}."estudiante_id" AND h."estado"='HABILITADO' AND h."situacion_ingreso" IN ('PENDIENTE','ADMITIDO') AND u."estado"='ACTIVO' AND u."rol"='ESTUDIANTE') ELSE EXISTS (SELECT 1 FROM ${s}."grupo" g WHERE g."id"=${p}."grupo_id" AND g."periodo_id"=${p}."periodo_id" AND g."estado"='ACTIVO' AND (SELECT count(*) FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=g."id" AND gi."estado"='ACTIVO')=${p}."num_integrantes" AND (SELECT count(*) FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=g."id" AND gi."estado"='ACTIVO' AND gi."rol_en_grupo"='REPRESENTANTE')=1 AND NOT EXISTS (SELECT 1 FROM ${s}."grupo_integrante" gi LEFT JOIN ${s}."estudiante_habilitado" h ON h."periodo_id"=gi."periodo_id" AND h."estudiante_id"=gi."estudiante_id" LEFT JOIN ${s}."estudiante" e ON e."id"=gi."estudiante_id" LEFT JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE gi."grupo_id"=g."id" AND gi."estado"='ACTIVO' AND (h."estado" IS DISTINCT FROM 'HABILITADO' OR h."situacion_ingreso" NOT IN ('PENDIENTE','ADMITIDO') OR u."estado" IS DISTINCT FROM 'ACTIVO' OR u."rol" IS DISTINCT FROM 'ESTUDIANTE'))) END)`;
+    const rango = rangoIntegrantesSql(t, `(SELECT pe2."max_integrantes_default" FROM ${s}."periodo_titulacion" pe2 WHERE pe2."id"=${p}."periodo_id")`);
+    return `(${p}."estado"='PENDIENTE' AND ${t}."estado"='PUBLICADO' AND ${p}."num_integrantes" BETWEEN ${rango.min} AND ${rango.max} AND CASE WHEN ${p}."estudiante_id" IS NOT NULL THEN ${p}."num_integrantes"=1 AND EXISTS (SELECT 1 FROM ${s}."estudiante_habilitado" h JOIN ${s}."estudiante" e ON e."id"=h."estudiante_id" JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE h."periodo_id"=${p}."periodo_id" AND h."estudiante_id"=${p}."estudiante_id" AND h."estado"='HABILITADO' AND h."situacion_ingreso" IN ('PENDIENTE','ADMITIDO') AND u."estado"='ACTIVO' AND u."rol"='ESTUDIANTE') ELSE EXISTS (SELECT 1 FROM ${s}."grupo" g WHERE g."id"=${p}."grupo_id" AND g."periodo_id"=${p}."periodo_id" AND g."estado"='ACTIVO' AND (SELECT count(*) FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=g."id" AND gi."estado"='ACTIVO')=${p}."num_integrantes" AND (SELECT count(*) FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=g."id" AND gi."estado"='ACTIVO' AND gi."rol_en_grupo"='REPRESENTANTE')=1 AND NOT EXISTS (SELECT 1 FROM ${s}."grupo_integrante" gi LEFT JOIN ${s}."estudiante_habilitado" h ON h."periodo_id"=gi."periodo_id" AND h."estudiante_id"=gi."estudiante_id" LEFT JOIN ${s}."estudiante" e ON e."id"=gi."estudiante_id" LEFT JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE gi."grupo_id"=g."id" AND gi."estado"='ACTIVO' AND (h."estado" IS DISTINCT FROM 'HABILITADO' OR h."situacion_ingreso" NOT IN ('PENDIENTE','ADMITIDO') OR u."estado" IS DISTINCT FROM 'ACTIVO' OR u."rol" IS DISTINCT FROM 'ESTUDIANTE'))) END)`;
   }
 
   private topicResponse(row: TopicRow) { return { tema_id: row.id, titulo: row.titulo, estado_tema: row.estado, min_integrantes: Number(row.min_integrantes), max_integrantes: Number(row.max_integrantes), cantidad_postulaciones_elegibles: row.elegibles.length, estado_conflicto: row.resolucion_id ? EstadoConsultaConflicto.RESUELTO : row.elegibles.length >= 2 ? EstadoConsultaConflicto.SIN_RESOLVER : null, resolucion_id: row.resolucion_id, postulacion_ganadora_id: row.postulacion_ganadora_id }; }

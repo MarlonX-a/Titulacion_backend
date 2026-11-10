@@ -8,13 +8,14 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, LessThanOrEqual, MoreThanOrEqual, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, QueryFailedError, Repository, type FindOptionsWhere } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
 import { AsignacionTemaEstado } from '../asignaciones-tema/enums/asignacion-tema-estado.enum.js';
 import { AcademicoService } from '../academico/academico.service.js';
 import { resumenCatalogo, type CatalogoAcademico } from '../academico/catalogo-academico.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import type { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
@@ -30,25 +31,33 @@ import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
+import type { ConsultaTemaQueryDto } from './dto/consulta-tema-query.dto.js';
 import { CreateTemaDto } from './dto/create-tema.dto.js';
 import { ListTemasQueryDto } from './dto/list-temas-query.dto.js';
+import type { MotivoTemaDto } from './dto/motivo-tema.dto.js';
+import type { PublicarTemaDto } from './dto/publicar-tema.dto.js';
 import { TemaHistorialResponseDto } from './dto/tema-historial-response.dto.js';
 import { TemaResponseDto } from './dto/tema-response.dto.js';
 import { UpdateTemaDto } from './dto/update-tema.dto.js';
-import type { PublicarTemaDto } from './dto/publicar-tema.dto.js';
-import type { MotivoTemaDto } from './dto/motivo-tema.dto.js';
+import { filtroEstados, puedeEditarse } from './disponibilidad-tema.js';
 import { TemaHistorial } from './entities/tema-historial.entity.js';
 import { Tema } from './entities/tema.entity.js';
 import { EstadoTema } from './enums/estado-tema.enum.js';
+import { integrantesPermitidos } from './integrantes-tema.js';
 
 interface PostgresDriverError { code?: string; }
 export interface PagedTemas { data: TemaResponseDto[]; total: number; page: number; limit: number; }
 export interface PagedTemaHistorial { data: TemaHistorialResponseDto[]; total: number; page: number; limit: number; }
 
-function schemaOf(manager: EntityManager): string {
-  const value = (manager.connection.options as PostgresConnectionOptions).schema ?? 'public';
+function schemaFrom(options: unknown): string {
+  const value = (options as PostgresConnectionOptions).schema ?? 'public';
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(value)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
   return `"${value}"`;
+}
+
+/** SQL predicate (alias `p` = postulacion) excluding applications of ARCHIVADO periods, which are immutable history. */
+function notArchived(schema: string): string {
+  return `NOT EXISTS (SELECT 1 FROM ${schema}."periodo_titulacion" pe WHERE pe."id"=p."periodo_id" AND pe."estado"='ARCHIVADO')`;
 }
 
 function hasCode(error: unknown, code: string): boolean {
@@ -57,23 +66,22 @@ function hasCode(error: unknown, code: string): boolean {
 
 function temaValues(tema: Tema): Record<string, unknown> {
   return {
-    periodo_id: tema.periodo.id,
     carrera_id: tema.carrera_id,
     linea_id: tema.linea.id,
     docente_proponente_id: tema.docente_proponente.id,
+    tipo: tema.tipo,
     titulo: tema.titulo,
     descripcion: tema.descripcion,
-    min_integrantes: tema.min_integrantes,
-    max_integrantes: tema.max_integrantes,
     estado: tema.estado,
+    lote_importacion_id: tema.lote_importacion_id ?? null,
     creado_en: tema.creado_en,
   };
 }
 
-function responseFrom(tema: Tema, catalogo: CatalogoAcademico): TemaResponseDto {
+function responseFrom(tema: Tema, catalogo: CatalogoAcademico, maxGrupo?: number): TemaResponseDto {
+  const rango = integrantesPermitidos(tema.tipo, maxGrupo);
   return {
     id: tema.id,
-    periodo_id: tema.periodo.id,
     carrera_id: tema.carrera_id,
     carrera: resumenCatalogo(catalogo.carrera(tema.carrera_id), tema.carrera_id),
     linea_id: tema.linea.id,
@@ -86,9 +94,11 @@ function responseFrom(tema: Tema, catalogo: CatalogoAcademico): TemaResponseDto 
     },
     titulo: tema.titulo,
     descripcion: tema.descripcion,
-    min_integrantes: tema.min_integrantes,
-    max_integrantes: tema.max_integrantes,
+    tipo: tema.tipo,
+    min_integrantes: rango.min,
+    max_integrantes: rango.max,
     estado: tema.estado,
+    lote_importacion_id: tema.lote_importacion_id ?? null,
     creado_en: tema.creado_en,
     disponible: tema.estado === EstadoTema.PUBLICADO,
     postulaciones_abiertas: 0,
@@ -108,8 +118,9 @@ function historialResponseFrom(item: TemaHistorial): TemaHistorialResponseDto {
   };
 }
 
-const temaRelations = { periodo: true, linea: true, docente_proponente: { usuario: true } } as const;
+const temaRelations = { linea: true, docente_proponente: { usuario: true } } as const;
 
+/** Career topic bank: topics are not bound to a period; applications and assignments carry the period. */
 @Injectable()
 export class TemasService {
   constructor(
@@ -125,26 +136,22 @@ export class TemasService {
     private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
-  private async respuesta(tema: Tema): Promise<TemaResponseDto> {
-    return responseFrom(tema, await this.academico.catalogo(this.dataSource));
+  private async respuesta(tema: Tema, maxGrupo?: number): Promise<TemaResponseDto> {
+    return responseFrom(tema, await this.academico.catalogo(this.dataSource), maxGrupo);
   }
 
-  async create(periodoId: string, dto: CreateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+  async create(dto: CreateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const periodo = await this.lockWritablePeriod(manager, periodoId);
-        const carrera = await this.academico.assertCarreraEnFacultad(this.dataSource, dto.carrera_id, periodo.facultad_id);
+        const carrera = await this.academico.buscarCarrera(this.dataSource, dto.carrera_id);
         const refs = await this.references(manager, dto.linea_id, dto.docente_proponente_id);
         await this.academico.assertMismaCarrera(this.dataSource, refs.docente.carrera_id, carrera.id, 'del docente proponente');
-        this.assertRange(dto.min_integrantes, dto.max_integrantes);
         const repo = manager.getRepository(Tema);
         const tema = await repo.save(repo.create({
-          periodo, carrera_id: carrera.id, linea: refs.linea, docente_proponente: refs.docente,
-          titulo: dto.titulo.trim(), descripcion: dto.descripcion.trim(),
-          min_integrantes: dto.min_integrantes, max_integrantes: dto.max_integrantes,
-          estado: EstadoTema.BORRADOR,
+          carrera_id: carrera.id, linea: refs.linea, docente_proponente: refs.docente, tipo: dto.tipo,
+          titulo: dto.titulo.trim(), descripcion: dto.descripcion.trim(), estado: EstadoTema.BORRADOR, lote_importacion_id: null,
         }));
-        const loaded = await this.loadForResponse(manager, tema.id, periodoId);
+        const loaded = await this.loadForResponse(manager, tema.id);
         await this.writeHistory(manager, loaded, actor, null);
         await this.auditoria.registrar(manager, {
           actor, accion: 'CREAR_TEMA', entidad_tipo: 'tema', entidad_id: loaded.id,
@@ -155,15 +162,17 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  async list(periodoId: string, query: ListTemasQueryDto, actor: Usuario): Promise<PagedTemas> {
+  async list(query: ListTemasQueryDto, actor: Usuario): Promise<PagedTemas> {
     try {
-      const periodo = await this.periodoRepository.findOneBy({ id: periodoId });
-      if (!periodo) throw new NotFoundException('No existe el período indicado.');
+      const periodo = await this.contextPeriod(query.periodo_id);
+      let carreraId = query.carrera_id;
+      let estados = filtroEstados(query.estado, query.disponible);
       if (actor.rol === UsuarioRol.ESTUDIANTE) {
-        if (query.estado && query.estado !== EstadoTema.PUBLICADO) {
-          throw new ForbiddenException('Los estudiantes solo pueden consultar temas publicados.');
-        }
-        await this.assertStudentCanViewCatalog(periodo, actor);
+        if (!periodo) throw new BadRequestException('Indica el período (periodo_id) para consultar el catálogo de temas.');
+        if (query.estado && query.estado !== EstadoTema.PUBLICADO) throw new ForbiddenException('Los estudiantes solo pueden consultar temas publicados.');
+        const estudiante = await this.assertStudentCanViewCatalog(periodo, actor);
+        carreraId = estudiante.carrera_id;
+        estados = [EstadoTema.PUBLICADO];
       }
       let docenteId = query.docente_proponente_id;
       if (actor.rol === UsuarioRol.DOCENTE) {
@@ -172,79 +181,75 @@ export class TemasService {
         if (docenteId && docenteId !== docente.id) throw new ForbiddenException('Solo puedes consultar tus temas propuestos.');
         docenteId = docente.id;
       }
+      if (estados && estados.length === 0) return { data: [], total: 0, page: query.page, limit: query.limit };
+      const where: FindOptionsWhere<Tema> = {
+        ...(carreraId ? { carrera_id: carreraId } : {}),
+        ...(query.linea_id ? { linea: { id: query.linea_id } } : {}),
+        ...(docenteId ? { docente_proponente: { id: docenteId } } : {}),
+        ...(query.tipo ? { tipo: query.tipo } : {}),
+        ...(estados ? { estado: estados.length === 1 ? estados[0] : In(estados) } : {}),
+      };
       const [records, total] = await this.repository.findAndCount({
-        where: {
-          periodo: { id: periodoId },
-          ...(query.carrera_id ? { carrera_id: query.carrera_id } : {}),
-          ...(query.linea_id ? { linea: { id: query.linea_id } } : {}),
-          ...(docenteId ? { docente_proponente: { id: docenteId } } : {}),
-          ...(actor.rol === UsuarioRol.ESTUDIANTE
-            ? { estado: EstadoTema.PUBLICADO }
-            : query.estado ? { estado: query.estado } : {}),
-          ...(query.num_integrantes !== undefined ? {
-            min_integrantes: LessThanOrEqual(query.num_integrantes),
-            max_integrantes: MoreThanOrEqual(query.num_integrantes),
-          } : {}),
-        },
+        where,
         relations: temaRelations,
         order: { creado_en: 'DESC', id: 'ASC' },
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       });
       const catalogo = await this.academico.catalogo(this.dataSource);
-      return { data: await this.enrichAvailability(periodoId, records.map((record) => responseFrom(record, catalogo))), total, page: query.page, limit: query.limit };
+      const data = records.map((record) => responseFrom(record, catalogo, periodo?.max_integrantes_default));
+      return { data: await this.enrichAvailability(periodo?.id ?? null, data), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  async getById(periodoId: string, id: string, actor: Usuario): Promise<TemaResponseDto> {
+  async getById(id: string, query: ConsultaTemaQueryDto, actor: Usuario): Promise<TemaResponseDto> {
     try {
-      const periodo = await this.periodoRepository.findOneBy({ id: periodoId });
-      if (!periodo) throw new NotFoundException('No existe el período indicado.');
-      if (actor.rol === UsuarioRol.ESTUDIANTE) await this.assertStudentCanViewCatalog(periodo, actor);
-      const tema = await this.repository.findOne({ where: { id, periodo: { id: periodoId } }, relations: temaRelations });
-      if (!tema) throw new NotFoundException('No existe el tema en el período indicado.');
-      if (actor.rol === UsuarioRol.ESTUDIANTE && tema.estado !== EstadoTema.PUBLICADO) {
-        throw new NotFoundException('No existe el tema en el período indicado.');
+      const periodo = await this.contextPeriod(query.periodo_id);
+      let carreraEstudiante: string | null = null;
+      if (actor.rol === UsuarioRol.ESTUDIANTE) {
+        if (!periodo) throw new BadRequestException('Indica el período (periodo_id) para consultar el tema.');
+        carreraEstudiante = (await this.assertStudentCanViewCatalog(periodo, actor)).carrera_id;
+      }
+      const tema = await this.repository.findOne({ where: { id }, relations: temaRelations });
+      if (!tema) throw new NotFoundException('No existe el tema indicado.');
+      if (carreraEstudiante !== null && (tema.estado !== EstadoTema.PUBLICADO || tema.carrera_id !== carreraEstudiante)) {
+        throw new NotFoundException('No existe el tema indicado.');
       }
       if (actor.rol === UsuarioRol.DOCENTE) {
         const docente = await this.docenteRepository.findOne({ where: { usuario: { id: actor.id } } });
         if (!docente) throw new NotFoundException('La cuenta aún no tiene perfil de docente.');
-        if (tema.docente_proponente.id !== docente.id) throw new NotFoundException('No existe el tema en el período indicado.');
+        if (tema.docente_proponente.id !== docente.id) throw new NotFoundException('No existe el tema indicado.');
       }
-      return (await this.enrichAvailability(periodoId, [await this.respuesta(tema)]))[0]!;
+      return (await this.enrichAvailability(periodo?.id ?? null, [await this.respuesta(tema, periodo?.max_integrantes_default)]))[0]!;
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  async update(periodoId: string, id: string, dto: UpdateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+  async update(id: string, dto: UpdateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     if (!Object.values(dto).some((value) => value !== undefined)) throw new BadRequestException('Debe indicar al menos un campo para editar.');
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const periodo = await this.lockWritablePeriod(manager, periodoId);
-        const repo = manager.getRepository(Tema);
-        const locked = await repo.findOne({ where: { id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
-        if (!locked) throw new NotFoundException('No existe el tema en el período indicado.');
-        const tema = await repo.findOne({ where: { id: locked.id }, relations: temaRelations });
-        if (!tema) throw new NotFoundException('No existe el tema en el período indicado.');
-        if (tema.estado !== EstadoTema.BORRADOR) throw new ConflictException('Solo se pueden editar temas en estado BORRADOR.');
+        const tema = await this.lockTema(manager, id);
+        if (!puedeEditarse(tema.estado, await this.hasCurrentAssignment(manager, tema.id))) {
+          throw new ConflictException('El tema tiene una asignación VIGENTE; anúlala antes de editarlo.');
+        }
         const previous = temaValues(tema);
-        const lineaId = dto.linea_id ?? tema.linea.id;
-        const docenteId = dto.docente_proponente_id ?? tema.docente_proponente.id;
-        const refs = await this.references(manager, lineaId, docenteId);
+        const refs = await this.references(manager, dto.linea_id ?? tema.linea.id, dto.docente_proponente_id ?? tema.docente_proponente.id);
         const carreraId = dto.carrera_id ?? tema.carrera_id;
-        if (dto.carrera_id !== undefined) await this.academico.assertCarreraEnFacultad(this.dataSource, carreraId, periodo.facultad_id);
+        if (dto.carrera_id !== undefined) await this.academico.buscarCarrera(this.dataSource, carreraId);
         await this.academico.assertMismaCarrera(this.dataSource, refs.docente.carrera_id, carreraId, 'del docente proponente');
+        const tipo = dto.tipo ?? tema.tipo;
+        if ((tipo !== tema.tipo || carreraId !== tema.carrera_id) && await this.openApplications(manager, tema.id) > 0) {
+          throw new ConflictException('No se puede cambiar el tipo ni la carrera mientras el tema tiene postulaciones abiertas.');
+        }
         tema.carrera_id = carreraId;
+        tema.tipo = tipo;
         tema.linea = refs.linea;
         tema.docente_proponente = refs.docente;
         if (dto.titulo !== undefined) tema.titulo = dto.titulo.trim();
         if (dto.descripcion !== undefined) tema.descripcion = dto.descripcion.trim();
-        if (dto.min_integrantes !== undefined) tema.min_integrantes = dto.min_integrantes;
-        if (dto.max_integrantes !== undefined) tema.max_integrantes = dto.max_integrantes;
-        this.assertRange(tema.min_integrantes, tema.max_integrantes);
-        const next = temaValues(tema);
-        if (JSON.stringify(previous) === JSON.stringify(next)) return await this.respuesta(tema);
-        await repo.save(tema);
-        const loaded = await this.loadForResponse(manager, id, periodoId);
+        if (JSON.stringify(previous) === JSON.stringify(temaValues(tema))) return await this.respuesta(tema);
+        await manager.getRepository(Tema).save(tema);
+        const loaded = await this.loadForResponse(manager, id);
         await this.writeHistory(manager, loaded, actor, previous);
         await this.auditoria.registrar(manager, {
           actor, accion: 'ACTUALIZAR_TEMA', entidad_tipo: 'tema', entidad_id: id,
@@ -255,65 +260,45 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  /**
-   * Publica un tema BORRADOR (dentro del plazo de administración de temas) o reabre un tema
-   * CERRADO (CERRADO → PUBLICADO) si no tiene asignación VIGENTE y el período no está ARCHIVADO.
-   */
-  async publish(
-    periodoId: string,
-    id: string,
-    _dto: PublicarTemaDto,
-    actor: Usuario,
-    ip: string | null,
-  ): Promise<TemaResponseDto> {
+  /** Publishes a BORRADOR (active references required) or reopens a CERRADO topic without a VIGENTE assignment. */
+  async publish(id: string, _dto: PublicarTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const period = await this.lockPeriod(manager, periodoId);
-        const repository = manager.getRepository(Tema);
-        const tema = await this.lockTema(manager, periodoId, id);
-        if (tema.estado === EstadoTema.CERRADO) return this.reopen(manager, period, tema, actor, ip);
-        this.assertWritablePeriod(period);
+        const tema = await this.lockTema(manager, id);
+        if (tema.estado === EstadoTema.CERRADO) return this.reopen(manager, tema, actor, ip);
         if (tema.estado !== EstadoTema.BORRADOR) {
           throw new ConflictException('Solo se pueden publicar temas en estado BORRADOR o reabrir temas CERRADOS.');
         }
         await this.references(manager, tema.linea.id, tema.docente_proponente.id);
-        this.assertRange(tema.min_integrantes, tema.max_integrantes);
-        if (!tema.titulo.trim() || !tema.descripcion.trim()) {
-          throw new BadRequestException('El título y la descripción son obligatorios.');
-        }
+        if (!tema.titulo.trim() || !tema.descripcion.trim()) throw new BadRequestException('El título y la descripción son obligatorios.');
         const previous = temaValues(tema);
         tema.estado = EstadoTema.PUBLICADO;
-        await repository.save(tema);
-        const loaded = await this.loadForResponse(manager, id, periodoId);
+        await manager.getRepository(Tema).save(tema);
+        const loaded = await this.loadForResponse(manager, id);
         await this.writeHistory(manager, loaded, actor, previous);
         await this.auditoria.registrar(manager, {
-          actor,
-          accion: 'PUBLICAR_TEMA',
-          entidad_tipo: 'tema',
-          entidad_id: id,
-          valores_anteriores: previous,
-          valores_nuevos: temaValues(loaded),
-          ip_origen: ip,
+          actor, accion: 'PUBLICAR_TEMA', entidad_tipo: 'tema', entidad_id: id,
+          valores_anteriores: previous, valores_nuevos: temaValues(loaded), ip_origen: ip,
         });
         return await this.respuesta(loaded);
       });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  /** RF-25: PUBLICADO → CERRADO; rechaza las postulaciones PENDIENTE o EN_CONFLICTO del tema. */
-  async close(periodoId: string, id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
-    return this.endTopic(periodoId, id, dto, actor, ip, EstadoTema.CERRADO);
+  /** RF-25: PUBLICADO → CERRADO; rejects the topic's PENDIENTE or EN_CONFLICTO applications of every period. */
+  async close(id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+    return this.endTopic(id, dto, actor, ip, EstadoTema.CERRADO);
   }
 
-  /** RF-21: BORRADOR, PUBLICADO o CERRADO → RETIRADO (terminal); rechaza sus postulaciones abiertas. */
-  async withdraw(periodoId: string, id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
-    return this.endTopic(periodoId, id, dto, actor, ip, EstadoTema.RETIRADO);
+  /** RF-21: BORRADOR, PUBLICADO or CERRADO → RETIRADO (terminal); rejects its open applications. */
+  async withdraw(id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
+    return this.endTopic(id, dto, actor, ip, EstadoTema.RETIRADO);
   }
 
-  async history(periodoId: string, id: string, query: ListTemasQueryDto): Promise<PagedTemaHistorial> {
+  async history(id: string, query: PaginationQueryDto): Promise<PagedTemaHistorial> {
     try {
-      const tema = await this.repository.findOneBy({ id, periodo: { id: periodoId } });
-      if (!tema) throw new NotFoundException('No existe el tema en el período indicado.');
+      const tema = await this.repository.findOneBy({ id });
+      if (!tema) throw new NotFoundException('No existe el tema indicado.');
       const [records, total] = await this.historialRepository.findAndCount({
         where: { tema: { id } }, relations: { tema: true, usuario: true }, order: { fecha: 'ASC', id: 'ASC' },
         skip: (query.page - 1) * query.limit, take: query.limit,
@@ -322,52 +307,40 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  private async endTopic(
-    periodoId: string,
-    id: string,
-    dto: MotivoTemaDto,
-    actor: Usuario,
-    ip: string | null,
-    destino: EstadoTema.CERRADO | EstadoTema.RETIRADO,
-  ): Promise<TemaResponseDto> {
+  private async endTopic(id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null, destino: EstadoTema.CERRADO | EstadoTema.RETIRADO): Promise<TemaResponseDto> {
     const motivo = dto.motivo.trim();
     const cierre = destino === EstadoTema.CERRADO;
     try {
       return await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
-        const period = await this.lockPeriod(manager, periodoId);
-        if (period.estado === PeriodoEstado.ARCHIVADO) throw new ConflictException('No se pueden modificar temas de un período ARCHIVADO.');
-        const tema = await this.lockTema(manager, periodoId, id);
+        const tema = await this.lockTema(manager, id);
         if (tema.estado === EstadoTema.ASIGNADO || await this.hasCurrentAssignment(manager, tema.id)) {
           throw new ConflictException(`El tema tiene una asignación VIGENTE; anúlala antes de ${cierre ? 'cerrarlo' : 'retirarlo'}.`);
         }
         const origins = cierre ? [EstadoTema.PUBLICADO] : [EstadoTema.BORRADOR, EstadoTema.PUBLICADO, EstadoTema.CERRADO];
         if (!origins.includes(tema.estado)) {
-          throw new ConflictException(cierre
-            ? 'Solo se pueden cerrar temas PUBLICADOS.'
-            : 'Solo se pueden retirar temas en BORRADOR, PUBLICADO o CERRADO.');
+          throw new ConflictException(cierre ? 'Solo se pueden cerrar temas PUBLICADOS.' : 'Solo se pueden retirar temas en BORRADOR, PUBLICADO o CERRADO.');
         }
         const previous = temaValues(tema);
         tema.estado = destino;
         await manager.getRepository(Tema).save(tema);
-        const loaded = await this.loadForResponse(manager, id, periodoId);
+        const loaded = await this.loadForResponse(manager, id);
         await this.writeHistory(manager, loaded, actor, previous, motivo);
         await this.auditoria.registrar(manager, {
           actor, accion: cierre ? 'CERRAR_TEMA' : 'RETIRAR_TEMA', entidad_tipo: 'tema', entidad_id: id,
           valores_anteriores: previous, valores_nuevos: { ...temaValues(loaded), motivo }, ip_origen: ip,
         });
-        await this.rejectOpenApplications(manager, periodoId, id, `${cierre ? 'Tema cerrado' : 'Tema retirado'}: ${motivo}`, cierre ? 'RECHAZAR_POSTULACION_POR_CIERRE_TEMA' : 'RECHAZAR_POSTULACION_POR_RETIRO_TEMA', actor, ip);
+        await this.rejectOpenApplications(manager, id, `${cierre ? 'Tema cerrado' : 'Tema retirado'}: ${motivo}`, cierre ? 'RECHAZAR_POSTULACION_POR_CIERRE_TEMA' : 'RECHAZAR_POSTULACION_POR_RETIRO_TEMA', actor, ip);
         return await this.respuesta(loaded);
       });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  private async reopen(manager: EntityManager, period: PeriodoTitulacion, tema: Tema, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
-    if (period.estado === PeriodoEstado.ARCHIVADO) throw new ConflictException('No se pueden reabrir temas de un período ARCHIVADO.');
+  private async reopen(manager: EntityManager, tema: Tema, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     if (await this.hasCurrentAssignment(manager, tema.id)) throw new ConflictException('El tema tiene una asignación VIGENTE y no puede reabrirse.');
     const previous = temaValues(tema);
     tema.estado = EstadoTema.PUBLICADO;
     await manager.getRepository(Tema).save(tema);
-    const loaded = await this.loadForResponse(manager, tema.id, period.id);
+    const loaded = await this.loadForResponse(manager, tema.id);
     await this.writeHistory(manager, loaded, actor, previous);
     await this.auditoria.registrar(manager, {
       actor, accion: 'REABRIR_TEMA', entidad_tipo: 'tema', entidad_id: tema.id,
@@ -376,11 +349,12 @@ export class TemasService {
     return await this.respuesta(loaded);
   }
 
-  /** Las postulaciones se bloquean en orden de id después del tema, igual que en la asignación. */
-  private async rejectOpenApplications(manager: EntityManager, periodoId: string, temaId: string, observacion: string, accion: string, actor: Usuario, ip: string | null): Promise<void> {
+  /** Applications are locked in id order after the topic, as in the assignment flow. */
+  private async rejectOpenApplications(manager: EntityManager, temaId: string, observacion: string, accion: string, actor: Usuario, ip: string | null): Promise<void> {
+    const schema = schemaFrom(manager.connection.options);
     const rows = await manager.query(
-      `SELECT "id" FROM ${schemaOf(manager)}."postulacion" WHERE "periodo_id"=$1 AND "tema_id"=$2 AND "estado" IN ('PENDIENTE','EN_CONFLICTO') ORDER BY "id" FOR UPDATE`,
-      [periodoId, temaId],
+      `SELECT p."id" FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)} ORDER BY p."id" FOR UPDATE OF p`,
+      [temaId],
     ) as Array<{ id: string }>;
     const repository = manager.getRepository(Postulacion);
     for (const row of rows) {
@@ -398,40 +372,33 @@ export class TemasService {
     }
   }
 
+  private async openApplications(manager: EntityManager, temaId: string): Promise<number> {
+    const schema = schemaFrom(manager.connection.options);
+    const rows = await manager.query(
+      `SELECT count(*)::int AS total FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}`,
+      [temaId],
+    ) as Array<{ total: number }>;
+    return Number(rows[0]?.total ?? 0);
+  }
+
   private hasCurrentAssignment(manager: EntityManager, temaId: string): Promise<boolean> {
     return manager.getRepository(AsignacionTema).exist({ where: { tema_id: temaId, estado: AsignacionTemaEstado.VIGENTE } });
   }
 
-  private async lockTema(manager: EntityManager, periodoId: string, id: string): Promise<Tema> {
+  private async contextPeriod(periodoId: string | undefined): Promise<PeriodoTitulacion | null> {
+    if (!periodoId) return null;
+    const periodo = await this.periodoRepository.findOneBy({ id: periodoId });
+    if (!periodo) throw new NotFoundException('No existe el período indicado.');
+    return periodo;
+  }
+
+  private async lockTema(manager: EntityManager, id: string): Promise<Tema> {
     const repository = manager.getRepository(Tema);
-    const locked = await repository.findOne({ where: { id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } });
-    if (!locked) throw new NotFoundException('No existe el tema en el período indicado.');
+    const locked = await repository.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
+    if (!locked) throw new NotFoundException('No existe el tema indicado.');
     const tema = await repository.findOne({ where: { id: locked.id }, relations: temaRelations });
-    if (!tema) throw new NotFoundException('No existe el tema en el período indicado.');
+    if (!tema) throw new NotFoundException('No existe el tema indicado.');
     return tema;
-  }
-
-  private async lockPeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {
-    const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
-    if (!period) throw new NotFoundException('No existe el período indicado.');
-    return period;
-  }
-
-  private async lockWritablePeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {
-    const period = await this.lockPeriod(manager, id);
-    this.assertWritablePeriod(period);
-    return period;
-  }
-
-  private assertWritablePeriod(period: PeriodoTitulacion): void {
-    if (period.estado === PeriodoEstado.BORRADOR) return;
-    if (period.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
-      throw new ConflictException('Los temas solo se administran en períodos BORRADOR o POSTULACION_ABIERTA.');
-    }
-    const now = new Date();
-    if (now < period.fecha_inicio_postulacion || now >= period.fecha_fin_postulacion) {
-      throw new ConflictException('Los temas solo se administran durante el plazo de postulación.');
-    }
   }
 
   private async references(manager: EntityManager, lineaId: string, docenteId: string): Promise<{ linea: LineaInvestigacion; docente: Docente }> {
@@ -450,39 +417,35 @@ export class TemasService {
     return { linea, docente };
   }
 
-  private async assertStudentCanViewCatalog(periodo: PeriodoTitulacion, actor: Usuario): Promise<void> {
+  /** The student must be enabled in an open period; the catalog is then limited to the student's career. */
+  private async assertStudentCanViewCatalog(periodo: PeriodoTitulacion, actor: Usuario): Promise<Estudiante> {
     if (periodo.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
       throw new ForbiddenException('El catálogo estudiantil está disponible cuando el período está abierto.');
     }
     const estudiante = await this.estudianteRepository.findOne({ where: { usuario: { id: actor.id } } });
     if (!estudiante) throw new ForbiddenException('La cuenta no tiene un perfil de estudiante.');
     const habilitacion = await this.habilitadoRepository.findOne({
-      where: {
-        periodo: { id: periodo.id },
-        estudiante: { usuario: { id: actor.id } },
-        estado: HabilitadoEstado.HABILITADO,
-      },
+      where: { periodo: { id: periodo.id }, estudiante: { usuario: { id: actor.id } }, estado: HabilitadoEstado.HABILITADO },
       relations: { estudiante: true },
     });
     if (!habilitacion || ![SituacionIngreso.PENDIENTE, SituacionIngreso.ADMITIDO].includes(habilitacion.situacion_ingreso)) {
       throw new ForbiddenException('No tienes una habilitación vigente para consultar este catálogo.');
     }
+    return estudiante;
   }
 
-  private async loadForResponse(manager: EntityManager, id: string, periodoId: string): Promise<Tema> {
-    const record = await manager.getRepository(Tema).findOne({ where: { id, periodo: { id: periodoId } }, relations: temaRelations });
-    if (!record) throw new NotFoundException('No existe el tema en el período indicado.');
+  private async loadForResponse(manager: EntityManager, id: string): Promise<Tema> {
+    const record = await manager.getRepository(Tema).findOne({ where: { id }, relations: temaRelations });
+    if (!record) throw new NotFoundException('No existe el tema indicado.');
     return record;
   }
 
-  private async enrichAvailability(periodoId: string, responses: TemaResponseDto[]): Promise<TemaResponseDto[]> {
+  private async enrichAvailability(periodoId: string | null, responses: TemaResponseDto[]): Promise<TemaResponseDto[]> {
     if (responses.length === 0) return responses;
     const ids = responses.map((item) => item.id);
-    const configuredSchema = (this.dataSource.options as PostgresConnectionOptions).schema ?? 'public';
-    if (!/^[a-z][a-z0-9_]{0,62}$/.test(configuredSchema)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
-    const schema = `"${configuredSchema}"`;
+    const schema = schemaFrom(this.dataSource.options);
     const stats = await this.dataSource.query(
-      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND p."periodo_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO')) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."periodo_id"=$1 AND t."id"=ANY($2::uuid[])`,
+      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND ($1::uuid IS NULL OR p."periodo_id"=$1) AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."id"=ANY($2::uuid[])`,
       [periodoId, ids],
     ) as Array<{ id: string; disponible: boolean; postulaciones_abiertas: number }>;
     const byId = new Map(stats.map((row) => [row.id, row]));
@@ -495,10 +458,6 @@ export class TemasService {
       tema, usuario: actor, estado_anterior: previous ? previous.estado as EstadoTema : null, estado_nuevo: tema.estado,
       cambios: { anteriores: previous, nuevos: temaValues(tema), ...(motivo ? { motivo } : {}) }, fecha: new Date(),
     }));
-  }
-
-  private assertRange(min: number, max: number): void {
-    if (max < min) throw new BadRequestException('El máximo de integrantes debe ser igual o mayor que el mínimo.');
   }
 
   private handleDatabaseError(error: unknown): never {

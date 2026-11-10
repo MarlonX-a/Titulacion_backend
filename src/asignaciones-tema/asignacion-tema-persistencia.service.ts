@@ -41,6 +41,34 @@ export class AsignacionTemaPersistenciaService {
     return result;
   }
 
+  /**
+   * Once a topic is assigned it leaves the bank, so its open applications (PENDIENTE / EN_CONFLICTO)
+   * in other periods are rejected with audit and notification. Applications of ARCHIVADO periods are
+   * immutable history and are left untouched. Must run inside the assignment transaction.
+   */
+  async rechazarAbiertasDeOtrosPeriodos(manager: EntityManager, temaId: string, periodoId: string, motivo: string, actor: Usuario, ip: string | null): Promise<void> {
+    const schema = this.schema(manager);
+    const rows = await manager.query(
+      `SELECT p."id" FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."periodo_id"<>$2 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND NOT EXISTS (SELECT 1 FROM ${schema}."periodo_titulacion" pe WHERE pe."id"=p."periodo_id" AND pe."estado"='ARCHIVADO') ORDER BY p."id" FOR UPDATE OF p`,
+      [temaId, periodoId],
+    ) as Array<{ id: string }>;
+    const repository = manager.getRepository(Postulacion);
+    const observacion = `Tema asignado en otro período: ${motivo.trim()}`;
+    for (const row of rows) {
+      const application = await repository.findOneBy({ id: row.id });
+      if (!application || ![EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(application.estado)) continue;
+      const previous = { estado: application.estado, observacion: application.observacion };
+      application.estado = EstadoPostulacion.RECHAZADA;
+      application.observacion = observacion;
+      await repository.save(application);
+      await this.auditoria.registrar(manager, {
+        actor, accion: 'RECHAZAR_POSTULACION_POR_ASIGNACION_TEMA', entidad_tipo: 'postulacion', entidad_id: application.id,
+        valores_anteriores: previous, valores_nuevos: { estado: application.estado, observacion }, ip_origen: ip,
+      });
+      await this.notificaciones.postulacion(manager, application.id, NotificacionTipo.POSTULACION_RECHAZADA, actor.id);
+    }
+  }
+
   async anularPorIncumplimiento(
     manager: EntityManager,
     periodoId: string,
@@ -83,7 +111,7 @@ export class AsignacionTemaPersistenciaService {
     const postRepo = manager.getRepository(Postulacion);
     const application = await postRepo.findOneByOrFail({ id: assignment.postulacion_id });
     const topicRepo = manager.getRepository(Tema);
-    const topic = await topicRepo.findOneOrFail({ where: { id: assignment.tema_id }, relations: { periodo: true, linea: true, docente_proponente: true } });
+    const topic = await topicRepo.findOneOrFail({ where: { id: assignment.tema_id }, relations: { linea: true, docente_proponente: true } });
     const previousAssignment = { estado: assignment.estado, causa_anulacion: assignment.causa_anulacion, motivo_anulacion: assignment.motivo_anulacion, anulada_por_id: assignment.anulada_por_id, fecha_anulacion: assignment.fecha_anulacion };
     const previousApplication = { estado: application.estado, observacion: application.observacion };
     const previousTopic = this.topicValues(topic);
@@ -116,7 +144,7 @@ export class AsignacionTemaPersistenciaService {
   }
 
   private topicValues(topic: Tema): Record<string, unknown> {
-    return { tema_id: topic.id, periodo_id: topic.periodo.id, estado: topic.estado, titulo: topic.titulo, linea_id: topic.linea.id, docente_proponente_id: topic.docente_proponente.id, min_integrantes: topic.min_integrantes, max_integrantes: topic.max_integrantes };
+    return { tema_id: topic.id, carrera_id: topic.carrera_id, estado: topic.estado, titulo: topic.titulo, linea_id: topic.linea.id, docente_proponente_id: topic.docente_proponente.id, tipo: topic.tipo };
   }
 
   private schema(manager: EntityManager): string {

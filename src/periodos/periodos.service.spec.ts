@@ -158,9 +158,9 @@ describe('PeriodosService facultad', () => {
     expect(result.facultad).toEqual({ id: 'fac-2', nombre: 'Facultad Dos' });
   });
 
-  it('impide cambiar la facultad si el período ya tiene temas o habilitaciones', async () => {
+  it('impide cambiar la facultad si el período ya tiene habilitaciones', async () => {
     const state = setup(PeriodoEstado.BORRADOR, undefined, 2);
-    await expect(state.service.update('periodo-id', { facultad_id: 'fac-2' } as never)).rejects.toThrow('No se puede cambiar la facultad: el período ya tiene temas o estudiantes habilitados.');
+    await expect(state.service.update('periodo-id', { facultad_id: 'fac-2' } as never)).rejects.toThrow('No se puede cambiar la facultad: el período ya tiene estudiantes habilitados.');
     expect(state.txRepo.save).not.toHaveBeenCalled();
   });
 

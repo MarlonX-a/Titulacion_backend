@@ -29,3 +29,20 @@ describe('TutoresPropuestosService.porPostulaciones', () => {
     expect(repository.find).not.toHaveBeenCalled();
   });
 });
+
+describe('TutoresPropuestosService.disponibles', () => {
+  it('consulta el tema del banco con el período como contexto', async () => {
+    const getById = vi.fn(async () => ({ id: 'tema-id', docente_proponente_id: 'd1' }));
+    const qb: Record<string, unknown> = {};
+    for (const method of ['innerJoinAndSelect', 'select', 'where', 'andWhere', 'addSelect', 'orderBy', 'addOrderBy', 'setParameter', 'skip', 'take']) qb[method] = vi.fn(() => qb);
+    qb.getManyAndCount = vi.fn(async () => [[], 0]);
+    const docentes = { createQueryBuilder: vi.fn(() => qb) };
+    const service = new TutoresPropuestosService({} as never, docentes as never, {} as never, { getById } as never);
+    const actor = { id: 'user-id' };
+
+    await expect(service.disponibles('periodo-id', 'tema-id', actor as never, { page: 1, limit: 10 } as never))
+      .resolves.toEqual({ data: [], total: 0, page: 1, limit: 10 });
+    expect(getById).toHaveBeenCalledWith('tema-id', { periodo_id: 'periodo-id' }, actor);
+    expect(qb.setParameter).toHaveBeenCalledWith('proponent', 'd1');
+  });
+});
