@@ -27,7 +27,11 @@ export interface AppEnvironment {
   S3_ACCESS_KEY?: string;
   S3_SECRET_KEY?: string;
   OUTBOX_ENCRYPTION_KEY_PATH?: string;
+  TRUST_PROXY: TrustProxySetting;
 }
+
+/** Valor aceptado por Express para `trust proxy`: booleano, número de saltos o lista de subredes/presets. */
+export type TrustProxySetting = boolean | number | string;
 
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -66,6 +70,24 @@ function httpsOrLoopbackUrl(value: unknown, name: string, fallback: string, prod
     throw new Error(`Configuración inválida: ${name} requiere HTTPS salvo en localhost.`);
   }
   return url.origin;
+}
+
+/**
+ * Interpreta TRUST_PROXY. Sin valor se mantiene `false`: Express ignora
+ * X-Forwarded-For y `request.ip` es la dirección de la conexión directa.
+ */
+export function parseTrustProxy(value: unknown): TrustProxySetting {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== 'string') throw new Error('Configuración inválida: TRUST_PROXY no es válido.');
+  const raw = value.trim();
+  if (raw.length === 0 || raw === 'false') return false;
+  if (raw === 'true') return true;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const entries = raw.split(',').map((item) => item.trim());
+  if (entries.some((item) => !/^[A-Za-z0-9.:/]+$/.test(item))) {
+    throw new Error('Configuración inválida: TRUST_PROXY debe ser true, false, un número de saltos o una lista de subredes.');
+  }
+  return entries.join(', ');
 }
 
 export function validateEnvironment(
@@ -134,5 +156,6 @@ export function validateEnvironment(
     ...(typeof environment.S3_ACCESS_KEY === 'string' ? { S3_ACCESS_KEY: environment.S3_ACCESS_KEY } : {}),
     ...(typeof environment.S3_SECRET_KEY === 'string' ? { S3_SECRET_KEY: environment.S3_SECRET_KEY } : {}),
     ...(typeof outboxKeyPath === 'string' ? { OUTBOX_ENCRYPTION_KEY_PATH: outboxKeyPath } : {}),
+    TRUST_PROXY: parseTrustProxy(environment.TRUST_PROXY),
   };
 }

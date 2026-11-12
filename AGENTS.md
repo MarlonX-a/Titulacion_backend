@@ -1239,6 +1239,7 @@ S3_ACCESS_KEY
 S3_SECRET_KEY
 SMTP_HOST
 OUTBOX_ENCRYPTION_KEY_PATH
+TRUST_PROXY
 
 Mantener un `.env.example` sin secretos reales.
 

@@ -28,6 +28,14 @@ const SESSION_MS = 8 * 60 * 60 * 1000;
 const RESET_MS = 30 * 60 * 1000;
 const TOKEN_AUDIENCE = 'titulacion-api';
 const GENERIC_LOGIN = 'Correo o contraseña incorrectos.';
+/**
+ * Intentos fallidos de inicio de sesión tolerados por IP en LOGIN_WINDOW_SECONDS.
+ * Solo cuentan los fallos para no bloquear a toda una red NAT del campus por
+ * inicios de sesión válidos; el límite por correo sigue contando cada intento.
+ */
+const LOGIN_IP_FAILURE_LIMIT = 30;
+const LOGIN_EMAIL_LIMIT = 10;
+const LOGIN_WINDOW_SECONDS = 60;
 const DUMMY_HASH = '$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQxMjM0NTY3OA$8P/AGk8BGbfQwIMiWMLOOW0ebK6nPzO6kXGiVDluoYY';
 
 export interface AuthenticationResult {
@@ -85,7 +93,23 @@ export class AuthenticationService implements OnModuleInit {
 
   async login(dto: LoginDto, ip: string): Promise<AuthenticationResult> {
     try {
-    await this.enforceLoginLimits(dto.email, ip);
+      await this.enforceLoginLimits(dto.email, ip);
+      return await this.authenticate(dto, ip);
+    } catch (error: unknown) {
+      this.rethrowAuthenticationError(error);
+    }
+  }
+
+  private async authenticate(dto: LoginDto, ip: string): Promise<AuthenticationResult> {
+    try {
+      return await this.verifyCredentialsAndOpenSession(dto);
+    } catch (error: unknown) {
+      if (error instanceof UnauthorizedException) await this.limiter.hit(loginIpFailureKey(ip), LOGIN_WINDOW_SECONDS);
+      throw error;
+    }
+  }
+
+  private async verifyCredentialsAndOpenSession(dto: LoginDto): Promise<AuthenticationResult> {
     const users = this.dataSource.getRepository(Usuario);
     const user = await users.findOneBy({ email: dto.email.trim().toLowerCase() });
     const credentials = user ? await this.dataSource.getRepository(CredencialUsuario).findOneBy({ usuario_id: user.id }) : null;
@@ -113,9 +137,6 @@ export class AuthenticationService implements OnModuleInit {
       refresh_cookie: `${session.id}.${refresh}`,
       csrf_cookie: csrf,
     };
-    } catch (error: unknown) {
-      this.rethrowAuthenticationError(error);
-    }
   }
 
   async verifyToken(token: string): Promise<VerifiedIdentity> {
@@ -267,8 +288,8 @@ export class AuthenticationService implements OnModuleInit {
   }
 
   private async enforceLoginLimits(email: string, ip: string): Promise<void> {
-    await this.limiter.enforce(`login-ip:${ip}`, 10, 60);
-    await this.limiter.enforce(`login-email:${tokenDigest(email)}`, 10, 60);
+    await this.limiter.assertBelow(loginIpFailureKey(ip), LOGIN_IP_FAILURE_LIMIT);
+    await this.limiter.enforce(`login-email:${tokenDigest(email)}`, LOGIN_EMAIL_LIMIT, LOGIN_WINDOW_SECONDS);
   }
 
   private rethrowAuthenticationError(error: unknown): never {
@@ -285,6 +306,10 @@ export class AuthenticationService implements OnModuleInit {
       .setExpirationTime(now + (first ? FIRST_ACCESS_SECONDS : ACCESS_SECONDS));
     return token.sign(this.privateKey);
   }
+}
+
+function loginIpFailureKey(ip: string): string {
+  return `login-ip-failures:${ip}`;
 }
 
 function safeHashEquals(left: string, right: string): boolean {
