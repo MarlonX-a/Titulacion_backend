@@ -1,6 +1,8 @@
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HttpAdapterHost } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ServerErrorLoggingFilter } from '../common/filters/server-error-logging.filter.js';
 import type { AppEnvironment } from './environment.js';
 
 export function configureApplication(app: INestApplication): void {
@@ -12,6 +14,7 @@ export function configureApplication(app: INestApplication): void {
       validationError: { target: false, value: false },
     }),
   );
+  app.useGlobalFilters(new ServerErrorLoggingFilter(app.get(HttpAdapterHost).httpAdapter));
 
   const config = app.get(ConfigService<AppEnvironment, true>);
 
