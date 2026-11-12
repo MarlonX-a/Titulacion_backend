@@ -32,4 +32,21 @@ describe('validateEnvironment', () => {
     expect(validateEnvironment({ ...db, DB_PASSWORD: ' password:@/# ', AUTH_ISSUER: 'http://localhost:3100' }).DB_PASSWORD).toBe(' password:@/# ');
   });
 
+  it('no confía en proxies si TRUST_PROXY se omite o está vacío', () => {
+    expect(validateEnvironment(db).TRUST_PROXY).toBe(false);
+    expect(validateEnvironment({ ...db, TRUST_PROXY: '  ' }).TRUST_PROXY).toBe(false);
+  });
+
+  it('interpreta TRUST_PROXY como booleano, saltos o lista de subredes', () => {
+    expect(validateEnvironment({ ...db, TRUST_PROXY: 'true' }).TRUST_PROXY).toBe(true);
+    expect(validateEnvironment({ ...db, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(false);
+    expect(validateEnvironment({ ...db, TRUST_PROXY: '1' }).TRUST_PROXY).toBe(1);
+    expect(validateEnvironment({ ...db, TRUST_PROXY: 'loopback,  10.0.0.0/8, fe80::/10' }).TRUST_PROXY).toBe('loopback, 10.0.0.0/8, fe80::/10');
+  });
+
+  it('rechaza TRUST_PROXY con caracteres no válidos', () => {
+    expect(() => validateEnvironment({ ...db, TRUST_PROXY: 'loopback; rm' })).toThrow('TRUST_PROXY');
+    expect(() => validateEnvironment({ ...db, TRUST_PROXY: 'loopback,,uniquelocal' })).toThrow('TRUST_PROXY');
+  });
+
 });

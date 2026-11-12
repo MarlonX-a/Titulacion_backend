@@ -22,17 +22,46 @@ export class AuthRateLimiterService implements OnModuleDestroy {
     this.redis.on('error', () => undefined);
   }
 
+  /** Cuenta la solicitud actual y rechaza cuando el contador supera el límite de la ventana. */
   async enforce(key: string, limit: number, windowSeconds: number): Promise<void> {
     if (this.isTest) return;
+    await this.guard(async () => {
+      if ((await this.increment(key, windowSeconds)) > limit) throw tooManyRequests();
+    });
+  }
+
+  /** Rechaza si el contador ya alcanzó el límite, sin contar la solicitud actual. */
+  async assertBelow(key: string, limit: number): Promise<void> {
+    if (this.isTest) return;
+    await this.guard(async () => {
+      await this.connect();
+      if (Number(await this.redis.get(redisKey(key)) ?? 0) >= limit) throw tooManyRequests();
+    });
+  }
+
+  /** Suma un evento (por ejemplo, un intento fallido) al contador de la ventana. */
+  async hit(key: string, windowSeconds: number): Promise<void> {
+    if (this.isTest) return;
+    await this.guard(async () => { await this.increment(key, windowSeconds); });
+  }
+
+  private async increment(key: string, windowSeconds: number): Promise<number> {
+    await this.connect();
+    return Number(await this.redis.eval(
+      "local count = redis.call('INCR', KEYS[1]); if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; return count",
+      1,
+      redisKey(key),
+      String(windowSeconds),
+    ));
+  }
+
+  private async connect(): Promise<void> {
+    if (this.redis.status === 'wait') await this.redis.connect();
+  }
+
+  private async guard(operation: () => Promise<void>): Promise<void> {
     try {
-      if (this.redis.status === 'wait') await this.redis.connect();
-      const count = Number(await this.redis.eval(
-        "local count = redis.call('INCR', KEYS[1]); if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; return count",
-        1,
-        `titulacion:auth-rate:${key}`,
-        String(windowSeconds),
-      ));
-      if (count > limit) throw new HttpException('Se alcanzó el límite de solicitudes. Inténtalo más tarde.', HttpStatus.TOO_MANY_REQUESTS);
+      await operation();
     } catch (error: unknown) {
       if (error instanceof HttpException && error.getStatus() === HttpStatus.TOO_MANY_REQUESTS) throw error;
       throw new ServiceUnavailableException('El servicio de autenticación no está disponible.');
@@ -40,4 +69,12 @@ export class AuthRateLimiterService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> { await this.redis.quit().catch(() => undefined); }
+}
+
+function redisKey(key: string): string {
+  return `titulacion:auth-rate:${key}`;
+}
+
+function tooManyRequests(): HttpException {
+  return new HttpException('Se alcanzó el límite de solicitudes. Inténtalo más tarde.', HttpStatus.TOO_MANY_REQUESTS);
 }

@@ -81,12 +81,18 @@ prioridad sobre la misma variable del archivo.
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | SeaweedFS en `127.0.0.1:8333`                     |
 | `OUTBOX_ENCRYPTION_KEY_PATH`                                 | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente                               |
+| `TRUST_PROXY`                                                | `true`, `false`, saltos (`1`) o subredes (`loopback, 10.0.0.0/8`) | `false`: no confía en `X-Forwarded-For`           |
 
 Un valor vacío o inválido detiene el arranque e identifica la variable afectada,
 sin incluir su valor en el error. `PORT` se convierte a número y
 `SWAGGER_ENABLED` a booleano antes de usarlos. `DB_PORT` también se convierte
 a número. Las credenciales de base de datos son obligatorias en todos los
 entornos, incluidas las pruebas, que usan valores ficticios.
+
+`TRUST_PROXY` (vacío equivale a `false`) debe describir la cadena real de proxies inversos (por ejemplo, `1` cuando
+solo está el nginx del frontend). Sin él, `request.ip` es la IP del proxy y los límites de
+inicio de sesión y la auditoría tratan a todos los usuarios como un único cliente. No uses
+`true` si el backend se expone directamente: `X-Forwarded-For` se podría falsificar.
 
 La autenticación usa claves RSA persistentes. Genéralas una sola vez y conserva
 `/.secrets` fuera de Git y de respaldos públicos. El `sub` JWT es el UUID interno
