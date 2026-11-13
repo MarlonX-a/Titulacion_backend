@@ -19,6 +19,11 @@ desarrollo se llama `docker-compose.yml`.
 npm ci
 ```
 
+Antes de levantar Docker, `.env` debe definir `REDIS_PASSWORD` (valor aleatorio largo;
+Redis arranca con `--requirepass` y el Compose se niega a iniciar sin ella), además de
+`S3_ACCESS_KEY` y `S3_SECRET_KEY`. Redis, Mailpit y el perfil `aistor` se publican solo
+en `127.0.0.1`.
+
 En una terminal, inicia las dependencias y deja visibles sus logs:
 
 ```powershell
@@ -61,8 +66,16 @@ reportes y exportaciones. La presencia de un módulo no demuestra por sí sola q
 todos sus requisitos tengan pruebas suficientes: revisa el caso de uso, DTO,
 autorización, migración y pruebas que correspondan antes de ampliarlo.
 
-GitHub Actions ejecuta lint, TypeScript estricto, pruebas unitarias y HTTP,
-compilación y una verificación de migraciones de exportaciones en PostgreSQL.
+GitHub Actions (`ci.yml`) ejecuta cuatro jobs. `checks`: guardas de regresión de seguridad
+(`scripts/ci-guards.mjs`), `npm audit --omit=dev --audit-level=high`, lint, TypeScript estricto,
+pruebas unitarias, pruebas HTTP (`npm run test:e2e`) y compilación. `secret-scan`: gitleaks con el
+historial completo. `attack-suite`: la suite de ataque (`npm run test:attack`) con PostgreSQL,
+Mailpit y un Redis con contraseña aleatoria. `database-integrity`: los verificadores de migraciones
+en PostgreSQL `db:verify-exportaciones`, `db:verify-archivo-periodo`, `db:verify-auditoria`,
+`db:verify-auth` y `db:verify-tutores-propuestos`. CodeQL es un workflow aparte (`codeql.yml`).
+Dependabot (`dependabot.yml`) revisa npm, GitHub Actions y
+Docker cada semana. El `Dockerfile` (multi-etapa, `USER node`, sin secretos) expone
+`GET /healthz` como comprobación de salud.
 SonarCloud está configurado con Automatic Analysis; comprueba el Quality Gate en
 SonarCloud después de integrar cambios en la rama analizada. No añadas el token
 de Sonar al workflow sin cambiar primero esa configuración.
@@ -75,8 +88,8 @@ de Sonar al workflow sin cambiar primero esa configuración.
    el historial y no inventes reglas que los documentos no indiquen.
 2. **Cerrar brechas de verificación.** Revisar las pruebas de concurrencia,
    restricciones PostgreSQL, reversión protegida y atomicidad de auditoría de
-   todos los módulos críticos. El CI actual ejecuta automáticamente solo el
-   verificador de exportaciones; ampliar el workflow de forma deliberada.
+   todos los módulos críticos. El CI ejecuta los verificadores de exportaciones, archivo de
+   períodos, auditoría, autenticación y tutores propuestos; ampliar el workflow de forma deliberada.
 3. **Revisar los comandos `db:verify-*`.** Algunos nombres reutilizan archivos de
    verificación de dominios relacionados. Confirma que cada comando cubra las
    restricciones que anuncia, en particular perfiles, tutores propuestos y
@@ -94,7 +107,10 @@ de Sonar al workflow sin cambiar primero esa configuración.
    `HABILITADO`/`ADMITIDO`; cualquier otra combinación válida crea
    `SUSPENDIDO`/`NO_ADMITIDO` (ambas REGULAR, resueltas por el ADMIN que
    importó). Se admiten filas ocultas por autofiltro. La importación sigue
-   permitida solo en períodos BORRADOR. Pendiente: confirmar con la
+   permitida solo en períodos BORRADOR. **Decisión del propietario: la cédula se
+   mantiene como clave temporal inicial**, con las mitigaciones de la sección
+   «Usuarios» (vigencia corta, aviso al titular, alerta a ADMIN) y un riesgo
+   residual aceptado que allí se describe. Pendiente: confirmar con la
    institución si la cédula como clave inicial es aceptable en producción.
 5. **Preparar el despliegue real.** La salida SMTP institucional autorizada,
    secretos de producción, almacenamiento, Redis, PostgreSQL, copias de
@@ -340,12 +356,67 @@ sesiones tienen un máximo absoluto de ocho horas y refresh tokens rotativos
 protegidos con cookie HttpOnly, origen y CSRF. Un cambio de contraseña revoca
 las sesiones vigentes.
 
+Núcleo de autenticación (diseño `docs/seguridad/diseno-s1-autenticacion.md`):
+
+- Límites de login (`src/auth/login-throttle.ts`, solo cuentan fallos): sin cookie de
+  dispositivo conocido, 30 fallos/60 s por IP y 10 fallos/900 s por correo; con la cookie
+  `titulacion_dispositivo` (90 días, registrada en Redis para ese correo tras un login
+  completo), solo 10 fallos/900 s por dispositivo. Un detector registra
+  `FUERZA_BRUTA_SOSPECHADA` a los 50 fallos/hora de un correo sin bloquear. Cuenta inactiva con
+  la contraseña correcta: el mismo 401 genérico. **Riesgo residual aceptado:** durante un
+  ataque activo de adivinación contra una cuenta, sus inicios de sesión desde un dispositivo
+  nunca usado reciben 429 hasta que se vacía la ventana de 15 minutos; el ataque queda
+  auditado con la IP de origen.
+- Sesiones: inactividad máxima de 30 minutos (`sesion_usuario.ultima_actividad`, migración
+  `20261111110000`; `NULL` es sesión recién creada; solo el uso real de la API la renueva, no
+  `refresh`). Las cookies de refresh y CSRF son de sesión (sin `Max-Age`) y en production usan
+  el prefijo `__Secure-`. Dos renovaciones simultáneas: la segunda recibe una vez 409 con
+  `code: REFRESH_CONCURRENTE` (ventana de 10 s); cualquier otra reutilización revoca la sesión.
+- Contraseñas: `src/auth/password-hasher.ts` es el único punto de Argon2id;
+  las nuevas tienen 12–128 caracteres y pasan `password-policy.validator.ts` (400 con mensaje
+  genérico). Un restablecimiento o cambio de contraseña anula todos los códigos de recuperación
+  abiertos; pedir un código nuevo no anula los anteriores. `forgot-password` responde siempre
+  202 y emite el código fuera de la respuesta.
+- Eventos de seguridad en `auditoria` (`registrarEventoSeguridad`): `LOGIN_EXITOSO`,
+  `LOGIN_FALLIDO` (uno por usuario e IP cada 15 min), `LOGIN_BLOQUEADO`, `PRIMER_ACCESO`,
+  `PRIMER_ACCESO_MASIVO`, `CAMBIO_CLAVE`, `RECUPERACION_SOLICITADA`,
+  `RECUPERACION_COMPLETADA`, `SESION_REUSO_DETECTADO`, `SESION_INACTIVA`, `FUERZA_BRUTA_SOSPECHADA` y
+  `LOGOUT`.
+
 Las cuentas se crean por ADMIN o por importación confirmada de Excel. La
 importación solo se admite con un período BORRADOR; validar genera vista previa
 y confirmar vuelve a comprobar los datos dentro de la transacción que crea
 usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso. En la
 importación, la clave temporal inicial de cada estudiante es su cédula y debe
 cambiarse en el primer acceso; las altas manuales conservan claves aleatorias.
+
+Primer acceso con la cédula como clave temporal (decisión del propietario; mitigaciones S2,
+`src/auth/primer-acceso.service.ts`). Quien conozca la cédula, o el correo
+`e{cedula}@live.uleam.edu.ec`, de un compañero que aún no ha ingresado puede activar su cuenta
+antes que él. No se elimina ese riesgo; se acorta la ventana y se añaden detección y recuperación:
+
+- La clave temporal de la importación de estudiantes vence a las `IMPORT_TEMP_TTL_HOURS` (entero
+  1–168, predeterminado 24); el alta manual y `reenviar-acceso` conservan su vigencia de 72 h.
+  Vencida, el login responde el 401 genérico y la única vía es `POST /usuarios/:id/reenviar-acceso`
+  (ADMIN; clave aleatoria por correo).
+- Al completar el primer acceso (`changeInitialPassword`), el titular recibe en la misma
+  transacción un aviso en app y un correo (notificación `CUENTA_ACTIVADA`, texto neutro: cuenta
+  activada y, si no fue él, contactar a la administración; sin IP, claves, códigos ni tokens). El
+  aviso va en un SAVEPOINT: si falla se registra un warning y el cambio de contraseña continúa.
+- Cada activación suma a `first-access-ip:{ip}` (ventana de 1 h). Al llegar a 3 activaciones desde
+  una misma IP se registra un evento `PRIMER_ACCESO_MASIVO` (IP y conteo, sin credenciales) y se
+  crea un aviso en app (`ACTIVACIONES_MASIVAS`, sin correo) para cada ADMIN activo, una vez por IP y
+  hora. Un fallo de Redis o de este aviso nunca hace fallar el cambio de contraseña.
+- La contraseña definitiva no puede ser la cédula (política de contraseñas de S1).
+- **Riesgo residual:** el atacante sigue pudiendo activar la cuenta de una víctima que no ha
+  ingresado durante la vigencia de la clave; el titular lo sabe después (aviso y correo) y debe
+  pedir a ADMIN `reenviar-acceso`. Un atacante que rote de IP evita la alerta masiva.
+- La matrícula de un estudiante importado es su cédula, por lo que solo ADMIN y el propio
+  estudiante la reciben: compañeros y docentes ven únicamente identificador, nombres y apellidos
+  (`src/common/privacidad/visor-datos.ts`, aplicado en grupos, invitaciones, postulaciones,
+  asignaciones de tema y de tutor; los candidatos de invitación de `HabilitadosService` omiten
+  matrícula, cédula y correo). Esto reduce quién puede conocer la cédula, pero no elimina el
+  riesgo residual anterior: quien la obtenga por otra vía sigue pudiendo activar la cuenta.
 El esquema nuevo de desarrollo es `titulacion_dev`; preservar el esquema
 histórico `local_demo` sin cambios.
 
@@ -650,6 +721,13 @@ No repetir:
 El docente proponente del tema debe sugerirse primero cuando corresponda.
 
 Una propuesta de tutor NO significa que el docente haya sido asignado.
+
+Bloqueos (migración `20261112110000`): el servicio y el disparador `validar_tutor_propuesto` toman
+`FOR SHARE OF d, u` sobre `docente` y `usuario`, nunca `FOR UPDATE`. Varios estudiantes pueden proponer
+al mismo docente a la vez sin bloquearse; una desactivación o un cambio de `habilitado_tutoria`
+(`DocentesService.update`, que bloquea `usuario` y luego `docente` con `FOR UPDATE`) espera a la
+propuesta en curso o la hace fallar. Servicio y disparador deben pedir el mismo modo: compartido en
+uno y exclusivo en el otro provoca interbloqueos (40P01).
 
 ---
 
@@ -970,6 +1048,32 @@ Validar:
 Los documentos PAT deben registrar hash SHA-256.
 
 Las descargas deben utilizar URLs prefirmadas con vigencia limitada cuando corresponda.
+
+Validación de contenido de PAT y plantillas (`src/plantillas-pat/plantilla-pat-file.validator.ts`):
+extensión y MIME coincidentes, 10 MiB como máximo y reglas de contenido activo en una tabla
+(`REGLAS_CONTENIDO_ACTIVO`). DOCX: rechaza macros, relaciones externas que no sean hipervínculos
+http(s), objetos OLE/ActiveX y campos DDE. PDF: rechaza `/JavaScript`, `/Launch`, `/OpenAction` que
+no sea un destino explícito `[página /Fit]`, `/AA`, archivos incrustados, `/RichMedia` y todo PDF
+cifrado (nombre `/Encrypt`; el usuario debe exportarlo sin contraseña); admite enlaces `/URI`. El
+análisis PDF es una sola pasada lineal con presupuestos de trabajo (superarlos rechaza) y tres
+reglas estructurales: cada stream mide exactamente su `/Length`; toda cabecera `n g obj` de los
+bytes crudos debe ser una del nivel superior que reconoce el analizador; y todo stream con `/N`,
+`/First` o `/Type /ObjStm` (incluidos los perfiles ICC) se descomprime (sin filtro o FlateDecode
+simple, si no se rechaza) y recibe todas las reglas. **Límite:** es un filtro de defensa en
+profundidad y no puede garantizar que interprete el archivo igual que todo lector PDF o Word. El
+control complementario es que la aplicación nunca muestra los archivos: las descargas se sirven
+siempre como adjunto (`Content-Disposition: attachment`) mediante URLs prefirmadas de 300 s como
+máximo (`AlmacenamientoService.signPrivateDownload`).
+
+Subidas de documentos PAT (`POST .../documentos-pat`, 10 por usuario y hora) y de plantillas PAT
+(`POST .../plantillas-pat`, 30 por usuario y hora): además de esa cuota horaria, `@RateLimit`
+declara `concurrencia: { limite: 1, ttlSegundos: 300 }`, es decir, una subida simultánea por usuario
+(`src/common/http/rate-limit.decorator.ts`). `RateLimitGuard` toma el cupo en Redis antes de multer
+y lo libera cuando termina la respuesta o se cierra la conexión (`finish`/`close`); el TTL de 300 s
+solo es la red de seguridad si el proceso cae con el cupo tomado. Con una subida en curso responde
+429; con Redis caído, estas rutas fallan cerradas con 503 (`src/common/http/rate-limit.guard.ts`). Ese 503
+es `LimitadorNoDisponibleException`: el limitador registra la caída como máximo una vez cada 30 s y
+`ServerErrorLoggingFilter` no lo vuelve a registrar por solicitud.
 En desarrollo, SeaweedFS es el proveedor local aprobado; AIStor queda como alternativa opcional. La clave SSE-S3 se conserva fuera de Git y no se rota si existen objetos cifrados.
 
 ---
@@ -1009,7 +1113,10 @@ Los eventos relevantes incluyen:
 - anulación;
 - asignación/reemplazo de tutor;
 - revisión del PAT;
-- cambios en situación de ingreso.
+- cambios en situación de ingreso;
+- activación de cuenta (`CUENTA_ACTIVADA`, al titular, app y correo) y activaciones masivas desde una
+  misma IP (`ACTIVACIONES_MASIVAS`, a ADMIN, solo app); la migración `20261112100000` amplía las
+  restricciones de tipo y entidad (`usuario`, `seguridad`).
 
 El envío de correo debe ser asíncrono.
 
@@ -1201,6 +1308,19 @@ Priorizar pruebas de:
 
 Cuando se corrija un bug de negocio, agregar una prueba que reproduzca el bug siempre que sea razonable.
 
+Suite de ataque (`npm run test:attack`: compila y ejecuta `vitest.config.attack.ts` sobre
+`test/attack/**/*.attack-spec.ts`, en serie). Arranca la aplicación real compilada (`dist/`) sobre un
+esquema PostgreSQL temporal migrado (`attack_<hex>`, eliminado al terminar) y con Redis real;
+la configuración base sale de `.env` (en CI, un `.env` solo para CI). Incluye una matriz generada
+desde las rutas registradas (`test/attack/route-matrix.attack-spec.ts`): a nivel de rol (anónimo
+401, rol no listado 403, token de primer acceso 403, y listas aprobadas de rutas públicas y de rutas
+sin `@Roles`) y a nivel de objeto (cada ruta con parámetros de ruta no exclusiva de ADMIN se ejercita
+con los identificadores reales de su dueño, intentando acceder como actores no autorizados). Una ruta nueva con parámetros de ruta debe mapearse en
+`RUTAS_OBJETO` o, si no puede probarse sin efectos, quedar en `RUTAS_NO_CUBIERTAS` con el motivo;
+si no, la matriz falla. `test/attack/nginx.attack-spec.ts` solo se ejecuta cuando
+`ATTACK_NGINX_IMAGE` apunta a una imagen del frontend construida localmente (opcional
+`ATTACK_NGINX_PORT`, 18080 por defecto); sin ella se omite.
+
 ---
 
 # 25. Migraciones
@@ -1229,6 +1349,10 @@ Ejemplos:
 DATABASE_URL
 REDIS_HOST
 REDIS_PORT
+REDIS_PASSWORD
+REDIS_TLS
+DB_SSL
+DB_SSL_REJECT_UNAUTHORIZED
 JWT_PRIVATE_KEY_PATH
 JWT_PUBLIC_KEY_PATH
 AUTH_ISSUER
@@ -1240,6 +1364,35 @@ S3_SECRET_KEY
 SMTP_HOST
 OUTBOX_ENCRYPTION_KEY_PATH
 TRUST_PROXY
+SMTP_REQUIRE_TLS
+SWAGGER_ENABLED
+IMPORT_TEMP_TTL_HOURS
+BACKGROUND_TASKS_ENABLED
+IGNORE_ENV_FILE
+
+Contrato de plataforma (`src/config/environment.ts`): `SWAGGER_ENABLED` es false salvo valor
+`true` explícito; `DB_SSL` y `SMTP_REQUIRE_TLS` valen true en production (se admite `false`
+explícito) y false en otros entornos; `DB_SSL_REJECT_UNAUTHORIZED` vale true; `REDIS_TLS` vale
+false. En production son obligatorios `REDIS_PASSWORD` y un `TRUST_PROXY` explícito (`false`,
+número de saltos o subredes), y se rechaza `TRUST_PROXY=true`. `NODE_ENV=test` solo existe en las
+pruebas: `main.ts` se niega a arrancar con ese valor (`assertRuntimeEnvironment`,
+`src/config/environment.ts`) y `src/` no ramifica por `NODE_ENV === 'test'`: `scripts/ci-guards.mjs`
+falla el CI ante cualquier comparación de ese tipo fuera de ese rechazo de arranque (las
+comparaciones con `production` siguen permitidas). Lo que antes dependía de ese modo
+se configura con dos variables (las pruebas las fijan en `test/setup-env.ts`; las pruebas e2e
+componen la aplicación sin Redis con `createE2eTestingModule`):
+
+- `BACKGROUND_TASKS_ENABLED` (predeterminado `true`): tareas periódicas en segundo plano
+  (scheduler de transiciones de período y barridos de exportaciones y de limpieza de archivos).
+  Solo las pruebas la ponen en `false`; con `NODE_ENV=production` el arranque rechaza `false`
+  (sin estas tareas no hay transiciones automáticas ni limpieza de exportaciones y archivos).
+- `IGNORE_ENV_FILE` (predeterminado `false`): con `true` la configuración se toma solo de las
+  variables del proceso y no se lee `.env`; lo activan las pruebas para no depender del `.env` local.
+  Se lee de `process.env` antes de cargar `.env` (`src/app.module.ts`), por lo que solo surte efecto
+  como variable del proceso, no escrita dentro de `.env`.
+
+`IMPORT_TEMP_TTL_HOURS` es un entero de 1 a 168 (predeterminado 24) con la vigencia de la clave
+temporal de la importación de estudiantes.
 
 Mantener un `.env.example` sin secretos reales.
 
