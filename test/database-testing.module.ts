@@ -89,6 +89,16 @@ function createRecord(value: UsuarioRecord): Usuario {
   } as Usuario;
 }
 
+/** Igualdad estricta o los operadores que usa UsuariosService (IsNull, LessThanOrEqual con fechas y Or). */
+function matchesUsuarioValue(actual: unknown, expected: unknown): boolean {
+  if (!(expected instanceof FindOperator)) return actual === expected;
+  const operator = expected as FindOperator<unknown>;
+  if (operator.type === 'isNull') return actual === null || actual === undefined;
+  if (operator.type === 'or') return (operator.value as unknown as FindOperator<unknown>[]).some((item) => matchesUsuarioValue(actual, item));
+  if (operator.type === 'lessThanOrEqual' && actual instanceof Date && operator.value instanceof Date) return actual <= operator.value;
+  return false;
+}
+
 export const usuarioTestRepository = {
   create: (value: UsuarioRecord) => ({ ...value }) as Usuario,
   save: async (usuario: Usuario) => {
@@ -132,10 +142,10 @@ export const usuarioTestRepository = {
       records.length,
     ] as const;
   },
-  update: async (criteria: Partial<Usuario>, values: Partial<Usuario>) => {
+  update: async (criteria: Record<string, unknown>, values: Partial<Usuario>) => {
     const found = records.find((record) =>
       Object.entries(criteria).every(
-        ([key, value]) => record[key as keyof Usuario] === value,
+        ([key, value]) => matchesUsuarioValue(record[key as keyof Usuario], value),
       ),
     );
     if (found) Object.assign(found, values);

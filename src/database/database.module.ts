@@ -18,6 +18,8 @@ import { createDatabaseOptions } from './database.options.js';
           DB_USERNAME: config.get('DB_USERNAME', { infer: true }),
           DB_PASSWORD: config.get('DB_PASSWORD', { infer: true }),
           DB_NAME: config.get('DB_NAME', { infer: true }),
+          DB_SSL: config.get('DB_SSL', { infer: true }),
+          DB_SSL_REJECT_UNAUTHORIZED: config.get('DB_SSL_REJECT_UNAUTHORIZED', { infer: true }),
         }),
         retryAttempts: 3,
         retryDelay: 1000,

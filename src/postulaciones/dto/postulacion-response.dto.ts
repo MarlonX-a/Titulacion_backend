@@ -18,7 +18,7 @@ export class PostulacionResponseDto {
   @ApiProperty({ nullable: true }) grupo_id: string | null;
   @ApiProperty({ nullable: true, type: Object }) grupo: { id: string; nombre: string } | null;
   @ApiProperty({ nullable: true }) estudiante_id: string | null;
-  @ApiProperty({ type: [Object] }) participantes: Array<{ id: string; nombres: string; apellidos: string; matricula: string; habilitado: string | null; situacion_ingreso: string | null }>;
+  @ApiProperty({ type: [Object], description: 'Titular o integrantes activos del grupo. La matrícula solo se incluye para ADMIN o para el propio estudiante.' }) participantes: Array<{ id: string; nombres: string; apellidos: string; matricula?: string; habilitado: string | null; situacion_ingreso: string | null }>;
   @ApiProperty() num_integrantes: number;
   @ApiProperty() registrada_por_id: string;
   @ApiProperty({ type: Object }) registrada_por: { id: string; nombres: string; apellidos: string };

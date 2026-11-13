@@ -231,6 +231,15 @@ export class DocumentosPatService {
     throw new NotFoundException('No existe el trabajo indicado.');
   }
 
+  /**
+   * Autorización previa a recibir el cuerpo multipart (la usa `DocumentoPatCargaGuard`): misma
+   * regla que `cargar`, que vuelve a comprobarla dentro de la transacción con los bloqueos.
+   */
+  async preautorizarCarga(periodoId: string, asignacionId: string, actor: Usuario): Promise<void> {
+    const context = await this.context(this.dataSource, periodoId, asignacionId);
+    await this.authorizeUpload(this.dataSource, context, actor);
+  }
+
   async autorizarLectura(periodoId: string, assignmentId: string, actor: Usuario): Promise<void> {
     await this.authorizeRead(periodoId, assignmentId, actor);
   }
@@ -309,7 +318,8 @@ export class DocumentosPatService {
 
   private async isGroupMember(source: DataSource | import('typeorm').EntityManager, groupId: string, studentId: string): Promise<boolean> {
     let rows: unknown[];
-    try { rows = await source.query(`SELECT 1 FROM ${this.schema()}."grupo_integrante" WHERE "grupo_id"=$1 AND "estudiante_id"=$2 LIMIT 1`, [groupId, studentId]) as unknown[]; }
+    // Solo integrantes ACTIVOS: un ex-integrante pierde la lectura del PAT (el historial queda para ADMIN).
+    try { rows = await source.query(`SELECT 1 FROM ${this.schema()}."grupo_integrante" WHERE "grupo_id"=$1 AND "estudiante_id"=$2 AND "estado"='ACTIVO' LIMIT 1`, [groupId, studentId]) as unknown[]; }
     catch (error: unknown) { this.handleError(error); }
     return rows.length > 0;
   }

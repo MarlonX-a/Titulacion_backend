@@ -10,7 +10,6 @@ import type { Request } from 'express';
 import type { AuthenticatedIdentity } from './authenticated-identity.js';
 import { AuthenticationService } from './authentication.service.js';
 import { IS_PUBLIC_KEY } from './public.decorator.js';
-import { ALLOW_UNREGISTERED_IDENTITY } from './allow-unregistered-identity.decorator.js';
 import { ALLOW_FIRST_ACCESS } from './allow-first-access.decorator.js';
 import { REQUIRED_ROLES } from '../common/roles.decorator.js';
 import type { Usuario } from '../usuarios/entities/usuario.entity.js';
@@ -60,12 +59,7 @@ export class AuthenticationGuard implements CanActivate {
       return true;
     }
 
-    const allowUnregisteredIdentity = this.reflector.getAllAndOverride<boolean>(
-      ALLOW_UNREGISTERED_IDENTITY,
-      [context.getHandler(), context.getClass()],
-    );
-    if (allowUnregisteredIdentity) return true;
-
+    // Toda ruta no pública exige una cuenta registrada y activa; no hay excepciones por metadato.
     const usuario = await this.usuarios.getActiveById(request.user.subject);
     const requiredRoles = this.reflector.getAllAndOverride<string[]>(
       REQUIRED_ROLES,
@@ -78,7 +72,7 @@ export class AuthenticationGuard implements CanActivate {
       );
     }
 
-    usuario.ultimo_acceso = await this.usuarios.recordAccess(usuario.id);
+    usuario.ultimo_acceso = await this.usuarios.recordAccess(usuario.id, usuario.ultimo_acceso);
     request.usuario = usuario;
     return true;
   }

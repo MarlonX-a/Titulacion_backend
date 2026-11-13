@@ -58,6 +58,11 @@ Con la configuración de desarrollo:
 
 Después de cambiar variables de entorno, reinicia el proceso.
 
+`GET /healthz` es público (sin prefijo ni autenticación) y devuelve `{ "status": "ok" }`: indica
+que el proceso responde, sin comprobar PostgreSQL ni Redis. El `Dockerfile` construye la imagen del
+backend en dos etapas, la ejecuta con `USER node`, no incluye secretos (la configuración llega por
+variables de entorno y las claves se montan) y define un `HEALTHCHECK` sobre `/healthz`.
+
 ## Variables de entorno
 
 El backend lee `.env`. Una variable definida en el entorno de ejecución tiene
@@ -65,9 +70,9 @@ prioridad sobre la misma variable del archivo.
 
 | Variable                                                     | Valores permitidos                                             | Predeterminado si se omite                        |
 | ------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------- |
-| `NODE_ENV`                                                   | `development`, `test`, `production`                            | `development`                                     |
+| `NODE_ENV`                                                   | `development`, `production` (`test` solo existe en las pruebas automatizadas: la aplicación se niega a arrancar con él) | `development` |
 | `PORT`                                                       | Entero decimal entre `1` y `65535`                             | `3000`                                            |
-| `SWAGGER_ENABLED`                                            | Exactamente `true` o `false`                                   | `true` fuera de producción; `false` en producción |
+| `SWAGGER_ENABLED`                                            | Exactamente `true` o `false`                                   | `false` en todos los entornos (solo `true` explícito monta `/docs`) |
 | `DB_HOST`                                                    | Host no vacío                                                  | `localhost`                                       |
 | `DB_PORT`                                                    | Entero decimal entre `1` y `65535`                             | `5432`                                            |
 | `DB_SCHEMA`                                                  | Identificador de esquema PostgreSQL                            | `titulacion_dev`                                  |
@@ -77,11 +82,16 @@ prioridad sobre la misma variable del archivo.
 | `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH`                | Rutas a claves RS256 persistentes                              | Generadas localmente; obligatorias en producción  |
 | `AUTH_ISSUER`                                                | Emisor de los JWT propios                                      | `http://127.0.0.1:3000` en desarrollo             |
 | `AUTH_ORIGINS`                                               | Lista exacta de orígenes web                                   | Vacía; producción debe definir los orígenes       |
-| `REDIS_HOST`, `REDIS_PORT`                                   | Redis/BullMQ para límites y trabajos                           | `127.0.0.1`, `6379`                               |
+| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TLS`    | Redis/BullMQ para límites y trabajos (contraseña obligatoria en producción y en el Compose) | `127.0.0.1`, `6379`, sin valor por defecto |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | SeaweedFS en `127.0.0.1:8333`                     |
 | `OUTBOX_ENCRYPTION_KEY_PATH`                                 | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente                               |
-| `TRUST_PROXY`                                                | `true`, `false`, saltos (`1`) o subredes (`loopback, 10.0.0.0/8`) | `false`: no confía en `X-Forwarded-For`           |
+| `TRUST_PROXY`                                                | `false`, saltos (`1`) o subredes (`loopback, 10.0.0.0/8`); `true` se rechaza en producción | `false` fuera de producción; en producción es obligatorio un valor explícito |
+| `DB_SSL`, `DB_SSL_REJECT_UNAUTHORIZED`                       | `true` o `false`; TLS con PostgreSQL y verificación de su certificado | `DB_SSL`: `true` en producción y `false` en otros entornos; `DB_SSL_REJECT_UNAUTHORIZED`: `true` |
+| `SMTP_REQUIRE_TLS`                                           | `true` o `false`; exige STARTTLS con el servidor SMTP          | `true` en producción y `false` en otros entornos  |
+| `IMPORT_TEMP_TTL_HOURS`                                      | Entero entre `1` y `168`; horas de vigencia de la clave temporal (la cédula) de los estudiantes importados | `24` |
+| `BACKGROUND_TASKS_ENABLED`                                   | `true` o `false`; tareas periódicas (transiciones de período por fecha, barridos de exportaciones y limpieza de archivos) | `true`; solo las pruebas la desactivan; en production se rechaza `false` |
+| `IGNORE_ENV_FILE`                                            | `true` o `false`; con `true` no se lee `.env`, solo las variables del proceso (solo surte efecto como variable del proceso, no escrita en `.env`) | `false`; las pruebas lo activan |
 
 Un valor vacío o inválido detiene el arranque e identifica la variable afectada,
 sin incluir su valor en el error. `PORT` se convierte a número y
@@ -89,10 +99,11 @@ sin incluir su valor en el error. `PORT` se convierte a número y
 a número. Las credenciales de base de datos son obligatorias en todos los
 entornos, incluidas las pruebas, que usan valores ficticios.
 
-`TRUST_PROXY` (vacío equivale a `false`) debe describir la cadena real de proxies inversos (por ejemplo, `1` cuando
+`TRUST_PROXY` debe describir la cadena real de proxies inversos (por ejemplo, `1` cuando
 solo está el nginx del frontend). Sin él, `request.ip` es la IP del proxy y los límites de
-inicio de sesión y la auditoría tratan a todos los usuarios como un único cliente. No uses
-`true` si el backend se expone directamente: `X-Forwarded-For` se podría falsificar.
+inicio de sesión y la auditoría tratan a todos los usuarios como un único cliente. En producción
+es obligatorio indicarlo de forma explícita (`false`, número de saltos o subredes) y `true` se rechaza al
+arrancar, porque confiaría en cualquier `X-Forwarded-For`; fuera de producción, vacío equivale a `false`.
 
 La autenticación usa claves RSA persistentes. Genéralas una sola vez y conserva
 `/.secrets` fuera de Git y de respaldos públicos. El `sub` JWT es el UUID interno
@@ -100,9 +111,12 @@ de usuario; los permisos y el estado de la cuenta se consultan en PostgreSQL.
 En producción se exige HTTPS, claves persistentes, Redis, SMTP y almacenamiento
 privado configurados.
 
-`.env.example` habilita Swagger explícitamente. Para deshabilitarlo, usa
-`SWAGGER_ENABLED=false`. Para aplicar el comportamiento automático según
-`NODE_ENV`, elimina o comenta la línea `SWAGGER_ENABLED`.
+Swagger (`/docs` y `/docs-json`) está desactivado por defecto en todos los entornos y
+`.env.example` define `SWAGGER_ENABLED=false`. Para consultarlo en desarrollo, define
+`SWAGGER_ENABLED=true` de forma explícita.
+
+`NODE_ENV=test` no es un valor de ejecución: solo lo usan las pruebas automatizadas y la
+aplicación se niega a arrancar con él.
 
 ### Preparar servicios de desarrollo
 
@@ -118,6 +132,12 @@ npm run storage:prepare-dev
 
 La clave se guarda en `.secrets/seaweedfs.env`, ignorado por Git. No la elimines
 ni la regeneres mientras existan archivos cifrados en el volumen.
+
+Redis arranca con `--requirepass`: define `REDIS_PASSWORD` en `.env` (un valor
+aleatorio largo, por ejemplo `openssl rand -hex 24`) antes de `docker compose up`;
+sin ella Compose se niega a iniciar con un mensaje claro. También exige
+`S3_ACCESS_KEY` y `S3_SECRET_KEY` en `.env`. Redis, Mailpit (SMTP y panel web) y
+el perfil `aistor` solo se publican en `127.0.0.1`.
 Si
 Docker Desktop está instalado:
 
@@ -265,7 +285,7 @@ DTO existe únicamente en las pruebas, no en la aplicación.
 `POST /auth/login` acepta correo y contraseña. La contraseña se almacena con
 Argon2id. Una clave temporal enviada por correo permite obtener un token de
 primer acceso válido diez minutos, limitado a `POST /auth/change-initial-password`.
-Las contraseñas personales admiten entre 8 y 128 caracteres; no se recortan ni
+Las contraseñas personales admiten entre 12 y 128 caracteres; no se recortan ni
 normalizan.
 
 Los tokens de acceso RS256 duran 15 minutos. La sesión tiene un máximo absoluto
@@ -874,6 +894,23 @@ período, publicación y visibilidad del catálogo, rutas y DTO de
 grupos/invitaciones, permisos, auditoría, duplicados, filtros, paginación,
 Swagger, parser XLSX y compatibilidad de `GET /`.
 
+`npm run test:attack` ejecuta la suite de ataque: compila el proyecto y arranca la aplicación real
+(`dist/`) sobre un esquema PostgreSQL temporal y un Redis real (la configuración base sale de `.env`;
+requiere PostgreSQL, Redis y SMTP locales accesibles). Incluye una matriz de rutas generada que
+comprueba los roles y la autorización por objeto; una ruta nueva con parámetros de ruta debe
+mapearse en `test/attack/route-matrix.attack-spec.ts`. `test/attack/nginx.attack-spec.ts` solo se
+ejecuta si `ATTACK_NGINX_IMAGE` apunta a una imagen del frontend construida localmente (opcional
+`ATTACK_NGINX_PORT`, `18080` por defecto). El CI la ejecuta en el job `attack-suite`.
+
+`scripts/attack-probes.mjs` lanza sondas de ataque contra el nginx del frontend que publica el
+backend en `/api/v1/`: `node scripts/attack-probes.mjs [baseUrl]` (por defecto
+`http://127.0.0.1:8080`; `--help` muestra todas las opciones). Es solo para el entorno local del
+proyecto: no lo apuntes a otro destino. Las sondas autenticadas usan `--email` y `--password` (o
+`ATTACK_PROBE_EMAIL` y `ATTACK_PROBE_PASSWORD`, preferibles porque no quedan en el historial), con
+las cuentas de `npm run db:seed-dev-users`; `--lan-host <ip>`, `--heavy` y `--flood-count` activan
+las sondas de puertos internos, de límite de solicitudes y de inundación de subidas. Cada sonda
+imprime `PASS`, `FAIL` o `SKIPPED`, y el proceso termina con `1` si hay algún `FAIL`.
+
 Las pruebas HTTP sustituyen `DatabaseModule` por un módulo de pruebas y usan
 variables ficticias. Pueden ejecutarse sin PostgreSQL y no utilizan la
 contraseña del `.env` local. La conexión real se verifica con `npm run db:check`;
@@ -916,10 +953,9 @@ otro desde `POST /periodos/{periodoId}/exportaciones/{id}/reintentar`.
 
 ### Integración continua
 
-GitHub Actions ejecuta el lint, la comprobación estricta de TypeScript, las pruebas unitarias y HTTP, la compilación y `db:verify-exportaciones` sobre PostgreSQL 17 temporal en cada pull request hacia `main` y en cada push a `main`. Las pruebas HTTP no requieren servicios externos. SonarCloud conserva su Automatic Analysis configurado en el proyecto; el workflow no necesita ni almacena `SONAR_TOKEN`.
+GitHub Actions (`ci.yml`) ejecuta en cada pull request hacia `main` y en cada push a `main`: las guardas de seguridad (`scripts/ci-guards.mjs`), `npm audit --omit=dev --audit-level=high`, el lint, la comprobación estricta de TypeScript, las pruebas unitarias y HTTP y la compilación; gitleaks sobre el historial; la suite de ataque con PostgreSQL, Mailpit y un Redis con contraseña; y los verificadores `db:verify-exportaciones`, `db:verify-archivo-periodo`, `db:verify-auditoria`, `db:verify-auth` y `db:verify-tutores-propuestos` sobre PostgreSQL 17 temporal. CodeQL se ejecuta en un workflow aparte (`codeql.yml`). Las pruebas HTTP no requieren servicios externos. SonarCloud conserva su Automatic Analysis configurado en el proyecto; el workflow no necesita ni almacena `SONAR_TOKEN`.
 
-El workflow ejecuta además `db:verify-archivo-periodo` en el mismo PostgreSQL
-temporal. La matriz de cobertura por requisito y el backlog técnico están en
+La matriz de cobertura por requisito y el backlog técnico están en
 [`docs/cobertura-backend.md`](docs/cobertura-backend.md); sus estados distinguen
 implementación de evidencia de pruebas y operación productiva.
 

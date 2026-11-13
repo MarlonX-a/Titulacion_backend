@@ -1,0 +1,27 @@
+# Extiende las reglas predeterminadas de gitleaks; no las sustituye.
+# Cada entrada permite una única regla en un único archivo, y todas son valores ficticios.
+# gitleaks recorre el historial de la rama, así que una entrada sigue siendo necesaria aunque el
+# literal se quite después del archivo.
+title = "Titulacion backend"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+  # Claves ficticias de prueba (contraseñas incorrectas de login y valores de cookie de las pruebas
+  # e2e), un placeholder de ejemplo y la sonda de ataque contra un entorno de prueba.
+  [[rules.allowlists]]
+  description = "Valores ficticios de pruebas, placeholder de .env.example y sonda de ataque"
+  condition = "OR"
+  paths = [
+    # Contraseñas incorrectas inventadas para comprobar los límites de intentos de login.
+    '''^src/auth/authentication\.service\.login-limits\.spec\.ts$''',
+    # Cookies de refresh ficticias de una solicitud e2e (el token CSRF se genera en la prueba).
+    '''^test/auth\.e2e-spec\.ts$''',
+    # Contraseña incorrecta inventada que la sonda envía a un backend de prueba.
+    '''^scripts/attack-probes\.mjs$''',
+    # Placeholder `CAMBIAR_S3_SECRET_KEY`: el valor real se define en .env, que no se versiona.
+    '''^\.env\.example$''',
+  ]

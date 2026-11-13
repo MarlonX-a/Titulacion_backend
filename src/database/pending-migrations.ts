@@ -8,15 +8,14 @@ export const PENDING_MIGRATIONS_MESSAGE =
 /**
  * Comprueba al arrancar si quedan migraciones sin aplicar. Una migración
  * pendiente provoca errores de columna inexistente que la API devuelve como 503.
- * En producción detiene el arranque; en desarrollo solo lo registra y en pruebas
- * no consulta la base de datos.
+ * En producción detiene el arranque; en cualquier otro entorno solo lo registra.
+ * `main.ts` se niega a arrancar con `NODE_ENV=test`, por lo que no hay caso de pruebas.
  */
 export async function checkPendingMigrations(
   dataSource: Pick<DataSource, 'showMigrations'>,
   nodeEnv: NodeEnvironment,
   logger: Pick<Logger, 'error'> = new Logger('Migraciones'),
 ): Promise<void> {
-  if (nodeEnv === 'test') return;
   if (!(await dataSource.showMigrations())) return;
   logger.error(PENDING_MIGRATIONS_MESSAGE);
   if (nodeEnv === 'production') throw new Error(PENDING_MIGRATIONS_MESSAGE);

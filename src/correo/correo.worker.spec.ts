@@ -1,9 +1,23 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DataSource } from 'typeorm';
 import type { Job } from 'bullmq';
 import { CorreoWorker } from './correo.worker.js';
 import { SmtpTransportService } from './smtp-transport.service.js';
 import { EntregaCorreoEstado } from '../notificaciones/enums/entrega-correo-estado.enum.js';
+
+const keyDir = mkdtempSync(join(tmpdir(), 'correo-worker-'));
+const keyPath = join(keyDir, 'outbox.key');
+writeFileSync(keyPath, randomBytes(32));
+afterAll(() => rmSync(keyDir, { recursive: true, force: true }));
+
+describe('CorreoWorker: llave del outbox', () => {
+  it('se niega a arrancar sin OUTBOX_ENCRYPTION_KEY_PATH', () => {
+    expect(() => new CorreoWorker({} as DataSource, { get: () => undefined } as never, {} as SmtpTransportService)).toThrow(/OUTBOX_ENCRYPTION_KEY_PATH/);
+  });
+});
 
 describe('CorreoWorker: notificaciones', () => {
   const delivery = { notificacion_id: 'notification-id', usuario_id: 'user-id', email: 'destino@example.test', titulo: 'PAT revisado', mensaje: 'Versión 2 aprobada.', intentos: 1, reserva_token: randomUUID() };
@@ -21,7 +35,7 @@ describe('CorreoWorker: notificaciones', () => {
       transaction: vi.fn(async (callback: (manager: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
     } as unknown as DataSource;
     const smtp = { send } as unknown as SmtpTransportService;
-    const config = { get: () => undefined };
+    const config = { get: () => keyPath };
     const worker = new CorreoWorker(dataSource, config as never, smtp);
     const job = { name: 'enviar-notificacion', data: { id: 'delivery-id', generation: 0 } } as Job<{ id: string; generation: number }>;
     return { worker, dataSource, query, smtp: send, txQuery, job };

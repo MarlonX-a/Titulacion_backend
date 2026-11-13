@@ -1,9 +1,14 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { Injectable } from '@nestjs/common';
 import { DataSource, type EntityManager } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { NotificacionCanal, NotificacionTipo } from './enums/notificacion-canal.enum.js';
 
 interface Recipient { usuario_id: string }
+
+/** Avisos del sistema sin actor humano: ningún destinatario se filtra por ser el autor. */
+const SIN_ACTOR = '';
 
 /** Motivo del aviso de ingreso: resolución manual o suspensión automática al iniciar la titulación. */
 export type AvisoIngreso = 'RESOLUCION' | 'SUSPENSION_INICIO';
@@ -81,17 +86,53 @@ export class NotificacionesPersistenciaService {
     });
   }
 
+  /**
+   * Avisa a la cuenta que acaba de completar su primer acceso con la clave temporal, en app y por
+   * correo. El texto es neutro: no incluye dirección IP, contraseñas, códigos ni tokens. Cada
+   * activación crea su propio aviso (la entidad es un identificador nuevo) para que una
+   * reactivación posterior con `reenviar-acceso` también se notifique.
+   */
+  async cuentaActivada(manager: EntityManager, usuarioId: string): Promise<void> {
+    await this.registrar(manager, {
+      tipo: NotificacionTipo.CUENTA_ACTIVADA, entidadTipo: 'usuario', entidadId: randomUUID(), actorId: SIN_ACTOR,
+      recipients: [{ usuario_id: usuarioId }],
+      title: 'Tu cuenta fue activada',
+      message: 'Tu cuenta del Sistema de Titulación fue activada y se definió una contraseña personal. Si no fuiste tú, comunícate de inmediato con la administración.',
+    });
+  }
+
+  /**
+   * Avisa en la app a cada ADMIN activo de varias activaciones de cuentas desde una misma
+   * dirección. La entidad se deriva de la dirección y la hora para que PostgreSQL deduplique por
+   * ADMIN; no se envía correo. Devuelve cuántos ADMIN recibieron el aviso.
+   */
+  async activacionesMasivas(manager: EntityManager, input: { ip: string; activaciones: number }): Promise<number> {
+    const s = this.schema(manager);
+    const admins = await manager.query(`SELECT u."id" AS usuario_id FROM ${s}."usuario" u WHERE u."rol"='ADMIN' AND u."estado"='ACTIVO'`) as Recipient[];
+    const direccion = isIP(input.ip) !== 0 ? `la dirección ${input.ip}` : 'una misma dirección';
+    const hora = Math.floor(Date.now() / 3_600_000);
+    const digest = createHash('sha256').update(`${input.ip}|${hora}`).digest('hex');
+    await this.registrar(manager, {
+      tipo: NotificacionTipo.ACTIVACIONES_MASIVAS, entidadTipo: 'seguridad',
+      entidadId: `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`,
+      actorId: SIN_ACTOR, recipients: admins, canales: [NotificacionCanal.EN_APP],
+      title: 'Activaciones de cuentas desde una misma dirección',
+      message: `Se activaron ${input.activaciones} cuentas con clave temporal desde ${direccion} en la última hora. Revisa en la auditoría (PRIMER_ACCESO_MASIVO) si corresponde a un uso legítimo.`,
+    });
+    return new Set(admins.map((admin) => admin.usuario_id)).size;
+  }
+
   private async usersForStudents(manager: EntityManager, ids: string[]): Promise<Recipient[]> {
     if (!ids.length) return [];
     const s = this.schema(manager);
     return manager.query(`SELECT e."usuario_id" AS usuario_id FROM ${s}."estudiante" e JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE e."id"=ANY($1::uuid[]) AND u."estado"='ACTIVO'`, [ids]) as Promise<Recipient[]>;
   }
 
-  private async registrar(manager: EntityManager, input: { tipo: string; entidadTipo: string; entidadId: string; actorId: string; recipients: Recipient[]; title: string; message: string }): Promise<void> {
+  private async registrar(manager: EntityManager, input: { tipo: string; entidadTipo: string; entidadId: string; actorId: string; recipients: Recipient[]; title: string; message: string; canales?: NotificacionCanal[] }): Promise<void> {
     const s = this.schema(manager);
     const ids = [...new Set(input.recipients.map((recipient) => recipient.usuario_id))].filter((id) => id !== input.actorId);
     for (const id of ids) {
-      for (const canal of [NotificacionCanal.EN_APP, NotificacionCanal.EMAIL]) {
+      for (const canal of input.canales ?? [NotificacionCanal.EN_APP, NotificacionCanal.EMAIL]) {
         const inserted = await manager.query(`INSERT INTO ${s}."notificacion" ("usuario_id","tipo","titulo","mensaje","entidad_tipo","entidad_id","canal","leida","fecha_envio") SELECT u."id",$2,$3,$4,$5,$6,$7,false,CASE WHEN $8 THEN CURRENT_TIMESTAMP ELSE NULL END FROM ${s}."usuario" u WHERE u."id"=$1 AND u."estado"='ACTIVO' ON CONFLICT ("usuario_id","tipo","entidad_tipo","entidad_id","canal") DO NOTHING RETURNING "id"`, [id, input.tipo, input.title, input.message, input.entidadTipo, input.entidadId, canal, canal === NotificacionCanal.EN_APP]) as Array<{ id: string }>;
         if (canal === NotificacionCanal.EMAIL && inserted.length) {
           await manager.query(`INSERT INTO ${s}."entrega_correo_notificacion" ("notificacion_id") VALUES ($1) ON CONFLICT ("notificacion_id") DO NOTHING`, [inserted[0]!.id]);

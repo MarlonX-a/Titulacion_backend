@@ -1,13 +1,15 @@
-import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Req, UseInterceptors } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiConsumes, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiServiceUnavailableResponse, ApiTags, ApiUnauthorizedResponse, ApiUnsupportedMediaTypeResponse } from '@nestjs/swagger';
+import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Req, UseGuards, UseInterceptors } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiConsumes, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiServiceUnavailableResponse, ApiTags, ApiTooManyRequestsResponse, ApiUnauthorizedResponse, ApiUnsupportedMediaTypeResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { Roles } from '../common/roles.decorator.js';
+import { RateLimit } from '../common/http/rate-limit.decorator.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CargarDocumentoPatDto } from './dto/cargar-documento-pat.dto.js';
 import { DocumentoPatDownloadDto, DocumentoPatResponseDto, PagedDocumentoPatResponseDto } from './dto/documento-pat-response.dto.js';
+import { DocumentoPatCargaGuard } from './documento-pat-carga.guard.js';
 import { DocumentoPatUploadInterceptor } from './documento-pat-upload.interceptor.js';
 import { DocumentosPatService } from './documentos-pat.service.js';
 
@@ -21,6 +23,12 @@ export class DocumentosPatController {
 
   @Post()
   @Roles(UsuarioRol.ESTUDIANTE)
+  // 10 intentos por usuario y hora (cuentan también los rechazados): una entrega corregida solo
+  // es posible tras una revisión, así que el uso real queda muy por debajo del límite. Además, una
+  // sola subida simultánea por usuario: multer guarda hasta 10 MiB en memoria por solicitud. El
+  // vencimiento del cupo coincide con el plazo predeterminado de una solicitud en Node (300 s).
+  @RateLimit({ clave: 'subir-pat', limite: 10, ventanaSegundos: 3600, concurrencia: { limite: 1, ttlSegundos: 300 } })
+  @UseGuards(DocumentoPatCargaGuard)
   @UseInterceptors(DocumentoPatUploadInterceptor)
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', required: ['archivo', 'plantilla_id'], properties: { plantilla_id: { type: 'string', format: 'uuid' }, archivo: { type: 'string', format: 'binary' } } } })
@@ -31,6 +39,7 @@ export class DocumentosPatController {
   @ApiConflictResponse({ description: 'Asignación, período o plantilla incompatibles.' })
   @ApiUnsupportedMediaTypeResponse({ description: 'Solo PDF o DOCX válido.' })
   @ApiPayloadTooLargeResponse({ description: 'El archivo supera 10 MiB.' })
+  @ApiTooManyRequestsResponse({ description: 'Se superó el límite de 10 entregas por hora o ya hay una subida en curso del mismo usuario.' })
   cargar(
     @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
     @Param('asignacionId', new ParseUUIDPipe()) asignacionId: string,

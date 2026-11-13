@@ -46,6 +46,12 @@ lerna-debug.log*
 .env.local
 /.secrets
 
+# secretos y claves (nunca versionar)
+*.pem
+*.key
+.env.*
+!.env.example
+
 # temp directory
 .temp
 .tmp

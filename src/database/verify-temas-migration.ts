@@ -1,5 +1,5 @@
 import { catalogoSembrado } from './verify-academico.js';
-import { pgErrorCode as code, runTemporarySchemaVerification } from './verify-temp-schema.js';
+import { pgErrorCode as code, runTemporarySchemaVerification, undoMigrationsAfter } from './verify-temp-schema.js';
 
 const FKS_NUEVAS = ['FK_postulacion_tema', 'FK_resolucion_conflicto_tema', 'FK_asignacion_tema_tema', 'FK_tema_lote_importacion'];
 const FKS_ANTERIORES = ['FK_postulacion_tema_periodo', 'FK_resolucion_conflicto_tema_periodo', 'FK_asignacion_tema_tema_periodo', 'FK_tema_periodo'];
@@ -67,6 +67,8 @@ await runTemporarySchemaVerification({
     if (!tipoInvalido) throw new Error('PostgreSQL aceptó un tipo de tema desconocido.');
 
     step('reversión protegida');
+    // Las migraciones posteriores al banco de temas se revierten primero para probar la suya.
+    await undoMigrationsAfter(db, s, 'BancoTemas20261106100000');
     let protegida = false;
     try { await db.undoLastMigration({ transaction: 'all' }); }
     catch (error: unknown) { protegida = error instanceof Error && error.message.includes('no tienen una asignación'); }

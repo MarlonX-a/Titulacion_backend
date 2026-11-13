@@ -32,7 +32,9 @@ import { ExportacionesModule } from './exportaciones/exportaciones.module.js';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      ignoreEnvFile: process.env.NODE_ENV === 'test',
+      // Se decide antes de cargar la configuración, por eso se lee de process.env; validateEnvironment
+      // valida y documenta el mismo valor (IGNORE_ENV_FILE). Las pruebas lo activan en test/setup-env.ts.
+      ignoreEnvFile: process.env.IGNORE_ENV_FILE === 'true',
       validate: validateEnvironment,
     }),
     DatabaseModule,
@@ -57,7 +59,8 @@ import { ExportacionesModule } from './exportaciones/exportaciones.module.js';
     NotificacionesModule,
     ReportesModule,
     ExportacionesModule,
-    ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
+    CorreoModule,
+    ImportacionesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
