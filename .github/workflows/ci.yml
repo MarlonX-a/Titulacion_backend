@@ -21,16 +21,22 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Security regression guards
+        run: node scripts/ci-guards.mjs
+
+      - name: Dependency audit (production, high or above)
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Lint
         run: npm run lint
@@ -46,6 +52,90 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  attack-suite:
+    name: Attack suite (PostgreSQL + Redis with password)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: titulacion_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: titulacion-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d titulacion_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+          - 1025:1025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Los service containers no admiten argumentos de comando; Redis arranca aquí con --requirepass.
+      - name: Start Redis with a random password
+        run: |
+          REDIS_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::${REDIS_PASSWORD}"
+          echo "REDIS_PASSWORD=${REDIS_PASSWORD}" >> "$GITHUB_ENV"
+          docker run -d --name redis-ci -p 127.0.0.1:6379:6379 redis:7.4-alpine redis-server --requirepass "${REDIS_PASSWORD}"
+          for i in $(seq 1 30); do
+            if docker exec -e REDISCLI_AUTH="${REDIS_PASSWORD}" redis-ci redis-cli ping | grep -q PONG; then exit 0; fi
+            sleep 1
+          done
+          echo "Redis no respondió a tiempo" >&2
+          exit 1
+
+      # El arnés lee la configuración base desde .env (no desde el entorno del proceso).
+      - name: Write CI-only .env
+        run: |
+          {
+            echo "DB_HOST=127.0.0.1"
+            echo "DB_PORT=5432"
+            echo "DB_USERNAME=postgres"
+            echo "DB_PASSWORD=titulacion-ci-only"
+            echo "DB_NAME=titulacion_ci"
+            echo "DB_SCHEMA=titulacion_ci"
+            echo "REDIS_HOST=127.0.0.1"
+            echo "REDIS_PORT=6379"
+            echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+            echo "SMTP_HOST=127.0.0.1"
+            echo "SMTP_PORT=1025"
+          } > .env
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Attack suite
+        run: npm run test:attack
 
   database-integrity:
     name: PostgreSQL migration verification
@@ -75,10 +165,10 @@ jobs:
       DB_SCHEMA: public
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -91,3 +181,12 @@ jobs:
 
       - name: Verify period archival constraints
         run: npm run db:verify-archivo-periodo
+
+      - name: Verify immutable audit log and query indexes
+        run: npm run db:verify-auditoria
+
+      - name: Verify authentication migrations and protected rollback of later migrations
+        run: npm run db:verify-auth
+
+      - name: Verify applications and proposed tutors (shared tutor locks)
+        run: npm run db:verify-tutores-propuestos
