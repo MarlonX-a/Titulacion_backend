@@ -16,7 +16,7 @@ import {
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
 // Formato bidireccional e invisibles: U+200B–U+200F, U+202A–U+202E, U+2060–U+2069 y U+FEFF.
-const FORMATO_INVISIBLE = /[​-‏‪-‮⁠-⁩﻿]/u;
+export const FORMATO_INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/u;
 // Esquemas (`https://`, `hxxp://`) y prefijos `www.` sin esquema.
 const ENLACE = /:\/\/|\bwww\./iu;
 

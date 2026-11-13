@@ -36,13 +36,16 @@ function esCaracterRepetido(clave: string): boolean {
   return /^(.)\1*$/su.test(clave);
 }
 
+/** Valor del carácter en `indice`; `NaN` fuera de rango, como `charCodeAt`. */
+const codigoEn = (texto: string, indice: number): number => texto.codePointAt(indice) ?? Number.NaN;
+
 /** Secuencia monótona de paso 1 en toda la cadena (`abcdefghijkl`, `987654321`). */
 function esSecuencia(clave: string): boolean {
   if (clave.length < 3) return false;
-  const paso = clave.charCodeAt(1) - clave.charCodeAt(0);
+  const paso = codigoEn(clave, 1) - codigoEn(clave, 0);
   if (paso !== 1 && paso !== -1) return false;
   for (let i = 2; i < clave.length; i += 1) {
-    if (clave.charCodeAt(i) - clave.charCodeAt(i - 1) !== paso) return false;
+    if (codigoEn(clave, i) - codigoEn(clave, i - 1) !== paso) return false;
   }
   return true;
 }

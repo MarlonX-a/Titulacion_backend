@@ -20,7 +20,7 @@ export function hashPassword(password: string): Promise<string> {
 }
 
 /** `false` también si el hash está malformado: nunca lanza por datos guardados. */
-export async function verifyPassword(passwordHash: string, password: string): Promise<boolean> {
+export function verifyPassword(passwordHash: string, password: string): Promise<boolean> {
   return verify(passwordHash, password).catch(() => false);
 }
 

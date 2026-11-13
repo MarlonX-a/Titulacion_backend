@@ -11,11 +11,17 @@ export interface ValidatedPlantillaFile {
   fileName: string;
 }
 
+/**
+ * Código en `indice`; `NaN` fuera de rango (como `charCodeAt`), nunca `undefined`. Las partes PDF son
+ * latin1 y toda comparación es con valores ASCII, donde `codePointAt` coincide con `charCodeAt`.
+ */
+const codigoEn = (texto: string, indice: number): number => texto.codePointAt(indice) ?? Number.NaN;
+
 interface ZipEntry { name: string; method: number; compressed: number; size: number; localOffset: number; }
 
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+    const code = codigoEn(value, index);
     if (code <= 31 || code === 127) return true;
   }
   return false;
@@ -148,7 +154,7 @@ function decodificarXml(texto: string): string {
   return texto
     .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => caracterXml(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_match, dec: string) => caracterXml(Number(dec)))
-    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    .replaceAll('&quot;', '"').replaceAll('&apos;', "'").replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
 }
 
 function atributoXml(atributos: string, nombre: string): string | null {
@@ -203,21 +209,21 @@ function instruccionesCampo(parte: string): string {
     const hallazgo = parte.indexOf('w:instr', posicion);
     if (hallazgo < 0) return partes.join('');
     posicion = hallazgo + 'w:instr'.length;
-    const esElemento = parte.startsWith('Text', posicion) && !esCaracterPalabra(parte.charCodeAt(posicion + 4));
-    if (esElemento && parte.charCodeAt(hallazgo - 1) === 0x3c /* < */) {
+    const esElemento = parte.startsWith('Text', posicion) && !esCaracterPalabra(codigoEn(parte, posicion + 4));
+    if (esElemento && codigoEn(parte, hallazgo - 1) === 0x3c /* < */) {
       const finApertura = parte.indexOf('>', hallazgo);
       if (finApertura < 0) throw new BadRequestException(DOCX_NO_INSPECCIONABLE);
       posicion = finApertura + 1;
-      if (parte.charCodeAt(finApertura - 1) === 0x2f /* / */) continue;
+      if (codigoEn(parte, finApertura - 1) === 0x2f /* / */) continue;
       const cierre = parte.indexOf('</w:instrText>', finApertura);
       if (cierre < 0) throw new BadRequestException(DOCX_NO_INSPECCIONABLE);
       partes.push(decodificarXml(parte.slice(finApertura + 1, cierre)));
       posicion = cierre + '</w:instrText>'.length;
-    } else if (!esElemento && !esCaracterPalabra(parte.charCodeAt(hallazgo - 1))) {
-      while (esEspacioXml(parte.charCodeAt(posicion))) posicion += 1;
+    } else if (!esElemento && !esCaracterPalabra(codigoEn(parte, hallazgo - 1))) {
+      while (esEspacioXml(codigoEn(parte, posicion))) posicion += 1;
       if (parte[posicion] !== '=') continue;
       posicion += 1;
-      while (esEspacioXml(parte.charCodeAt(posicion))) posicion += 1;
+      while (esEspacioXml(codigoEn(parte, posicion))) posicion += 1;
       const comilla = parte[posicion];
       if (comilla !== '"' && comilla !== "'") continue;
       const cierre = parte.indexOf(comilla, posicion + 1);
@@ -239,7 +245,7 @@ const PDF_PASOS_POR_BYTE = 4;
 const PDF_NO_INSPECCIONABLE = 'El PDF contiene objetos comprimidos o estructuras que no se pueden inspeccionar.';
 
 const esEspacioPdf = (codigo: number) => codigo === 32 || codigo === 10 || codigo === 13 || codigo === 9 || codigo === 12 || codigo === 0;
-const NO_REGULAR_PDF = new Set([...'()<>[]{}/%'].map((caracter) => caracter.charCodeAt(0)));
+const NO_REGULAR_PDF = new Set([...'()<>[]{}/%'].map((caracter) => codigoEn(caracter, 0)));
 /** Carácter regular PDF: ni espacio ni delimitador `( ) < > [ ] { } / %`. */
 const esRegularPdf = (codigo: number) => !esEspacioPdf(codigo) && !NO_REGULAR_PDF.has(codigo);
 const esDigito = (codigo: number) => codigo >= 48 && codigo <= 57;
@@ -284,7 +290,7 @@ class FinesDeLinea {
     if (previo >= 0 && posicion <= this.fines[previo]!) return this.fines[previo]!;
     const siguienteInicio = bajo < this.inicios.length ? this.inicios[bajo]! : Number.POSITIVE_INFINITY;
     let i = posicion;
-    while (i < this.texto.length && i < siguienteInicio && !esFinDeLinea(this.texto.charCodeAt(i))) i += 1;
+    while (i < this.texto.length && i < siguienteInicio && !esFinDeLinea(codigoEn(this.texto, i))) i += 1;
     this.presupuesto.gastar(i - posicion + 1);
     if (i === siguienteInicio) {
       this.inicios[bajo] = posicion;
@@ -315,28 +321,28 @@ function buscarCabecerasCrudas(texto: string, presupuesto: PresupuestoPdf): Cabe
   const porObjeto = new Map<string, number[]>();
   const finDigitos = (desde: number) => {
     let i = desde;
-    while (esDigito(texto.charCodeAt(i))) i += 1;
+    while (esDigito(codigoEn(texto, i))) i += 1;
     presupuesto.gastar(i - desde + 1);
     return i;
   };
   const saltarSeparadores = (desde: number) => {
     let i = desde;
     for (;;) {
-      const codigo = texto.charCodeAt(i);
+      const codigo = codigoEn(texto, i);
       if (esSeparadorCrudo(codigo)) { i += 1; presupuesto.gastar(1); } else if (codigo === 0x25 /* % */) i = lineas.desde(i);
       else return i;
     }
   };
   for (let inicio = 0; inicio < texto.length; inicio += 1) {
-    if (!esDigito(texto.charCodeAt(inicio)) || esDigito(texto.charCodeAt(inicio - 1))) continue;
+    if (!esDigito(codigoEn(texto, inicio)) || esDigito(codigoEn(texto, inicio - 1))) continue;
     const finNumero = finDigitos(inicio);
     const inicioGeneracion = saltarSeparadores(finNumero);
-    if (inicioGeneracion === finNumero || !esDigito(texto.charCodeAt(inicioGeneracion))) continue;
+    if (inicioGeneracion === finNumero || !esDigito(codigoEn(texto, inicioGeneracion))) continue;
     const finGeneracion = finDigitos(inicioGeneracion);
     const palabra = saltarSeparadores(finGeneracion);
     if (palabra === finGeneracion || !texto.startsWith('obj', palabra)) continue;
     // `obj` seguido de una letra no es la palabra clave; seguido de dígitos (`obj12`) algunos lectores lo aceptan.
-    const despues = palabra + 3 < texto.length ? texto.charCodeAt(palabra + 3) : 32;
+    const despues = palabra + 3 < texto.length ? codigoEn(texto, palabra + 3) : 32;
     if (esRegularPdf(despues) && !esDigito(despues)) continue;
     if (posiciones.length >= PDF_MAX_CABECERAS) throw new BadRequestException(PDF_NO_INSPECCIONABLE);
     posiciones.push(palabra);
@@ -360,7 +366,7 @@ function crearResolutorLongitud(texto: string, porObjeto: Map<string, number[]>,
   const saltar = (desde: number) => {
     let i = desde;
     for (;;) {
-      const codigo = texto.charCodeAt(i);
+      const codigo = codigoEn(texto, i);
       if (esEspacioPdf(codigo)) i += 1;
       else if (codigo === 0x25 /* % */) i = finDeLinea(texto, i);
       else break;
@@ -372,10 +378,10 @@ function crearResolutorLongitud(texto: string, porObjeto: Map<string, number[]>,
     const inicio = saltar(palabraObj + 3);
     if (inicio === palabraObj + 3) throw new BadRequestException(PDF_NO_INSPECCIONABLE);
     let fin = inicio;
-    while (esDigito(texto.charCodeAt(fin)) && fin - inicio <= 10) fin += 1;
+    while (esDigito(codigoEn(texto, fin)) && fin - inicio <= 10) fin += 1;
     const digitos = texto.slice(inicio, fin);
     const cierre = saltar(fin);
-    if (!ENTERO_PDF.test(digitos) || cierre === fin || !texto.startsWith('endobj', cierre) || esRegularPdf(texto.charCodeAt(cierre + 6) || 32)) {
+    if (!ENTERO_PDF.test(digitos) || cierre === fin || !texto.startsWith('endobj', cierre) || esRegularPdf(codigoEn(texto, cierre + 6) || 32)) {
       throw new BadRequestException(PDF_NO_INSPECCIONABLE);
     }
     return Number(digitos);
@@ -438,11 +444,11 @@ function inspeccionarPdf(buffer: Buffer): PdfInspeccionado {
   };
   let i = 0;
   while (i < texto.length) {
-    const codigo = texto.charCodeAt(i);
+    const codigo = codigoEn(texto, i);
     if (esEspacioPdf(codigo)) { i += 1; continue; }
     if (codigo === 0x25 /* % */) { i = finDeLinea(texto, i); continue; }
     if (codigo === 0x28 /* ( */) { i = finDeCadenaPdf(texto, i); registrar('()'); continue; }
-    if (codigo === 0x3c /* < */ && texto.charCodeAt(i + 1) === 0x3c) {
+    if (codigo === 0x3c /* < */ && codigoEn(texto, i + 1) === 0x3c) {
       if (profundidad === 0) { diccionario = []; diccionarioPrevio = null; }
       profundidad += 1;
       enteros = 0;
@@ -458,7 +464,7 @@ function inspeccionarPdf(buffer: Buffer): PdfInspeccionado {
       i = fin + 1;
       continue;
     }
-    if (codigo === 0x3e /* > */ && texto.charCodeAt(i + 1) === 0x3e && profundidad > 0) {
+    if (codigo === 0x3e /* > */ && codigoEn(texto, i + 1) === 0x3e && profundidad > 0) {
       diccionario.push('>>');
       profundidad -= 1;
       enteros = 0;
@@ -468,7 +474,7 @@ function inspeccionarPdf(buffer: Buffer): PdfInspeccionado {
     }
     if (codigo !== 0x2f /* / */ && !esRegularPdf(codigo)) { registrar(texto[i]!); i += 1; continue; }
     let fin = i + 1;
-    while (fin < texto.length && esRegularPdf(texto.charCodeAt(fin))) fin += 1;
+    while (fin < texto.length && esRegularPdf(codigoEn(texto, fin))) fin += 1;
     if (fin - i === 6 && texto.startsWith('stream', i)) {
       estado.streams += 1;
       if (!diccionarioPrevio || estado.streams > PDF_MAX_STREAMS) throw new BadRequestException(PDF_NO_INSPECCIONABLE);
@@ -491,7 +497,7 @@ function inspeccionarPdf(buffer: Buffer): PdfInspeccionado {
       diccionarioPrevio = null;
       if (fin - i === 3 && enteros >= 2 && texto.startsWith('obj', i)) cabecerasLexico.push(i);
       let soloDigitos = true;
-      for (let k = i; k < fin && soloDigitos; k += 1) soloDigitos = esDigito(texto.charCodeAt(k));
+      for (let k = i; k < fin && soloDigitos; k += 1) soloDigitos = esDigito(codigoEn(texto, k));
       enteros = soloDigitos ? enteros + 1 : 0;
     }
     i = fin;
@@ -513,7 +519,7 @@ function exigirCabecerasReconocidas(crudas: Int32Array, lexico: number[]): void 
 
 function finDeLinea(texto: string, inicio: number): number {
   let i = inicio;
-  while (i < texto.length && texto.charCodeAt(i) !== 10 && texto.charCodeAt(i) !== 13) i += 1;
+  while (i < texto.length && codigoEn(texto, i) !== 10 && codigoEn(texto, i) !== 13) i += 1;
   return i;
 }
 
@@ -521,7 +527,7 @@ function finDeLinea(texto: string, inicio: number): number {
 function finDeCadenaPdf(texto: string, inicio: number): number {
   let nivel = 0;
   for (let i = inicio; i < texto.length; i += 1) {
-    const codigo = texto.charCodeAt(i);
+    const codigo = codigoEn(texto, i);
     if (codigo === 0x5c /* \ */) i += 1;
     else if (codigo === 0x28) nivel += 1;
     else if (codigo === 0x29 && (nivel -= 1) === 0) return i + 1;
@@ -532,9 +538,9 @@ function finDeCadenaPdf(texto: string, inicio: number): number {
 /** Tras `stream` va un fin de línea (CRLF, LF o CR); se toleran espacios previos. */
 function inicioDatosStream(texto: string, despues: number): number {
   let i = despues;
-  while (texto.charCodeAt(i) === 32 || texto.charCodeAt(i) === 9) i += 1;
+  while (codigoEn(texto, i) === 32 || codigoEn(texto, i) === 9) i += 1;
   if (texto.startsWith('\r\n', i)) return i + 2;
-  if (texto.charCodeAt(i) === 10 || texto.charCodeAt(i) === 13) return i + 1;
+  if (codigoEn(texto, i) === 10 || codigoEn(texto, i) === 13) return i + 1;
   throw new BadRequestException(PDF_NO_INSPECCIONABLE);
 }
 
@@ -543,8 +549,8 @@ function posicionEndstream(texto: string, finDatos: number): number {
   if (finDatos > texto.length) throw new BadRequestException(PDF_NO_INSPECCIONABLE);
   let i = finDatos;
   if (texto.startsWith('\r\n', i)) i += 2;
-  else if (esFinDeLinea(texto.charCodeAt(i))) i += 1;
-  if (!texto.startsWith('endstream', i) || esRegularPdf(texto.charCodeAt(i + 9) || 32)) throw new BadRequestException(PDF_NO_INSPECCIONABLE);
+  else if (esFinDeLinea(codigoEn(texto, i))) i += 1;
+  if (!texto.startsWith('endstream', i) || esRegularPdf(codigoEn(texto, i + 9) || 32)) throw new BadRequestException(PDF_NO_INSPECCIONABLE);
   return i;
 }
 
@@ -612,7 +618,7 @@ function contenidoStreamDeObjetos(datos: Buffer, diccionario: string[], estado: 
 
 /** Los nombres PDF admiten escapes hexadecimales: `/J#61vaScript` equivale a `/JavaScript`. */
 function normalizarNombresPdf(texto: string): string {
-  return texto.replace(/#([0-9a-f]{2})/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+  return texto.replace(/#([0-9a-f]{2})/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)));
 }
 
 function inspectZip(buffer: Buffer): ZipEntry[] {

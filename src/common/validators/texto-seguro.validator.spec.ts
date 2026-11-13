@@ -2,16 +2,21 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { CreateGrupoDto } from '../../grupos/dto/create-grupo.dto.js';
 import { datosEstudianteVisibles, VISOR_ADMIN } from '../privacidad/visor-datos.js';
-import { esTextoSeguro } from './texto-seguro.validator.js';
+import { esTextoSeguro, FORMATO_INVISIBLE } from './texto-seguro.validator.js';
 
 const errores = (nombre: unknown) => validateSync(plainToInstance(CreateGrupoDto, { nombre })).length;
 
 describe('texto seguro para avisos y correos', () => {
   it('rechaza enlaces, controles y caracteres bidireccionales o invisibles', () => {
-    for (const value of ['ver https://evil.example', 'hxxp://x', 'www.evil.example', 'a\nb', 'a\u0007b', 'Grupo ‮fdp.exe', 'a​b', 'a⁦b', '﻿Grupo']) {
+    for (const value of ['ver https://evil.example', 'hxxp://x', 'www.evil.example', 'a\nb', 'a\u0007b', 'Grupo \u202Efdp.exe', 'a\u200Bb', 'a\u2066b', '\uFEFFGrupo']) {
       expect(esTextoSeguro(value), JSON.stringify(value)).toBe(false);
     }
     expect(esTextoSeguro('Grupo de titulación A')).toBe(true);
+  });
+
+  it('el patrón de caracteres invisibles se escribe solo con escapes ASCII', () => {
+    expect(FORMATO_INVISIBLE.source).toMatch(/^[\x20-\x7e]+$/u);
+    expect(FORMATO_INVISIBLE.source).toContain(String.raw`\u202E`);
   });
 
   it('el nombre de grupo admite letras de cualquier alfabeto, dígitos y puntuación básica', () => {
@@ -19,7 +24,7 @@ describe('texto seguro para avisos y correos', () => {
   });
 
   it('el nombre de grupo rechaza dominios, rutas, correos y caracteres invisibles', () => {
-    for (const nombre of ['evil.example', 'a/b', 'x@y', 'Verifica en https://evil.example/login', 'Grupo ‮fdp.exe', '-Grupo', '<b>Grupo</b>']) expect(errores(nombre), nombre).toBeGreaterThan(0);
+    for (const nombre of ['evil.example', 'a/b', 'x@y', 'Verifica en https://evil.example/login', 'Grupo \u202Efdp.exe', '-Grupo', '<b>Grupo</b>']) expect(errores(nombre), nombre).toBeGreaterThan(0);
   });
 });
 
