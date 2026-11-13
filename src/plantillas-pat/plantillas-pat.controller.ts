@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query, Req, UseInterceptors } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiConsumes, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiServiceUnavailableResponse, ApiTags, ApiUnauthorizedResponse, ApiUnsupportedMediaTypeResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiConsumes, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiServiceUnavailableResponse, ApiTags, ApiTooManyRequestsResponse, ApiUnauthorizedResponse, ApiUnsupportedMediaTypeResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { Roles } from '../common/roles.decorator.js';
+import { RateLimit } from '../common/http/rate-limit.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
@@ -21,6 +22,8 @@ export class PlantillasPatController {
 
   @Post()
   @Roles(UsuarioRol.ADMIN)
+  // Una sola subida simultánea por usuario: multer guarda hasta 10 MiB en memoria por solicitud.
+  @RateLimit({ clave: 'subir-plantilla-pat', limite: 30, ventanaSegundos: 3600, concurrencia: { limite: 1, ttlSegundos: 300 } })
   @UseInterceptors(PlantillaPatUploadInterceptor)
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', required: ['version', 'archivo'], properties: { version: { type: 'string', maxLength: 20 }, archivo: { type: 'string', format: 'binary' } } } })
@@ -30,6 +33,7 @@ export class PlantillasPatController {
   @ApiUnsupportedMediaTypeResponse({ description: 'Solo PDF o DOCX válido.' })
   @ApiPayloadTooLargeResponse({ description: 'El archivo supera 10 MiB.' })
   @ApiConflictResponse({ description: 'Versión duplicada o período archivado.' })
+  @ApiTooManyRequestsResponse({ description: 'Se superó el límite de 30 publicaciones por hora o ya hay una subida en curso del mismo usuario.' })
   publicar(@Param('periodoId', new ParseUUIDPipe()) periodoId: string, @Body() dto: PublicarPlantillaPatDto, @Req() request: Request, @CurrentUsuario() actor: Usuario) {
     const file = (request as Request & { file?: Express.Multer.File }).file;
     return this.plantillas.publicar(periodoId, dto, file, actor, request.ip ?? null);
