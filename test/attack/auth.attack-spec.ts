@@ -190,7 +190,7 @@ describe('Autenticación (ataque)', () => {
         sessionCall(attack, '/auth/refresh', sesion.refreshCookie!, sesion.csrfCookie!),
         sessionCall(attack, '/auth/refresh', sesion.refreshCookie!, sesion.csrfCookie!),
       ]);
-      const statuses = [a.status, b.status].sort();
+      const statuses = [a.status, b.status].sort((x, y) => x - y);
       expect(statuses).toEqual([200, 409]);
       const conflicto = a.status === 409 ? a : b;
       expect(JSON.stringify(conflicto.body)).toContain('REFRESH_CONCURRENTE');

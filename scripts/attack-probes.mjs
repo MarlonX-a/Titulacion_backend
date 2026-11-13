@@ -182,14 +182,14 @@ async function rssKiB(pid) {
 }
 function muestreador(pid) {
   const muestras = [];
-  let activo = true;
+  const parada = new AbortController();
   const ciclo = (async () => {
-    while (activo) {
+    while (!parada.signal.aborted) {
       muestras.push(await rssKiB(pid));
       await new Promise((r) => setTimeout(r, 200));
     }
   })();
-  return { async detener() { activo = false; await ciclo; return muestras; } };
+  return { async detener() { parada.abort(); await ciclo; return muestras; } };
 }
 const mib = (kib) => (kib / 1024).toFixed(1);
 

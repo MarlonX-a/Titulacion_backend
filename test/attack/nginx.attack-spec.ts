@@ -548,13 +548,13 @@ describe.skipIf(!IMAGE)('Campaña viva cliente -> nginx -> backend (ataque)', ()
       socket.once('data', (data) => { socket.destroy(); resolve(data.toString().trim()); });
       socket.once('error', (error) => resolve(`error ${error.message}`));
     });
-    EVIDENCIA('P12', { publicados: mappings, noLoopback: nonLoopback, lan, abiertosEnLan: lanResults.filter((r) => r.estado === 'ABIERTO'), resumenLan: lanResults.reduce<Record<string, number>>((a, r) => ({ ...a, [r.estado]: (a[r.estado] ?? 0) + 1 }), {}), controlPositivoBackend0000: control, redisSinAuth: noauth });
+    EVIDENCIA('P12', { publicados: mappings, noLoopback: nonLoopback, lan, abiertosEnLan: lanResults.filter((r) => r.estado === 'ABIERTO'), resumenLan: lanResults.reduce<Record<string, number>>((a, r) => ({ ...a, [r.estado]: (a[r.estado] ?? 0) + 1 }), {}), controlPositivoBackend0000: control, redisSinAuthRechazado: noauth.startsWith('-NOAUTH') });
     expect(mappings.length).toBeGreaterThan(0);
     expect(nonLoopback, 'puertos publicados fuera de 127.0.0.1').toEqual([]);
     expect(lan.length, 'no se halló una IPv4 de LAN').toBeGreaterThan(0);
     expect(lanResults.filter((r) => r.estado === 'ABIERTO')).toEqual([]);
     expect(control, 'el sondeo LAN no detecta ni un puerto abierto conocido').toBe('ABIERTO');
-    expect(noauth).toMatch(/^-NOAUTH/);
+    expect(noauth.startsWith('-NOAUTH')).toBe(true);
   });
 });
 

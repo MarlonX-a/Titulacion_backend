@@ -165,8 +165,8 @@ describe('Matriz BOLA/BFLA generada desde las rutas (ataque)', () => {
   });
 
   it('[matriz] las rutas públicas coinciden con la lista aprobada', () => {
-    const publicas = rutas.filter((ruta) => ruta.isPublic).map(etiqueta).sort();
-    expect(publicas).toEqual([...RUTAS_PUBLICAS_APROBADAS].sort());
+    const publicas = rutas.filter((ruta) => ruta.isPublic).map(etiqueta).sort((x, y) => x.localeCompare(y));
+    expect(publicas).toEqual([...RUTAS_PUBLICAS_APROBADAS].sort((x, y) => x.localeCompare(y)));
   });
 
   it('[M11] ninguna ruta declara @AllowUnregisteredIdentity', () => {

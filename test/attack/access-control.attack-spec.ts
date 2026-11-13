@@ -161,7 +161,7 @@ describe('Control de acceso y privacidad (ataque)', () => {
     const periodo = await crearPeriodo(attack);
     const estudiante = await crearCuenta(attack, { rol: 'ESTUDIANTE' });
     await habilitar(attack, periodo, estudiante);
-    const response = await post(`/periodos/${periodo}/grupos`, estudiante, { nombre: 'Grupo ‮fdp.exe' });
+    const response = await post(`/periodos/${periodo}/grupos`, estudiante, { nombre: 'Grupo \u202Efdp.exe' });
     expect(response.status).toBe(400);
   });
 
