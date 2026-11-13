@@ -26,11 +26,13 @@ describe('checkPendingMigrations', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
-  it('no consulta la base de datos en el entorno de pruebas', async () => {
-    const showMigrations = vi.fn();
+  it('no tiene un caso especial para NODE_ENV=test (src/ no ramifica por ese valor)', async () => {
+    const showMigrations = vi.fn().mockResolvedValue(true);
+    const logger = { error: vi.fn() };
 
-    await checkPendingMigrations({ showMigrations }, 'test', { error: vi.fn() });
+    await expect(checkPendingMigrations({ showMigrations }, 'test', logger)).resolves.toBeUndefined();
 
-    expect(showMigrations).not.toHaveBeenCalled();
+    expect(showMigrations).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(PENDING_MIGRATIONS_MESSAGE);
   });
 });

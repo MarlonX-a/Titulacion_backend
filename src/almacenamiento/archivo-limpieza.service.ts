@@ -1,20 +1,26 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import type { Queue } from 'bullmq';
 import { LessThan, Repository } from 'typeorm';
+import type { AppEnvironment } from '../config/environment.js';
 import { ArchivoPendiente } from './entities/archivo-pendiente.entity.js';
 
 @Injectable()
 export class ArchivoLimpiezaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ArchivoLimpiezaService.name);
   private timer?: NodeJS.Timeout;
-  private readonly testMode = process.env.NODE_ENV === 'test';
+  /** `BACKGROUND_TASKS_ENABLED`: barrido periódico que vuelve a encolar las limpiezas pendientes. */
+  private readonly tareasActivas: boolean;
 
   constructor(
     @InjectRepository(ArchivoPendiente) private readonly repository: Repository<ArchivoPendiente>,
     @InjectQueue('limpieza-archivos') private readonly queue: Queue,
-  ) {}
+    config: ConfigService<AppEnvironment, true>,
+  ) {
+    this.tareasActivas = config.get('BACKGROUND_TASKS_ENABLED', { infer: true }) === true;
+  }
 
   async registrar(periodoId: string | null, key: string): Promise<boolean> {
     const existing = await this.repository.findOneBy({ ruta_almacenamiento: key });
@@ -37,7 +43,7 @@ export class ArchivoLimpiezaService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
-    if (this.testMode) return;
+    if (!this.tareasActivas) return;
     this.timer = setInterval(() => void this.encolarPendientes(), 30_000);
     this.timer.unref();
     void this.encolarPendientes();

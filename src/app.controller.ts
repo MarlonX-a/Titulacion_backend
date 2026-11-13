@@ -20,4 +20,12 @@ export class AppController {
   getHello(): string {
     return this.appService.getHello();
   }
+
+  @Get('healthz')
+  @Public()
+  @ApiOperation({ summary: 'Comprobar que el proceso responde (sin detalles de dependencias)' })
+  @ApiOkResponse({ description: 'El proceso está en ejecución.', schema: { type: 'object', properties: { status: { type: 'string', example: 'ok' } } } })
+  healthz(): { status: 'ok' } {
+    return { status: 'ok' };
+  }
 }
