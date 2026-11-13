@@ -53,7 +53,7 @@ export class ImportacionesController {
   @ApiAcceptedResponse({ description: 'Validación en segundo plano; consultar la preparación.' })
   @ApiBadRequestResponse({ description: 'Archivo inválido o fuera de los límites.' })
   async submit(
-    @Param('periodoId') periodId: string,
+    @Param('periodoId', new ParseUUIDPipe()) periodId: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() body: ImportarConCarreraDto,
     @CurrentUsuario() actor: Usuario,
@@ -76,7 +76,7 @@ export class ImportacionesController {
   @Get('periodos/:periodoId/importaciones/estudiantes/:id')
   @ApiOperation({ summary: 'Consultar progreso, errores y vista previa' })
   @ApiOkResponse({ description: 'Detalle de preparación accesible a ADMIN.' })
-  get(@Param('periodoId') periodId: string, @Param('id') id: string) {
+  get(@Param('periodoId', new ParseUUIDPipe()) periodId: string, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.service.get(periodId, id);
   }
 
@@ -87,8 +87,8 @@ export class ImportacionesController {
   @ApiAcceptedResponse({ description: 'Importación aceptada para ejecución en segundo plano.' })
   @ApiForbiddenResponse({ description: 'Solo ADMIN puede confirmarla.' })
   confirm(
-    @Param('periodoId') periodId: string,
-    @Param('id') id: string,
+    @Param('periodoId', new ParseUUIDPipe()) periodId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() _body: ConfirmarImportacionDto,
     @CurrentUsuario() actor: Usuario,
     @Req() request: Request,

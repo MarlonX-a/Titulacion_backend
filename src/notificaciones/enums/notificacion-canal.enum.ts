@@ -12,4 +12,8 @@ export enum NotificacionTipo {
   TEMA_ASIGNADO = 'TEMA_ASIGNADO', TEMA_ANULADO = 'TEMA_ANULADO',
   TUTOR_ASIGNADO = 'TUTOR_ASIGNADO', TUTOR_REEMPLAZADO = 'TUTOR_REEMPLAZADO',
   INGRESO_RESUELTO = 'INGRESO_RESUELTO',
+  /** Aviso al titular de que su cuenta se activó con la clave temporal (entidad `usuario`). */
+  CUENTA_ACTIVADA = 'CUENTA_ACTIVADA',
+  /** Aviso a ADMIN de varias activaciones desde una misma dirección (entidad `seguridad`). */
+  ACTIVACIONES_MASIVAS = 'ACTIVACIONES_MASIVAS',
 }

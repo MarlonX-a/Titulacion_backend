@@ -1,11 +1,20 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { argon2id, hash } from 'argon2';
 import { CorreoSalida } from './entities/correo-salida.entity.js';
 import { CredencialUsuario } from './entities/credencial-usuario.entity.js';
+import { hashPassword } from './password-hasher.js';
 import type { EntityManager } from 'typeorm';
 
 export const TEMP_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000;
+
+/** Vigencia predeterminada, en horas, de la clave temporal (la cédula) de la importación de estudiantes. */
+export const IMPORT_TEMP_TTL_HOURS_DEFAULT = 24;
+
+/** Vigencia en milisegundos de la clave temporal de importación; un valor ausente o inválido usa el predeterminado. */
+export function importTempTtlMs(hours: unknown): number {
+  const valid = typeof hours === 'number' && Number.isInteger(hours) && hours >= 1 && hours <= 168;
+  return (valid ? hours : IMPORT_TEMP_TTL_HOURS_DEFAULT) * 60 * 60 * 1000;
+}
 
 export function readEncryptionKey(path: string): string {
   const key = readFileSync(path);
@@ -31,7 +40,7 @@ export async function setTemporaryPassword(
   const expiry = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
   await credentials.save(credentials.create({
     usuario_id: userId,
-    password_hash: await hash(password, { type: argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 }),
+    password_hash: await hashPassword(password),
     requiere_cambio: true,
     temporal_expira_en: expiry,
     version_sesion: 0,
@@ -41,7 +50,7 @@ export async function setTemporaryPassword(
 }
 
 export async function createTemporaryCredentialHash(password: string): Promise<string> {
-  return hash(password, { type: argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 });
+  return hashPassword(password);
 }
 
 export function createEncryptedOutbox(

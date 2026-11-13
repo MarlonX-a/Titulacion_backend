@@ -6,6 +6,7 @@ import { DatabaseDataSource } from './database-data-source.js';
 import { CreateNotificaciones20261013100000 } from './migrations/20261013100000-CreateNotificaciones.js';
 import { EnforceNotificationEmailDelivery20261014100000 } from './migrations/20261014100000-EnforceNotificationEmailDelivery.js';
 import { ExtendProcessNotifications20261015100000 } from './migrations/20261015100000-ExtendProcessNotifications.js';
+import { NotificacionesCuentaSeguridad20261112100000 } from './migrations/20261112100000-NotificacionesCuentaSeguridad.js';
 import { ConfigService } from '@nestjs/config';
 import type { AppEnvironment } from '../config/environment.js';
 import { CorreoWorker } from '../correo/correo.worker.js';
@@ -43,6 +44,29 @@ async function verify(): Promise<void> {
   try { await processMigration.up(processRunner); await processRunner.commitTransaction(); }
   catch (error: unknown) { if (processRunner.isTransactionActive) await processRunner.rollbackTransaction(); throw error; }
   finally { await processRunner.release(); }
+
+  // Avisos de seguridad del primer acceso (S2): up -> down -> up sin datos nuevos, y luego la regla de tipo/entidad.
+  const accountMigration = new NotificacionesCuentaSeguridad20261112100000();
+  for (const direction of ['up', 'down', 'up'] as const) {
+    const accountRunner = isolated.createQueryRunner(); await accountRunner.connect(); await accountRunner.startTransaction();
+    try { await accountMigration[direction](accountRunner); await accountRunner.commitTransaction(); }
+    catch (error: unknown) { if (accountRunner.isTransactionActive) await accountRunner.rollbackTransaction(); throw error; }
+    finally { await accountRunner.release(); }
+    if (direction === 'down') {
+      const rejected = await isolated.query(`INSERT INTO ${quoted()}."notificacion" ("usuario_id","tipo","titulo","mensaje","entidad_tipo","entidad_id","canal","fecha_envio") VALUES ($1,'CUENTA_ACTIVADA','Tu cuenta fue activada','Aviso','usuario',$2,'EN_APP',CURRENT_TIMESTAMP)`, [userId, randomUUID()]).then(() => false, (error: unknown) => code(error) === '23514');
+      if (!rejected) throw new Error('La reversión de los avisos de cuenta no restauró la restricción de tipo.');
+    }
+  }
+  const accountInsert = (tipo: string, entidad: string) => isolated!.query(`INSERT INTO ${quoted()}."notificacion" ("usuario_id","tipo","titulo","mensaje","entidad_tipo","entidad_id","canal","fecha_envio") VALUES ($1,$2,'Aviso de seguridad','Texto neutro',$3,$4,'EN_APP',CURRENT_TIMESTAMP)`, [userId, tipo, entidad, randomUUID()]).then(() => true, (error: unknown) => code(error) === '23514' ? false : Promise.reject(error));
+  if (!await accountInsert('CUENTA_ACTIVADA', 'usuario') || !await accountInsert('ACTIVACIONES_MASIVAS', 'seguridad')) throw new Error('La base rechazó un aviso de seguridad válido.');
+  if (await accountInsert('CUENTA_ACTIVADA', 'seguridad') || await accountInsert('ACTIVACIONES_MASIVAS', 'usuario') || await accountInsert('CUENTA_ACTIVADA', 'invitacion')) throw new Error('La base aceptó un aviso de seguridad con una entidad que no le corresponde.');
+  const accountDownProtected = await (async () => {
+    const accountRunner = isolated!.createQueryRunner(); await accountRunner.connect(); await accountRunner.startTransaction();
+    try { await accountMigration.down(accountRunner); await accountRunner.rollbackTransaction(); return false; }
+    catch (error: unknown) { if (accountRunner.isTransactionActive) await accountRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('activación de cuenta'); }
+    finally { await accountRunner.release(); }
+  })();
+  if (!accountDownProtected) throw new Error('La reversión permitió descartar avisos de seguridad ya registrados.');
 
   const appId = randomUUID(); const emailId = randomUUID();
   await isolated.query(`INSERT INTO ${quoted()}."notificacion" ("id","usuario_id","tipo","titulo","mensaje","entidad_tipo","entidad_id","canal","fecha_envio") VALUES ($1,$2,'PAT_ENTREGADO','Nueva entrega','Aviso de prueba','documento_pat',$3,'EN_APP',CURRENT_TIMESTAMP)`, [appId, userId, randomUUID()]);

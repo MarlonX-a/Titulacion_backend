@@ -3,16 +3,20 @@ import { IsEmail, IsString, Length } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class NewPasswordDto {
-  @ApiProperty({ minLength: 8, maxLength: 128 })
+  @ApiProperty({
+    minLength: 12,
+    maxLength: 128,
+    description: 'No puede contener datos personales de la cuenta, secuencias, un único carácter repetido ni contraseñas comunes.',
+  })
   @IsString()
-  @Length(8, 128)
+  @Length(12, 128, { message: 'La contraseña debe tener entre 12 y 128 caracteres.' })
   password: string;
 }
 
 export class ChangePasswordDto extends NewPasswordDto {
-  @ApiProperty({ minLength: 8, maxLength: 128 })
+  @ApiProperty({ minLength: 1, maxLength: 128 })
   @IsString()
-  @Length(8, 128)
+  @Length(1, 128)
   current_password: string;
 }
 

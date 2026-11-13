@@ -10,7 +10,7 @@ export class NotificacionResponseDto {
   titulo: string;
   @ApiProperty()
   mensaje: string;
-  @ApiProperty({ enum: ['documento_pat', 'revision_pat', 'invitacion', 'postulacion', 'asignacion_tema', 'asignacion_tutor', 'estudiante_habilitado'] })
+  @ApiProperty({ enum: ['documento_pat', 'revision_pat', 'invitacion', 'postulacion', 'asignacion_tema', 'asignacion_tutor', 'estudiante_habilitado', 'usuario', 'seguridad'] })
   entidad_tipo: string;
   @ApiProperty({ format: 'uuid' }) entidad_id: string;
   @ApiProperty({ enum: NotificacionCanal })

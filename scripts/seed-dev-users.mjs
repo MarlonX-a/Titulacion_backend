@@ -3,6 +3,10 @@
 import { argon2id, hash } from 'argon2';
 import { connectDevDatabase, DEV_SCHEMA } from './dev-database.mjs';
 
+// Argon2id parameters. Source of truth: ARGON2_PARAMETROS in src/auth/password-hasher.ts. This script
+// runs with plain node (no build), so it cannot import it; test/seed-dev-users.spec.ts fails on drift.
+const ARGON2_PARAMETROS = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
+
 // Shared development password for every seeded account (min. 15 characters).
 const DEV_PASSWORD = 'Titulacion-Dev-2026!';
 
@@ -28,7 +32,7 @@ const client = await connectDevDatabase('seed');
 try {
   await client.query('BEGIN');
   await client.query(`SET LOCAL search_path TO ${DEV_SCHEMA}`);
-  const passwordHash = await hash(DEV_PASSWORD, { type: argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 });
+  const passwordHash = await hash(DEV_PASSWORD, { type: argon2id, ...ARGON2_PARAMETROS });
   for (const user of USERS) {
     const existing = await client.query('SELECT id FROM usuario WHERE email = $1', [user.email]);
     if (existing.rowCount) { console.log(`skip    ${user.rol.padEnd(10)} ${user.email}`); continue; }
