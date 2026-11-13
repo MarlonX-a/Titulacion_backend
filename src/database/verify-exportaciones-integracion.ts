@@ -73,7 +73,7 @@ async function verify(): Promise<void> {
   const config = new ConfigService<AppEnvironment, true>(env as unknown as Record<string, unknown>);
   storage = new AlmacenamientoService(config);
   const cleanupQueue = { add: async () => undefined } as never;
-  const cleanup = new ArchivoLimpiezaService(isolated.getRepository(ArchivoPendiente), cleanupQueue);
+  const cleanup = new ArchivoLimpiezaService(isolated.getRepository(ArchivoPendiente), cleanupQueue, config);
   const reports = new ReportesService(isolated);
   queue = new Queue<ExportacionJob>(queueName, {
     connection: { host: env.REDIS_HOST ?? '127.0.0.1', port: env.REDIS_PORT, maxRetriesPerRequest: null },

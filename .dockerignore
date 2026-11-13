@@ -1,0 +1,28 @@
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+.secrets
+*.pem
+*.key
+
+# Dependencias, artefactos y control de versiones
+node_modules
+dist
+coverage
+.git
+.github
+.superpowers
+*.tsbuildinfo
+*.log
+
+# Pruebas, documentación y herramientas locales
+test
+docs
+scripts
+vitest.config*.ts
+docker-compose*.yml
+Dockerfile
+.dockerignore
+.vscode
+.idea

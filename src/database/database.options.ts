@@ -10,7 +10,16 @@ export type DatabaseEnvironment = Pick<
   | 'DB_PASSWORD'
   | 'DB_NAME'
   | 'DB_SCHEMA'
->;
+> &
+  Partial<Pick<AppEnvironment, 'DB_SSL' | 'DB_SSL_REJECT_UNAUTHORIZED'>>;
+
+/** TLS hacia PostgreSQL: desactivado salvo DB_SSL; verifica el certificado salvo que se desactive explícitamente. */
+export function databaseSslOptions(
+  environment: Pick<DatabaseEnvironment, 'DB_SSL' | 'DB_SSL_REJECT_UNAUTHORIZED'>,
+): Pick<PostgresConnectionOptions, 'ssl'> {
+  if (environment.DB_SSL !== true) return {};
+  return { ssl: { rejectUnauthorized: environment.DB_SSL_REJECT_UNAUTHORIZED !== false } };
+}
 
 export function createDatabaseOptions(
   environment: DatabaseEnvironment,
@@ -23,6 +32,7 @@ export function createDatabaseOptions(
     password: environment.DB_PASSWORD,
     database: environment.DB_NAME,
     schema: environment.DB_SCHEMA,
+    ...databaseSslOptions(environment),
     applicationName: 'titulacion-backend',
     connectTimeoutMS: 5000,
     synchronize: false,
