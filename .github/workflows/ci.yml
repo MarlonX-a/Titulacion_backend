@@ -30,7 +30,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Security regression guards
         run: node scripts/ci-guards.mjs
@@ -67,25 +67,14 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # El token de solo lectura no puede comentar en la PR; no se amplían sus permisos.
+          GITLEAKS_ENABLE_COMMENTS: false
 
   attack-suite:
     name: Attack suite (PostgreSQL + Redis with password)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: titulacion_ci
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: titulacion-ci-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d titulacion_ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
       mailpit:
         image: axllent/mailpit:v1.27
         ports:
@@ -100,28 +89,53 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Los service containers no admiten una contraseña generada por ejecución: PostgreSQL arranca aquí.
+      - name: Start PostgreSQL with a random password
+        run: |
+          DB_SECRET="$(openssl rand -hex 24)"
+          echo "::add-mask::${DB_SECRET}"
+          echo "DB_PASSWORD=${DB_SECRET}" >> "$GITHUB_ENV"
+          docker run -d --name postgres-ci -p 127.0.0.1:5432:5432 -e POSTGRES_DB=titulacion_ci -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD="${DB_SECRET}" postgres:17-alpine
+          for i in $(seq 1 30); do
+            if docker exec postgres-ci pg_isready -h 127.0.0.1 -U postgres -d titulacion_ci; then exit 0; fi
+            sleep 2
+          done
+          echo "PostgreSQL no respondió a tiempo" >&2
+          exit 1
+
       # Los service containers no admiten argumentos de comando; Redis arranca aquí con --requirepass.
       - name: Start Redis with a random password
         run: |
-          REDIS_PASSWORD="$(openssl rand -hex 24)"
-          echo "::add-mask::${REDIS_PASSWORD}"
-          echo "REDIS_PASSWORD=${REDIS_PASSWORD}" >> "$GITHUB_ENV"
-          docker run -d --name redis-ci -p 127.0.0.1:6379:6379 redis:7.4-alpine redis-server --requirepass "${REDIS_PASSWORD}"
+          REDIS_SECRET="$(openssl rand -hex 24)"
+          echo "::add-mask::${REDIS_SECRET}"
+          echo "REDIS_PASSWORD=${REDIS_SECRET}" >> "$GITHUB_ENV"
+          docker run -d --name redis-ci -p 127.0.0.1:6379:6379 redis:7.4-alpine redis-server --requirepass "${REDIS_SECRET}"
           for i in $(seq 1 30); do
-            if docker exec -e REDISCLI_AUTH="${REDIS_PASSWORD}" redis-ci redis-cli ping | grep -q PONG; then exit 0; fi
+            if docker exec -e REDISCLI_AUTH="${REDIS_SECRET}" redis-ci redis-cli ping | grep -q PONG; then exit 0; fi
             sleep 1
           done
           echo "Redis no respondió a tiempo" >&2
           exit 1
 
+      # Credenciales S3 desechables: se generan por ejecución y se enmascaran.
+      - name: Generate throwaway S3 credentials
+        run: |
+          S3_ACCESS="ci$(openssl rand -hex 8)"
+          S3_SECRET="$(openssl rand -hex 24)"
+          echo "::add-mask::${S3_ACCESS}"
+          echo "::add-mask::${S3_SECRET}"
+          echo "S3_ACCESS_KEY=${S3_ACCESS}" >> "$GITHUB_ENV"
+          echo "S3_SECRET_KEY=${S3_SECRET}" >> "$GITHUB_ENV"
+
       # El arnés lee la configuración base desde .env (no desde el entorno del proceso).
+      # docker-compose.yml también lo lee: exige REDIS_PASSWORD, S3_ACCESS_KEY y S3_SECRET_KEY.
       - name: Write CI-only .env
         run: |
           {
             echo "DB_HOST=127.0.0.1"
             echo "DB_PORT=5432"
             echo "DB_USERNAME=postgres"
-            echo "DB_PASSWORD=titulacion-ci-only"
+            echo "DB_PASSWORD=${DB_PASSWORD}"
             echo "DB_NAME=titulacion_ci"
             echo "DB_SCHEMA=titulacion_ci"
             echo "REDIS_HOST=127.0.0.1"
@@ -129,10 +143,35 @@ jobs:
             echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
             echo "SMTP_HOST=127.0.0.1"
             echo "SMTP_PORT=1025"
+            echo "S3_ENDPOINT=http://127.0.0.1:8333"
+            echo "S3_REGION=us-east-1"
+            echo "S3_ACCESS_KEY=${S3_ACCESS_KEY}"
+            echo "S3_SECRET_KEY=${S3_SECRET_KEY}"
           } > .env
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      # Mismo servicio SeaweedFS que el desarrollo local; el bucket del arnés se crea bajo demanda.
+      - name: Start SeaweedFS (S3-compatible storage)
+        run: |
+          node scripts/storage-prepare-dev.mjs
+          docker compose up -d seaweedfs
+
+      - name: Wait for S3 storage
+        run: |
+          for i in $(seq 1 60); do
+            if node --input-type=module -e "
+              import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
+              const client = new S3Client({ region: 'us-east-1', endpoint: 'http://127.0.0.1:8333', forcePathStyle: true,
+                credentials: { accessKeyId: process.env.S3_ACCESS_KEY, secretAccessKey: process.env.S3_SECRET_KEY } });
+              await client.send(new ListBucketsCommand({}));
+            " 2>/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker compose logs --tail 50 seaweedfs >&2
+          echo "El almacenamiento S3 no respondió a tiempo" >&2
+          exit 1
 
       - name: Attack suite
         run: npm run test:attack
@@ -141,26 +180,11 @@ jobs:
     name: PostgreSQL migration verification
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: titulacion_ci
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: titulacion-ci-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d titulacion_ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
       NODE_ENV: test
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_USERNAME: postgres
-      DB_PASSWORD: titulacion-ci-only
       DB_NAME: titulacion_ci
       DB_SCHEMA: public
     steps:
@@ -173,8 +197,22 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Los service containers no admiten una contraseña generada por ejecución: PostgreSQL arranca aquí.
+      - name: Start PostgreSQL with a random password
+        run: |
+          DB_SECRET="$(openssl rand -hex 24)"
+          echo "::add-mask::${DB_SECRET}"
+          echo "DB_PASSWORD=${DB_SECRET}" >> "$GITHUB_ENV"
+          docker run -d --name postgres-ci -p 127.0.0.1:5432:5432 -e POSTGRES_DB=titulacion_ci -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD="${DB_SECRET}" postgres:17-alpine
+          for i in $(seq 1 30); do
+            if docker exec postgres-ci pg_isready -h 127.0.0.1 -U postgres -d titulacion_ci; then exit 0; fi
+            sleep 2
+          done
+          echo "PostgreSQL no respondió a tiempo" >&2
+          exit 1
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Verify migrations and export constraints
         run: npm run db:verify-exportaciones
