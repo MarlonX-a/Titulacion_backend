@@ -5,7 +5,7 @@ describe('Configuración backend', () => {
   const database = { DB_USERNAME: 'test_user', DB_PASSWORD: 'test_password', DB_NAME: 'test_database' };
 
   it('usa valores por defecto seguros y carga la nueva configuración de ejemplo', () => {
-    expect(validateEnvironment(database)).toMatchObject({ NODE_ENV: 'development', PORT: 3000, DB_SCHEMA: 'titulacion_dev', SWAGGER_ENABLED: true });
+    expect(validateEnvironment(database)).toMatchObject({ NODE_ENV: 'development', PORT: 3000, DB_SCHEMA: 'titulacion_dev', SWAGGER_ENABLED: false });
     expect(loadEnvironment('.env.example', {})).toMatchObject({ DB_SCHEMA: 'titulacion_dev', REDIS_HOST: '127.0.0.1', SMTP_PORT: 1025, S3_BUCKET: 'titulacion-archivos' });
   });
 

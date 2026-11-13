@@ -6,13 +6,13 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import { decodeJwt, exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
 import type { CryptoKey } from 'jose';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import type { Test as SupertestTest } from 'supertest';
 import { AppModule } from '../src/app.module.js';
+import { createE2eTestingModule } from './support/e2e-app.js';
 import { AuthenticationService } from '../src/auth/authentication.service.js';
 import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
@@ -126,7 +126,7 @@ describe('Usuarios (e2e)', () => {
       OUTBOX_ENCRYPTION_KEY_PATH: '.test-outbox-key',
     });
     writeFileSync(join(process.cwd(), '.test-outbox-key'), randomBytes(32));
-    const moduleFixture = await Test.createTestingModule({
+    const moduleFixture = await createE2eTestingModule({
       imports: [AppModule],
     })
       .overrideModule(DatabaseModule)
