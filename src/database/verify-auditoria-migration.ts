@@ -1,7 +1,7 @@
 import { AuditoriaConsultaService } from '../auditoria/auditoria-consulta.service.js';
 import type { ListAuditoriaQueryDto } from '../auditoria/dto/list-auditoria-query.dto.js';
 import type { DatabaseDataSource } from './database-data-source.js';
-import { pgErrorCode as code, runTemporarySchemaVerification } from './verify-temp-schema.js';
+import { pgErrorCode as code, runTemporarySchemaVerification, undoMigrationsThrough } from './verify-temp-schema.js';
 
 const page = (values: Partial<ListAuditoriaQueryDto>): ListAuditoriaQueryDto => ({ page: 1, limit: 20, ...values }) as ListAuditoriaQueryDto;
 
@@ -14,7 +14,7 @@ await runTemporarySchemaVerification({
   prefix: 'test_audit',
   subject: 'de auditoría',
   cleanupSubject: 'de auditoría',
-  success: 'Índices y consulta de auditoría (filtros, orden, rango inclusivo, escape ILIKE y reversión) verificados en esquema temporal.',
+  success: 'Índices, consulta e inmutabilidad de auditoría (filtros, orden, rango inclusivo, escape ILIKE, INSERT admitido, UPDATE/DELETE/TRUNCATE rechazados y reversión) verificados en esquema temporal.',
   async verify({ db, schema, schemaSql: s, step }) {
     step('índices creados');
     const present = await indexes(db, schema);
@@ -52,10 +52,27 @@ await runTemporarySchemaVerification({
     const automatica = await service.listar(page({ accion: 'CERRAR_POSTULACION' }));
     if (automatica.total !== 1 || automatica.data[0].actor !== null) throw new Error('La consulta no devolvió la auditoría automática sin actor.');
 
+    step('inmutabilidad');
+    const total = async () => Number((await db.query(`SELECT count(*)::int AS total FROM ${s}."auditoria"`) as Array<{ total: number }>)[0]?.total);
+    const antes = await total();
+    await db.query(`INSERT INTO ${s}."auditoria" ("usuario_id","accion","entidad_tipo","entidad_id","valores_nuevos") VALUES ($1,'LOGIN_EXITOSO','usuario',$1,'{"automatico":true}')`, [adminId]);
+    if (await total() !== antes + 1) throw new Error('La auditoría no admitió un INSERT.');
+    const rechazada = async (sql: string): Promise<boolean> => {
+      try { await db.query(sql); return false; }
+      catch (error: unknown) { if (code(error) !== '23514') throw error; return true; }
+    };
+    if (!await rechazada(`UPDATE ${s}."auditoria" SET "accion"='MANIPULADA' WHERE "usuario_id"='${adminId}'`)) throw new Error('Se aceptó un UPDATE sobre la auditoría.');
+    if (!await rechazada(`UPDATE ${s}."auditoria" SET "valores_nuevos"='{"automatico":true}' WHERE "usuario_id" IS NULL`)) throw new Error('Se aceptó un UPDATE sobre una auditoría automática.');
+    if (!await rechazada(`DELETE FROM ${s}."auditoria" WHERE "usuario_id" IS NULL`)) throw new Error('Se aceptó un DELETE sobre la auditoría.');
+    if (!await rechazada(`TRUNCATE ${s}."auditoria"`)) throw new Error('Se aceptó un TRUNCATE sobre la auditoría.');
+    if (await total() !== antes + 1) throw new Error('La auditoría cambió a pesar de los rechazos.');
+
     step('reversión');
+    // Primero se retira la inmutabilidad; solo entonces se pueden borrar los registros automáticos
+    // que impedirían revertir el actor automático.
+    await undoMigrationsThrough(db, s, 'AuditoriaInmutable20261111100000');
     await db.query(`DELETE FROM ${s}."auditoria" WHERE "usuario_id" IS NULL`);
-    // Revierte las migraciones posteriores (actor automático y archivo de períodos) antes de la de índices.
-    for (let i = 0; i < 3; i++) await db.undoLastMigration({ transaction: 'all' });
+    await undoMigrationsThrough(db, s, 'IndicesConsultaAuditoria20261027100000');
     const after = await indexes(db, schema);
     if (after.includes('IDX_auditoria_fecha_hora') || after.includes('IDX_auditoria_usuario') || !after.includes('IDX_auditoria_entidad')) throw new Error('La reversión no eliminó solo los índices nuevos.');
   },

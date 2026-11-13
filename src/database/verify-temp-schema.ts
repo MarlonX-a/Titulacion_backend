@@ -8,6 +8,29 @@ import { createDatabaseOptions } from './database.options.js';
 export const pgErrorCode = (error: unknown): string | undefined =>
   error instanceof QueryFailedError ? (error.driverError as { code?: string }).code : undefined;
 
+async function lastExecutedMigration(db: DatabaseDataSource, schemaSql: string): Promise<string | undefined> {
+  const rows = await db.query(`SELECT "name" FROM ${schemaSql}."migrations" ORDER BY "timestamp" DESC, "id" DESC LIMIT 1`) as Array<{ name: string }>;
+  return rows[0]?.name;
+}
+
+/**
+ * Revierte, de la más reciente hacia atrás, las migraciones posteriores a `name` (que queda
+ * aplicada). Permite que un verificador pruebe la reversión de su migración aunque existan
+ * migraciones más nuevas, sin depender de cuántas haya.
+ */
+export async function undoMigrationsAfter(db: DatabaseDataSource, schemaSql: string, name: string): Promise<void> {
+  for (let last = await lastExecutedMigration(db, schemaSql); last !== name; last = await lastExecutedMigration(db, schemaSql)) {
+    if (last === undefined) throw new Error(`La migración ${name} no está aplicada.`);
+    await db.undoLastMigration({ transaction: 'all' });
+  }
+}
+
+/** Como `undoMigrationsAfter`, pero revierte también la migración `name`. */
+export async function undoMigrationsThrough(db: DatabaseDataSource, schemaSql: string, name: string): Promise<void> {
+  await undoMigrationsAfter(db, schemaSql, name);
+  await db.undoLastMigration({ transaction: 'all' });
+}
+
 export interface TemporarySchemaContext {
   /** Conexión al esquema temporal con todas las migraciones ejecutadas. */
   db: DatabaseDataSource;
