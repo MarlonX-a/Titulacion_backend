@@ -54,7 +54,7 @@ export class GrupoGestionService {
         await this.auditMember(manager, actor, 'SALIR_GRUPO', member, GrupoIntegranteEstado.ACTIVO, ip, dto.motivo);
         if (nextState === GrupoEstado.DISUELTO) await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, dto.motivo, ip, 'DISOLVER_GRUPO');
       });
-      return this.grupos.getById(periodoId, grupoId, actor, true);
+      return this.grupos.respuestaGestion(periodoId, grupoId, actor);
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -83,7 +83,7 @@ export class GrupoGestionService {
         await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, dto.motivo, ip, 'CAMBIAR_REPRESENTANTE');
         await this.auditoria.registrar(manager, { actor, accion: 'CAMBIAR_REPRESENTANTE', entidad_tipo: 'grupo', entidad_id: group.id, valores_anteriores: before, valores_nuevos: { representante_id: target.estudiante.id, grupo_estado: group.estado, motivo: dto.motivo }, ip_origen: ip });
       });
-      return this.grupos.getById(periodoId, grupoId, actor, true);
+      return this.grupos.respuestaGestion(periodoId, grupoId, actor);
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -125,7 +125,7 @@ export class GrupoGestionService {
         await this.auditMember(manager, actor, 'RETIRAR_INTEGRANTE_GRUPO', target, GrupoIntegranteEstado.ACTIVO, ip, dto.motivo, previousRole);
         if (nextState === GrupoEstado.DISUELTO) await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, dto.motivo, ip, 'DISOLVER_GRUPO');
       });
-      return this.grupos.getById(periodoId, grupoId, actor, true);
+      return this.grupos.respuestaGestion(periodoId, grupoId, actor);
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -152,7 +152,7 @@ export class GrupoGestionService {
         await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, dto.motivo, ip, 'DISOLVER_GRUPO');
         await this.updateGroupState(manager, group, GrupoEstado.DISUELTO, actor, ip, 'DISOLVER_GRUPO', dto.motivo);
       });
-      return this.grupos.getById(periodoId, grupoId, actor, true);
+      return this.grupos.respuestaGestion(periodoId, grupoId, actor);
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 

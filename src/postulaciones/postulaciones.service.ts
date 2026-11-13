@@ -18,6 +18,7 @@ import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { admiteIntegrantes, integrantesPermitidos, mensajeRangoIntegrantes } from '../temas/integrantes-tema.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { VISOR_ADMIN, datosEstudianteVisibles, visorDe, type VisorDatos } from '../common/privacidad/visor-datos.js';
 import { Postulacion } from './entities/postulacion.entity.js';
 import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { EstadoPostulacion } from './enums/estado-postulacion.enum.js';
@@ -103,7 +104,7 @@ export class PostulacionesService {
         await this.notificaciones.postulacion(manager, item.id, NotificacionTipo.POSTULACION_REGISTRADA, actor.id);
         return item.id;
       });
-      return this.getRecord(periodoId, id);
+      return this.getRecord(periodoId, id, await visorDe(this.dataSource.manager, actor));
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -173,7 +174,7 @@ export class PostulacionesService {
         }
         await this.persistencia.cancelar(manager, item, actor, dto.motivo, ip);
       });
-      return this.getRecord(periodoId, id);
+      return this.getRecord(periodoId, id, isAdmin ? VISOR_ADMIN : await visorDe(this.dataSource.manager, actor));
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -192,7 +193,7 @@ export class PostulacionesService {
       if (query.modalidad === ModalidadPostulacion.GRUPAL) qb.andWhere('p.grupo_id IS NOT NULL');
       if (!isAdmin) qb.andWhere('teacherUser.id = :actorId', { actorId: actor.id });
       const [items, total] = await qb.orderBy('p.fecha_postulacion', 'DESC').addOrderBy('p.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await this.toResponses(items), total, page: query.page, limit: query.limit };
+      return { data: await this.toResponses(items, isAdmin ? VISOR_ADMIN : await visorDe(this.dataSource.manager, actor)), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -210,7 +211,7 @@ export class PostulacionesService {
       if (query.modalidad === ModalidadPostulacion.INDIVIDUAL) qb.andWhere('p.estudiante_id IS NOT NULL');
       if (query.modalidad === ModalidadPostulacion.GRUPAL) qb.andWhere('p.grupo_id IS NOT NULL');
       const [items, total] = await qb.orderBy('p.fecha_postulacion', 'DESC').addOrderBy('p.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await this.toResponses(items), total, page: query.page, limit: query.limit };
+      return { data: await this.toResponses(items, { esAdmin: false, estudianteId: student.id }), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -218,16 +219,18 @@ export class PostulacionesService {
     try {
       const item = await this.repository.findOne({ where: { id, periodo: { id: periodoId } }, relations });
       if (!item) throw new NotFoundException('No existe esa postulación en el período indicado.');
-      if (!isAdmin) {
-        if (actor.rol === 'DOCENTE') {
-          if (item.tema.docente_proponente.usuario.id !== actor.id) throw new NotFoundException('No existe esa postulación visible para el usuario.');
-        } else {
-          const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
-          const participant = item.estudiante?.id === student?.id || (!!item.grupo && !!student && !!await this.members.findOne({ where: { grupo: { id: item.grupo.id }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO } }));
-          if (!participant) throw new NotFoundException('No existe esa postulación visible para el usuario.');
-        }
+      if (isAdmin) return this.toResponse(item, VISOR_ADMIN);
+      if (actor.rol === 'DOCENTE') {
+        if (item.tema.docente_proponente.usuario.id !== actor.id) throw new NotFoundException('No existe esa postulación visible para el usuario.');
+        return this.toResponse(item, { esAdmin: false, estudianteId: null });
       }
-      return this.toResponse(item);
+      // Sin perfil no hay participación posible: comparar ids opcionales daría undefined === undefined.
+      const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
+      if (!student) throw new NotFoundException('No existe esa postulación visible para el usuario.');
+      const participant = (!!item.estudiante && item.estudiante.id === student.id)
+        || (!!item.grupo && !!await this.members.findOne({ where: { grupo: { id: item.grupo.id }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO } }));
+      if (!participant) throw new NotFoundException('No existe esa postulación visible para el usuario.');
+      return this.toResponse(item, { esAdmin: false, estudianteId: student.id });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -239,15 +242,15 @@ export class PostulacionesService {
       .leftJoinAndSelect('p.registrada_por', 'registrar').where('period.id = :periodoId', { periodoId });
   }
 
-  private async toResponse(item: Postulacion): Promise<PostulacionResponseDto> {
-    return (await this.toResponses([item]))[0];
+  private async toResponse(item: Postulacion, visor: VisorDatos): Promise<PostulacionResponseDto> {
+    return (await this.toResponses([item], visor))[0];
   }
 
   /**
    * Arma las respuestas en lote: integrantes, perfiles, habilitaciones y tutores propuestos se
    * cargan con una consulta por tipo para toda la página, sin consultas por postulación.
    */
-  private async toResponses(items: Postulacion[]): Promise<PostulacionResponseDto[]> {
+  private async toResponses(items: Postulacion[], visor: VisorDatos): Promise<PostulacionResponseDto[]> {
     if (!items.length) return [];
     const groupIds = [...new Set(items.flatMap((item) => (!item.estudiante && item.grupo ? [item.grupo.id] : [])))];
     const members = groupIds.length ? await this.members.find({ where: { grupo: { id: In(groupIds) }, estado: GrupoIntegranteEstado.ACTIVO }, relations: { estudiante: true, grupo: true }, order: { fecha_ingreso: 'ASC', id: 'ASC' } }) : [];
@@ -267,7 +270,7 @@ export class PostulacionesService {
         const student = studentById.get(participantId);
         if (!student) return [];
         const record = enabled.find((row) => row.periodo?.id === item.periodo.id && row.estudiante?.id === participantId);
-        return [{ id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula, habilitado: record?.estado ?? null, situacion_ingreso: record?.situacion_ingreso ?? null }];
+        return [datosEstudianteVisibles(visor, { id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula, habilitado: record?.estado ?? null, situacion_ingreso: record?.situacion_ingreso ?? null })];
       });
       return { id: item.id, periodo_id: item.periodo.id, tema_id: item.tema.id,
         tema: { id: item.tema.id, titulo: item.tema.titulo, tipo: item.tema.tipo, min_integrantes: integrantesPermitidos(item.tema.tipo).min, max_integrantes: integrantesPermitidos(item.tema.tipo, item.periodo.max_integrantes_default).max ?? item.periodo.max_integrantes_default, estado: item.tema.estado },
@@ -294,10 +297,10 @@ export class PostulacionesService {
   private async lockAssignmentStudent(manager: EntityManager, studentId: string): Promise<void> {
     await manager.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 7319))', [studentId]);
   }
-  private async getRecord(periodoId: string, id: string): Promise<PostulacionResponseDto> {
+  private async getRecord(periodoId: string, id: string, visor: VisorDatos): Promise<PostulacionResponseDto> {
     const item = await this.repository.findOne({ where: { id, periodo: { id: periodoId } }, relations });
     if (!item) throw new NotFoundException('No existe esa postulación en el período indicado.');
-    return this.toResponse(item);
+    return this.toResponse(item, visor);
   }
   private assertStudentWindow(period: PeriodoTitulacion): void {
     const now = Date.now();

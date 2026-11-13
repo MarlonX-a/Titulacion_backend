@@ -24,6 +24,7 @@ import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { admiteIntegrantes } from '../temas/integrantes-tema.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { VISOR_ADMIN, datosEstudianteVisibles, visorDe, type VisorDatos } from '../common/privacidad/visor-datos.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaPersistenciaService } from './asignacion-tema-persistencia.service.js';
@@ -175,7 +176,8 @@ export class AsignacionesTemaService {
       if (query.modalidad === 'GRUPAL') qb.andWhere('a.grupo_id IS NOT NULL');
       if (!isAdmin) qb.andWhere('docenteUser.id=:actorId', { actorId: actor.id });
       const [items, total] = await qb.orderBy('a.fecha_asignacion', 'DESC').addOrderBy('a.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await Promise.all(items.map((item) => this.toResponse(item))), total, page: query.page, limit: query.limit };
+      const visor = isAdmin ? VISOR_ADMIN : await visorDe(this.dataSource.manager, actor);
+      return { data: await Promise.all(items.map((item) => this.toResponse(item, visor))), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -185,13 +187,14 @@ export class AsignacionesTemaService {
       const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
       if (!student) throw new NotFoundException('No tienes perfil de estudiante.');
       const schema = this.schema(this.dataSource.manager);
-      const qb = this.repository.createQueryBuilder('a').leftJoinAndSelect('a.tema', 't').leftJoinAndSelect('t.docente_proponente', 'docente').leftJoinAndSelect('docente.usuario', 'docenteUser').leftJoinAndSelect('a.grupo', 'g').leftJoinAndSelect('a.estudiante', 'owner').leftJoinAndSelect('owner.usuario', 'ownerUser').leftJoinAndSelect('a.postulacion', 'p').leftJoinAndSelect('a.aprobada_por', 'approved').leftJoinAndSelect('a.anulada_por', 'cancelled').where('a.periodo_id=:periodoId', { periodoId }).andWhere(`(a.estudiante_id=:studentId OR EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=a.grupo_id AND gi."estudiante_id"=:studentId))`, { studentId: student.id });
+      const qb = this.repository.createQueryBuilder('a').leftJoinAndSelect('a.tema', 't').leftJoinAndSelect('t.docente_proponente', 'docente').leftJoinAndSelect('docente.usuario', 'docenteUser').leftJoinAndSelect('a.grupo', 'g').leftJoinAndSelect('a.estudiante', 'owner').leftJoinAndSelect('owner.usuario', 'ownerUser').leftJoinAndSelect('a.postulacion', 'p').leftJoinAndSelect('a.aprobada_por', 'approved').leftJoinAndSelect('a.anulada_por', 'cancelled').where('a.periodo_id=:periodoId', { periodoId }).andWhere(`(a.estudiante_id=:studentId OR EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=a.grupo_id AND gi."estudiante_id"=:studentId AND gi."estado"='ACTIVO'))`, { studentId: student.id });
       if (query.estado) qb.andWhere('a.estado=:estado', { estado: query.estado });
       if (query.tema_id) qb.andWhere('a.tema_id=:temaId', { temaId: query.tema_id });
       if (query.modalidad === 'INDIVIDUAL') qb.andWhere('a.estudiante_id IS NOT NULL');
       if (query.modalidad === 'GRUPAL') qb.andWhere('a.grupo_id IS NOT NULL');
       const [items, total] = await qb.orderBy('a.fecha_asignacion', 'DESC').addOrderBy('a.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await Promise.all(items.map((item) => this.toResponse(item))), total, page: query.page, limit: query.limit };
+      const visor: VisorDatos = { esAdmin: false, estudianteId: student.id };
+      return { data: await Promise.all(items.map((item) => this.toResponse(item, visor))), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -199,14 +202,15 @@ export class AsignacionesTemaService {
     try {
       const item = await this.repository.findOne({ where: { id, periodo_id: periodoId }, relations });
       if (!item) throw new NotFoundException('No existe esa asignación en el período indicado.');
-      if (!isAdmin) {
-        if (actor.rol === UsuarioRol.DOCENTE && item.tema.docente_proponente.usuario.id !== actor.id) throw new NotFoundException('No existe esa asignación visible para el usuario.');
-        if (actor.rol === UsuarioRol.ESTUDIANTE) {
-          const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
-          if (!student || !(item.estudiante_id === student.id || (item.grupo_id && await this.dataSource.getRepository(GrupoIntegrante).exist({ where: { grupo: { id: item.grupo_id }, estudiante: { id: student.id } } })))) throw new NotFoundException('No existe esa asignación visible para el usuario.');
-        }
+      if (isAdmin) return this.toResponse(item, VISOR_ADMIN);
+      if (actor.rol === UsuarioRol.DOCENTE) {
+        if (item.tema.docente_proponente.usuario.id !== actor.id) throw new NotFoundException('No existe esa asignación visible para el usuario.');
+        return this.toResponse(item, { esAdmin: false, estudianteId: null });
       }
-      return this.toResponse(item);
+      // Solo el titular o un integrante ACTIVO del grupo; los ex-integrantes pierden el acceso (el historial lo conserva ADMIN).
+      const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
+      if (!student || !(item.estudiante_id === student.id || (item.grupo_id && await this.dataSource.getRepository(GrupoIntegrante).exist({ where: { grupo: { id: item.grupo_id }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO } })))) throw new NotFoundException('No existe esa asignación visible para el usuario.');
+      return this.toResponse(item, { esAdmin: false, estudianteId: student.id });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -245,16 +249,17 @@ export class AsignacionesTemaService {
     } catch { return false; }
   }
 
-  private async toResponse(item: AsignacionTema): Promise<AsignacionTemaResponseDto> {
+  /** Participantes: ADMIN ve también a los ex-integrantes (historial); el resto solo a los integrantes ACTIVOS. */
+  private async toResponse(item: AsignacionTema, visor: VisorDatos): Promise<AsignacionTemaResponseDto> {
     const schema = this.schema(this.dataSource.manager);
-    const participantRows = await this.dataSource.query(`SELECT e."id",u."nombres",u."apellidos",e."matricula",h."situacion_ingreso"::text AS situacion_ingreso FROM ${schema}."estudiante" e JOIN ${schema}."usuario" u ON u."id"=e."usuario_id" LEFT JOIN ${schema}."estudiante_habilitado" h ON h."periodo_id"=$1 AND h."estudiante_id"=e."id" WHERE ($2::uuid IS NOT NULL AND e."id"=$2) OR ($3::uuid IS NOT NULL AND EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=$3 AND gi."estudiante_id"=e."id")) ORDER BY e."id"`, [item.periodo_id, item.estudiante_id, item.grupo_id]) as Array<{ id: string; nombres: string; apellidos: string; matricula: string; situacion_ingreso: string | null }>;
+    const participantRows = await this.dataSource.query(`SELECT e."id",u."nombres",u."apellidos",e."matricula",h."situacion_ingreso"::text AS situacion_ingreso FROM ${schema}."estudiante" e JOIN ${schema}."usuario" u ON u."id"=e."usuario_id" LEFT JOIN ${schema}."estudiante_habilitado" h ON h."periodo_id"=$1 AND h."estudiante_id"=e."id" WHERE ($2::uuid IS NOT NULL AND e."id"=$2) OR ($3::uuid IS NOT NULL AND EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=$3 AND gi."estudiante_id"=e."id" AND ($4::boolean OR gi."estado"='ACTIVO'))) ORDER BY e."id"`, [item.periodo_id, item.estudiante_id, item.grupo_id, visor.esAdmin]) as Array<{ id: string; nombres: string; apellidos: string; matricula: string; situacion_ingreso: string | null }>;
     return {
       id: item.id, periodo_id: item.periodo_id, tema_id: item.tema_id,
       tema: { id: item.tema.id, titulo: item.tema.titulo, estado: item.tema.estado },
       postulacion_id: item.postulacion_id,
       postulacion: { id: item.postulacion.id, estado: item.postulacion.estado, modalidad: item.grupo_id ? ModalidadPostulacion.GRUPAL : ModalidadPostulacion.INDIVIDUAL, num_integrantes: item.postulacion.num_integrantes },
       grupo_id: item.grupo_id, grupo: item.grupo ? { id: item.grupo.id, nombre: item.grupo.nombre } : null,
-      estudiante_id: item.estudiante_id, participantes: participantRows,
+      estudiante_id: item.estudiante_id, participantes: participantRows.map((row) => datosEstudianteVisibles(visor, row)),
       aprobada_por_id: item.aprobada_por_id, aprobada_por: { id: item.aprobada_por.id, nombres: item.aprobada_por.nombres, apellidos: item.aprobada_por.apellidos },
       estado: item.estado, fecha_asignacion: item.fecha_asignacion, motivo: item.motivo,
       causa_anulacion: item.causa_anulacion, motivo_anulacion: item.motivo_anulacion, anulada_por_id: item.anulada_por_id,

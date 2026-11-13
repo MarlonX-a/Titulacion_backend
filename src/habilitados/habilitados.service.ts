@@ -52,9 +52,11 @@ export interface PagedHabilitados {
 }
 
 /**
- * `detallado` agrega correo institucional, cédula, carrera, nivel y el responsable de la
- * resolución. Solo se usa en respuestas para ADMIN o para el propio estudiante; los
- * candidatos de invitación (vistos por otros estudiantes) no exponen esos datos.
+ * `detallado` agrega matrícula, correo institucional, cédula, carrera, nivel y el responsable
+ * de la resolución, además de la condición, el requisito pendiente y la observación de ingreso.
+ * Solo se usa en respuestas para ADMIN o para el propio estudiante; los
+ * candidatos de invitación (vistos por otros estudiantes) no exponen esos datos (la matrícula
+ * de un estudiante importado es su cédula).
  */
 function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico | null, detallado = true): HabilitadoResponseDto {
   const resuelto = record.resuelto_por;
@@ -66,8 +68,8 @@ function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico 
       id: record.estudiante.id,
       nombres: record.estudiante.usuario.nombres,
       apellidos: record.estudiante.usuario.apellidos,
-      matricula: record.estudiante.matricula,
       ...(detallado ? {
+        matricula: record.estudiante.matricula,
         email: record.estudiante.usuario.email,
         cedula: record.estudiante.cedula,
         carrera: resumenCatalogo(catalogo?.carrera(record.estudiante.carrera_id), record.estudiante.carrera_id),
@@ -78,13 +80,12 @@ function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico 
     origen: record.origen,
     lote_importacion_id: record.lote_importacion?.id ?? null,
     estado: record.estado,
-    condicion_ingreso: record.condicion_ingreso,
-    requisito_pendiente: record.requisito_pendiente,
+    ...(detallado ? { condicion_ingreso: record.condicion_ingreso, requisito_pendiente: record.requisito_pendiente } : {}),
     situacion_ingreso: record.situacion_ingreso,
     fecha_habilitacion: record.fecha_habilitacion,
     fecha_resolucion_ingreso: record.fecha_resolucion_ingreso,
     resuelto_por_id: record.resuelto_por?.id ?? null,
-    observacion_ingreso: record.observacion_ingreso,
+    ...(detallado ? { observacion_ingreso: record.observacion_ingreso } : {}),
   };
 }
 
