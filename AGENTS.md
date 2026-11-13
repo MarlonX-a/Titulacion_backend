@@ -69,14 +69,16 @@ autorización, migración y pruebas que correspondan antes de ampliarlo.
 GitHub Actions (`ci.yml`) ejecuta cuatro jobs. `checks`: guardas de regresión de seguridad
 (`scripts/ci-guards.mjs`), `npm audit --omit=dev --audit-level=high`, lint, TypeScript estricto,
 pruebas unitarias, pruebas HTTP (`npm run test:e2e`) y compilación. `secret-scan`: gitleaks con el
-historial completo. `attack-suite`: la suite de ataque (`npm run test:attack`) con PostgreSQL,
-Mailpit y un Redis con contraseña aleatoria. `database-integrity`: los verificadores de migraciones
+historial completo (`.gitleaks.toml` extiende las reglas predeterminadas y solo permite valores ficticios
+en rutas exactas). `attack-suite`: la suite de ataque (`npm run test:attack`) con PostgreSQL y Redis con
+contraseñas aleatorias, Mailpit y el servicio SeaweedFS de `docker-compose.yml` con claves S3 generadas por
+ejecución (las instalaciones de CI y del `Dockerfile` usan `npm ci --ignore-scripts`). `database-integrity`: los verificadores de migraciones
 en PostgreSQL `db:verify-exportaciones`, `db:verify-archivo-periodo`, `db:verify-auditoria`,
 `db:verify-auth` y `db:verify-tutores-propuestos`. CodeQL es un workflow aparte (`codeql.yml`).
 Dependabot (`dependabot.yml`) revisa npm, GitHub Actions y
 Docker cada semana. El `Dockerfile` (multi-etapa, `USER node`, sin secretos) expone
 `GET /healthz` como comprobación de salud.
-SonarCloud está configurado con Automatic Analysis; comprueba el Quality Gate en
+SonarCloud está configurado con Automatic Analysis (`.sonarcloud.properties` declara el código de prueba); comprueba el Quality Gate en
 SonarCloud después de integrar cambios en la rama analizada. No añadas el token
 de Sonar al workflow sin cambiar primero esa configuración.
 
