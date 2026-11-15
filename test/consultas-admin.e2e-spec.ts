@@ -1,10 +1,10 @@
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
 import request from 'supertest';
 import { vi } from 'vitest';
 import { AppModule } from '../src/app.module.js';
+import { createE2eTestingModule } from './support/e2e-app.js';
 import { AuthenticationService } from '../src/auth/authentication.service.js';
 import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
@@ -40,8 +40,8 @@ describe('Auditoría, historial de importaciones y lectura masiva de notificacio
       AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
     });
     const auth = { verifyToken: vi.fn((token: string) => Promise.resolve({ subject: tokens.get(token) ?? '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
-    // ImportacionesModule no se carga con NODE_ENV=test (requiere Redis): se montan sus controladores con servicios simulados.
-    const module = await Test.createTestingModule({
+    // createE2eTestingModule sustituye ImportacionesModule (requiere Redis): se montan sus controladores con servicios simulados.
+    const module = await createE2eTestingModule({
       imports: [AppModule],
       controllers: [ImportacionesController, ImportacionesDocentesController],
       providers: [

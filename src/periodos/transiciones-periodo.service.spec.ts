@@ -7,14 +7,15 @@ import {
 } from './transiciones-periodo.service.js';
 import { TransicionesPeriodoWorker } from './transiciones-periodo.worker.js';
 
-function setup() {
+function setup(tareasActivas = false) {
   const periodos = {
     candidatosTransicionAutomatica: vi.fn(async () => ({ aperturas: ['a-1', 'a-2'], cierres: ['c-1', 'c-2'] })),
     abrirPostulacionAutomatica: vi.fn(async (_id: string) => true),
     cerrarPostulacionAutomatica: vi.fn(async (_id: string) => true),
   };
   const queue = { upsertJobScheduler: vi.fn(async () => ({})) };
-  const service = new TransicionesPeriodoService(periodos as never, queue as never);
+  const config = { get: vi.fn((clave: string) => (clave === 'BACKGROUND_TASKS_ENABLED' ? tareasActivas : undefined)) };
+  const service = new TransicionesPeriodoService(periodos as never, queue as never, config as never);
   return { service, periodos, queue };
 }
 
@@ -37,10 +38,17 @@ describe('TransicionesPeriodoService', () => {
     await expect(service.programar()).resolves.toBeUndefined();
   });
 
-  it('no programa en modo test al iniciar el módulo', () => {
-    const { service, queue } = setup();
+  it('no programa al iniciar el módulo con BACKGROUND_TASKS_ENABLED=false', () => {
+    const { service, queue } = setup(false);
     service.onModuleInit();
     expect(queue.upsertJobScheduler).not.toHaveBeenCalled();
+  });
+
+  it('programa al iniciar el módulo con BACKGROUND_TASKS_ENABLED=true (valor de producción)', () => {
+    const { service, queue } = setup(true);
+    service.onModuleInit();
+    service.onModuleDestroy();
+    expect(queue.upsertJobScheduler).toHaveBeenCalledTimes(1);
   });
 
   it('aplica cierres y aperturas por período y un fallo no detiene a los demás', async () => {

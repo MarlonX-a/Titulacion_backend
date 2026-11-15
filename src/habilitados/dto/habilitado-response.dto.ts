@@ -15,8 +15,8 @@ export class HabilitadoEstudianteDto {
   @ApiProperty()
   apellidos: string;
 
-  @ApiProperty()
-  matricula: string;
+  @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante (en estudiantes importados equivale a la cédula).' })
+  matricula?: string;
 
   @ApiPropertyOptional({ description: 'Correo institucional. Solo en respuestas para ADMIN o el propio estudiante.' })
   email?: string;
@@ -64,11 +64,11 @@ export class HabilitadoResponseDto {
   @ApiProperty({ enum: HabilitadoEstado })
   estado: HabilitadoEstado;
 
-  @ApiProperty({ enum: CondicionIngreso })
-  condicion_ingreso: CondicionIngreso;
+  @ApiPropertyOptional({ enum: CondicionIngreso, description: 'Se omite en candidatos de invitación (vista de compañeros).' })
+  condicion_ingreso?: CondicionIngreso;
 
-  @ApiPropertyOptional({ nullable: true })
-  requisito_pendiente: string | null;
+  @ApiPropertyOptional({ nullable: true, description: 'Se omite en candidatos de invitación (vista de compañeros).' })
+  requisito_pendiente?: string | null;
 
   @ApiProperty({ enum: SituacionIngreso })
   situacion_ingreso: SituacionIngreso;
@@ -85,6 +85,6 @@ export class HabilitadoResponseDto {
   @ApiPropertyOptional({ type: HabilitadoResponsableDto, nullable: true, description: 'Responsable de la resolución del ingreso. Se omite en candidatos de invitación.' })
   resuelto_por?: HabilitadoResponsableDto | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  observacion_ingreso: string | null;
+  @ApiPropertyOptional({ nullable: true, description: 'Se omite en candidatos de invitación (vista de compañeros).' })
+  observacion_ingreso?: string | null;
 }

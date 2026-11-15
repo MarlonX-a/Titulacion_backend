@@ -3,7 +3,6 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import type { Job } from 'bullmq';
-import { verify } from 'argon2';
 import { IsNull } from 'typeorm';
 import { DataSource } from 'typeorm';
 import type { AppEnvironment } from '../config/environment.js';
@@ -11,6 +10,7 @@ import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
 import { SolicitudRecuperacion } from '../auth/entities/solicitud-recuperacion.entity.js';
 import { readEncryptionKey, tokenDigest } from '../auth/credentials.js';
+import { verifyPassword } from '../auth/password-hasher.js';
 import { EntregaCorreoEstado } from '../notificaciones/enums/entrega-correo-estado.enum.js';
 import { SmtpTransportService } from './smtp-transport.service.js';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
@@ -30,7 +30,9 @@ export class CorreoWorker extends WorkerHost {
   ) {
     super();
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-    this.encryptionKey = keyPath ? Buffer.from(readEncryptionKey(keyPath), 'base64') : Buffer.alloc(32);
+    // Sin llave configurada el worker no arranca: nunca se cifra ni descifra con una llave constante.
+    if (!keyPath) throw new Error('El worker de correo requiere OUTBOX_ENCRYPTION_KEY_PATH; no se usa una llave por defecto.');
+    this.encryptionKey = Buffer.from(readEncryptionKey(keyPath), 'base64');
   }
 
   async process(job: Job<NotificationJob>): Promise<void> {
@@ -114,7 +116,7 @@ export class CorreoWorker extends WorkerHost {
     if (message.tipo === 'ACCESO') {
       const credential = await this.dataSource.getRepository(CredencialUsuario).findOneBy({ usuario_id: message.usuario_id });
       if (!credential?.requiere_cambio || !credential.password_hash || !credential.temporal_expira_en || credential.temporal_expira_en <= new Date()) return false;
-      return verify(credential.password_hash, this.decrypt(message)).catch(() => false);
+      return verifyPassword(credential.password_hash, this.decrypt(message)).catch(() => false);
     }
     const reset = await this.dataSource.getRepository(SolicitudRecuperacion).findOneBy({ usuario_id: message.usuario_id, codigo_hash: tokenDigest(this.decrypt(message)), usada_en: IsNull() });
     return Boolean(reset?.expira_en && reset.expira_en > new Date());

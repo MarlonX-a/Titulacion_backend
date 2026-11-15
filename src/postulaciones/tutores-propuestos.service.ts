@@ -23,6 +23,13 @@ export class TutoresPropuestosService {
     private readonly temas: TemasService,
   ) {}
 
+  /**
+   * Registra las preferencias con bloqueos compartidos (`FOR SHARE OF d, u`), los mismos que toma
+   * el disparador `validar_tutor_propuesto` (migración `20261112110000`): varios estudiantes
+   * pueden proponer al mismo docente a la vez, y una desactivación o un cambio de
+   * `habilitado_tutoria` concurrente espera a la propuesta o la hace fallar. Servicio y
+   * disparador deben pedir el mismo modo: compartido aquí y exclusivo allí provoca interbloqueos.
+   */
   async agregar(manager: EntityManager, postulacionId: string, docenteIds: string[]): Promise<void> {
     const orderedIds = [...docenteIds];
     const uniqueSortedIds = [...orderedIds].sort((a, b) => a.localeCompare(b));
@@ -30,7 +37,7 @@ export class TutoresPropuestosService {
       .innerJoinAndSelect('d.usuario', 'u')
       .where('d.id IN (:...ids)', { ids: uniqueSortedIds })
       .orderBy('d.id', 'ASC')
-      .setLock('pessimistic_write', undefined, ['d', 'u'])
+      .setLock('pessimistic_read', undefined, ['d', 'u'])
       .getMany();
     if (teachers.length !== uniqueSortedIds.length) throw new ConflictException('Uno o más docentes propuestos no existen.');
     const byId = new Map(teachers.map((teacher) => [teacher.id, teacher]));

@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import type { AppEnvironment } from '../config/environment.js';
+import { redisConnectionBase } from '../config/redis-options.js';
 
 @Global()
 @Module({
@@ -9,8 +10,12 @@ import type { AppEnvironment } from '../config/environment.js';
     inject: [ConfigService],
     useFactory: (config: ConfigService<AppEnvironment, true>) => ({
       connection: {
-        host: config.get('REDIS_HOST', { infer: true }) ?? '127.0.0.1',
-        port: config.get('REDIS_PORT', { infer: true }),
+        ...redisConnectionBase({
+          REDIS_HOST: config.get('REDIS_HOST', { infer: true }),
+          REDIS_PORT: config.get('REDIS_PORT', { infer: true }),
+          REDIS_PASSWORD: config.get('REDIS_PASSWORD', { infer: true }),
+          REDIS_TLS: config.get('REDIS_TLS', { infer: true }),
+        }),
         maxRetriesPerRequest: null,
         connectTimeout: 5_000,
         // BullMQ debe poder recuperarse si Redis se reinicia, pero el reintento

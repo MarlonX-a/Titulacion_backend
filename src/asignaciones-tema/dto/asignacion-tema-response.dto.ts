@@ -12,7 +12,7 @@ export class AsignacionTemaResponseDto {
   @ApiProperty({ nullable: true, format: 'uuid' }) grupo_id: string | null;
   @ApiProperty({ type: Object, nullable: true }) grupo: { id: string; nombre: string } | null;
   @ApiProperty({ nullable: true, format: 'uuid' }) estudiante_id: string | null;
-  @ApiProperty({ type: [Object] }) participantes: Array<{ id: string; nombres: string; apellidos: string; matricula: string; situacion_ingreso: string | null }>;
+  @ApiProperty({ type: [Object], description: 'Integrantes. La matrícula solo se incluye para ADMIN o para el propio estudiante; los ex-integrantes solo se listan para ADMIN.' }) participantes: Array<{ id: string; nombres: string; apellidos: string; matricula?: string; situacion_ingreso: string | null }>;
   @ApiProperty({ format: 'uuid' }) aprobada_por_id: string;
   @ApiProperty({ type: Object }) aprobada_por: { id: string; nombres: string; apellidos: string };
   @ApiProperty({ enum: AsignacionTemaEstado }) estado: AsignacionTemaEstado;

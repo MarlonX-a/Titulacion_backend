@@ -28,7 +28,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
-import { createEncryptedOutbox, createTemporaryCredentialHash, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
+import { createEncryptedOutbox, createTemporaryCredentialHash, importTempTtlMs, readEncryptionKey } from '../auth/credentials.js';
 
 const PREPARATION_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -80,6 +80,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | undefined;
   private dispatching = false;
   private readonly encryptionKey: string;
+  private readonly tempTtlMs: number;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -91,6 +92,8 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
     this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
+    // Solo la clave temporal de esta importación (la cédula) usa la vigencia corta; el alta manual y reenviar-acceso conservan la suya.
+    this.tempTtlMs = importTempTtlMs(config.get('IMPORT_TEMP_TTL_HOURS', { infer: true }));
   }
 
   onModuleInit(): void {
@@ -257,7 +260,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           }
           const credential = await credentials.findOne({ where: { usuario_id: user.id }, lock: { mode: 'pessimistic_write' } });
           if (!credential) {
-            const expiry = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
+            const expiry = new Date(Date.now() + this.tempTtlMs);
             const hash = tempHashes.get(row.email);
             if (!hash) throw new Error('No se pudo proteger la clave temporal.');
             await credentials.save(credentials.create({ usuario_id: user.id, password_hash: hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));

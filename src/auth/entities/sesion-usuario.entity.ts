@@ -26,6 +26,10 @@ export class SesionUsuario {
   @Column({ type: 'timestamptz', name: 'revocada_en', nullable: true })
   revocada_en: Date | null;
 
+  /** Último uso real de la API; `NULL` equivale a una sesión recién creada. */
+  @Column({ type: 'timestamptz', name: 'ultima_actividad', nullable: true })
+  ultima_actividad: Date | null;
+
   @Column({ type: 'timestamptz', name: 'creada_en', default: () => 'CURRENT_TIMESTAMP' })
   creada_en: Date;
 }

@@ -1,5 +1,4 @@
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
 import request from 'supertest';
@@ -12,7 +11,7 @@ import { ImportacionesTemasService } from '../src/importaciones/importaciones-te
 import { EstadoTema } from '../src/temas/enums/estado-tema.enum.js';
 import { UsuarioRol } from '../src/usuarios/enums/usuario-rol.enum.js';
 import { addUsuarioTestRecord, clearUsuarioTestRecords, DatabaseTestingModule } from './database-testing.module.js';
-import { testConfigService, tokenAuthenticationMock } from './support/e2e-app.js';
+import { testConfigService, tokenAuthenticationMock, createE2eTestingModule } from './support/e2e-app.js';
 import { CARRERA_SOFTWARE_ID, DOCENTE_PEREZ_LOOR_ID, LINEA_ID, temasImportHarness } from './support/importaciones-temas-harness.js';
 import { temasWorkbook } from './support/temas-workbook.js';
 
@@ -29,8 +28,8 @@ describe('Importación de temas (e2e)', () => {
       const user = addUsuarioTestRecord({ email: `${rol.toLowerCase()}-importa-temas@live.uleam.edu.ec`, id_externo_sso: `importa-temas-${rol}`, rol, nombres: rol, apellidos: 'Prueba' });
       tokens.set(rol, user.id);
     }
-    // ImportacionesModule is not loaded with NODE_ENV=test (it needs Redis): mount the controller with an in-memory service.
-    const module = await Test.createTestingModule({
+    // createE2eTestingModule replaces ImportacionesModule (it needs Redis): mount the controller with an in-memory service.
+    const module = await createE2eTestingModule({
       imports: [AppModule],
       controllers: [ImportacionesTemasController],
       providers: [{ provide: ImportacionesTemasService, useValue: harness.service }],

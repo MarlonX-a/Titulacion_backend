@@ -7,6 +7,7 @@ import { HabilitadosService } from '../habilitados/habilitados.service.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { VISOR_ADMIN, datosEstudianteVisibles, visorDe, type VisorDatos } from '../common/privacidad/visor-datos.js';
 import { CreateGrupoDto } from './dto/create-grupo.dto.js';
 import { GrupoIntegranteResponseDto, GrupoPersonaDto, GrupoResponseDto, PagedGruposResponseDto } from './dto/grupo-response.dto.js';
 import { ListGruposQueryDto } from './dto/list-grupos-query.dto.js';
@@ -20,17 +21,17 @@ import { PostulacionPersistenciaService } from '../postulaciones/postulacion-per
 interface DriverError { code?: string; }
 const groupRelations = { periodo: true } as const;
 const memberRelations = { estudiante: { usuario: true } } as const;
-function person(member: GrupoIntegrante): GrupoPersonaDto {
-  return { id: member.estudiante.id, nombres: member.estudiante.usuario.nombres, apellidos: member.estudiante.usuario.apellidos, matricula: member.estudiante.matricula };
+function person(member: GrupoIntegrante, visor: VisorDatos): GrupoPersonaDto {
+  return datosEstudianteVisibles(visor, { id: member.estudiante.id, nombres: member.estudiante.usuario.nombres, apellidos: member.estudiante.usuario.apellidos, matricula: member.estudiante.matricula });
 }
-function groupResponse(group: Grupo, members: GrupoIntegrante[], compositionClosed: boolean): GrupoResponseDto {
+function groupResponse(group: Grupo, members: GrupoIntegrante[], compositionClosed: boolean, visor: VisorDatos): GrupoResponseDto {
   const responseMembers: GrupoIntegranteResponseDto[] = members.map((item) => ({
-    id: item.id, estudiante_id: item.estudiante.id, estudiante: person(item), rol_en_grupo: item.rol_en_grupo,
+    id: item.id, estudiante_id: item.estudiante.id, estudiante: person(item, visor), rol_en_grupo: item.rol_en_grupo,
     estado: item.estado, fecha_ingreso: item.fecha_ingreso, fecha_salida: item.fecha_salida, motivo_salida: item.motivo_salida,
   }));
   const representative = members.find((item) => item.rol_en_grupo === GrupoIntegranteRol.REPRESENTANTE && item.estado === GrupoIntegranteEstado.ACTIVO);
   return { id: group.id, periodo_id: group.periodo.id, nombre: group.nombre, estado: group.estado, creado_en: group.creado_en, composicion_cerrada: compositionClosed,
-    representante: representative ? person(representative) : null, integrantes: responseMembers };
+    representante: representative ? person(representative, visor) : null, integrantes: responseMembers };
 }
 
 @Injectable()
@@ -63,7 +64,7 @@ export class GruposService {
         await this.auditoria.registrar(manager, { actor, accion: 'INCORPORAR_INTEGRANTE_GRUPO', entidad_tipo: 'grupo_integrante', entidad_id: member.id, valores_anteriores: null, valores_nuevos: { grupo_id: group.id, periodo_id: periodoId, estudiante_id: studentId, rol_en_grupo: member.rol_en_grupo, estado: member.estado }, ip_origen: ip });
         return group.id;
       });
-      return this.getRecord(periodoId, id);
+      return this.getRecord(periodoId, id, await visorDe(this.dataSource.manager, actor));
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -76,7 +77,7 @@ export class GruposService {
       if (query.estado) qb.andWhere('g.estado = :estado', { estado: query.estado });
       const [groups, total] = await qb.orderBy('g.creado_en', 'DESC').addOrderBy('g.id', 'ASC')
         .skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      const data = await Promise.all(groups.map(async (group) => this.getRecord(periodoId, group.id)));
+      const data = await Promise.all(groups.map(async (group) => this.getRecord(periodoId, group.id, VISOR_ADMIN)));
       return { data, total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
@@ -87,7 +88,7 @@ export class GruposService {
       if (!student) throw new NotFoundException('No tienes perfil de estudiante.');
       const membership = await this.members.findOne({ where: { periodo: { id: periodoId }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO }, relations: { grupo: true } });
       if (!membership) throw new NotFoundException('No perteneces a un grupo activo en este período.');
-      return await this.getRecord(periodoId, membership.grupo.id);
+      return await this.getRecord(periodoId, membership.grupo.id, { esAdmin: false, estudianteId: student.id });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -98,9 +99,10 @@ export class GruposService {
       if (!isAdmin) {
         const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
         const member = student ? await this.members.findOne({ where: { grupo: { id }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO } }) : null;
-        if (!member) throw new NotFoundException('No existe ese grupo en el período indicado.');
+        if (!student || !member) throw new NotFoundException('No existe ese grupo en el período indicado.');
+        return this.getRecord(periodoId, id, { esAdmin: false, estudianteId: student.id });
       }
-      return this.getRecord(periodoId, id);
+      return this.getRecord(periodoId, id, VISOR_ADMIN);
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -180,12 +182,22 @@ export class GruposService {
     return !!student && !!(await this.members.findOne({ where: { periodo: { id: periodoId }, grupo: { id: groupId }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO } }));
   }
 
-  private async getRecord(periodoId: string, id: string): Promise<GrupoResponseDto> {
+  /**
+   * Respuesta de una operación de gestión ya autorizada (salir, cambiar representante, retirar,
+   * disolver): no vuelve a exigir pertenencia activa, pero la visibilidad depende del actor.
+   */
+  async respuestaGestion(periodoId: string, id: string, actor: Usuario): Promise<GrupoResponseDto> {
+    try {
+      return await this.getRecord(periodoId, id, await visorDe(this.dataSource.manager, actor));
+    } catch (error: unknown) { this.handleDatabaseError(error); }
+  }
+
+  private async getRecord(periodoId: string, id: string, visor: VisorDatos): Promise<GrupoResponseDto> {
     const group = await this.groups.findOne({ where: { id, periodo: { id: periodoId } }, relations: groupRelations });
     if (!group) throw new NotFoundException('No existe ese grupo en el período indicado.');
     const members = await this.members.find({ where: { grupo: { id }, periodo: { id: periodoId } }, relations: memberRelations, order: { fecha_ingreso: 'ASC', id: 'ASC' } });
     const compositionClosed = await this.postulaciones.grupoTienePostulaciones(this.groups.manager, group.id);
-    return groupResponse(group, members, compositionClosed);
+    return groupResponse(group, members, compositionClosed, visor);
   }
 
   private handleDatabaseError(error: unknown): never {

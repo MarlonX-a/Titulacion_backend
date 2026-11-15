@@ -1,13 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { EstudiantePersonaDto } from '../../common/dto/estudiante-persona.dto.js';
 import { InvitacionEstado } from '../enums/invitacion-estado.enum.js';
 import { GrupoEstado } from '../../grupos/enums/grupo-estado.enum.js';
 
-export class InvitacionPersonaDto {
-  @ApiProperty() id: string;
-  @ApiProperty() nombres: string;
-  @ApiProperty() apellidos: string;
-  @ApiProperty() matricula: string;
-}
+export class InvitacionPersonaDto extends EstudiantePersonaDto {}
 
 export class InvitacionResponseDto {
   @ApiProperty() id: string;

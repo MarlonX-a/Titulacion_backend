@@ -6,6 +6,7 @@ import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { PlantillaPat } from '../plantillas-pat/entities/plantilla-pat.entity.js';
 import { DocumentoPat } from './entities/documento-pat.entity.js';
 import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
+import { DocumentoPatCargaGuard } from './documento-pat-carga.guard.js';
 import { DocumentoPatUploadInterceptor } from './documento-pat-upload.interceptor.js';
 import { DocumentosPatController } from './documentos-pat.controller.js';
 import { DocumentosPatPeriodoController } from './documentos-pat-periodo.controller.js';
@@ -15,7 +16,7 @@ import { NotificacionesModule } from '../notificaciones/notificaciones.module.js
 @Module({
   imports: [TypeOrmModule.forFeature([DocumentoPat, PlantillaPat, RevisionPat]), AlmacenamientoModule, ArchivoLimpiezaModule, AuditoriaModule, NotificacionesModule],
   controllers: [DocumentosPatController, DocumentosPatPeriodoController],
-  providers: [DocumentosPatService, DocumentoPatUploadInterceptor],
+  providers: [DocumentosPatService, DocumentoPatUploadInterceptor, DocumentoPatCargaGuard],
   exports: [DocumentosPatService],
 })
 export class DocumentosPatModule {}

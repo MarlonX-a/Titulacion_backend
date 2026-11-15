@@ -24,7 +24,7 @@ interface AuditoriaRow {
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Claves que nunca se muestran aunque una auditoría futura las incluyera por error. */
-const SENSITIVE_KEY = /pass|contrasena|contraseña|token|secret|clave|credencial|csrf|cookie/i;
+export const SENSITIVE_KEY = /pass|contrasena|contraseña|token|secret|clave|credencial|csrf|cookie/i;
 
 /** Escapa los comodines de ILIKE para buscar el texto literal (con ESCAPE '\'). */
 export function escapeLike(value: string): string {

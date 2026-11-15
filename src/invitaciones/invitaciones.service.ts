@@ -1,6 +1,6 @@
 import { ConflictException, HttpException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -12,6 +12,7 @@ import { GrupoIntegranteEstado } from '../grupos/enums/grupo-integrante-estado.e
 import { GrupoIntegrante } from '../grupos/entities/grupo-integrante.entity.js';
 import { GruposService } from '../grupos/grupos.service.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { VISOR_ADMIN, datosEstudianteVisibles, visorDe, type VisorDatos } from '../common/privacidad/visor-datos.js';
 import { CreateInvitacionDto } from './dto/create-invitacion.dto.js';
 import { InvitacionResponseDto, PagedInvitacionesResponseDto } from './dto/invitacion-response.dto.js';
 import { ListInvitacionesQueryDto } from './dto/list-invitaciones-query.dto.js';
@@ -22,15 +23,16 @@ import { NotificacionesPersistenciaService } from '../notificaciones/notificacio
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 
 interface DriverError { code?: string; }
+export const MENSAJE_NO_INVITABLE = 'El estudiante indicado no puede recibir una invitación a este grupo.';
 const relations = { periodo: true, grupo: true, estudiante_emisor: { usuario: true }, estudiante_destino: { usuario: true } } as const;
-function person(student: Estudiante) { return { id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula }; }
-function response(record: Invitacion): InvitacionResponseDto {
+function person(student: Estudiante, visor: VisorDatos) { return datosEstudianteVisibles(visor, { id: student.id, nombres: student.usuario.nombres, apellidos: student.usuario.apellidos, matricula: student.matricula }); }
+function response(record: Invitacion, visor: VisorDatos): InvitacionResponseDto {
   const expired = record.estado === InvitacionEstado.PENDIENTE && record.expira_en.getTime() <= Date.now();
   return {
     id: record.id, grupo_id: record.grupo.id, periodo_id: record.periodo.id,
     grupo: { id: record.grupo.id, nombre: record.grupo.nombre, estado: record.grupo.estado },
-    estudiante_emisor_id: record.estudiante_emisor.id, estudiante_emisor: person(record.estudiante_emisor),
-    estudiante_destino_id: record.estudiante_destino.id, estudiante_destino: person(record.estudiante_destino),
+    estudiante_emisor_id: record.estudiante_emisor.id, estudiante_emisor: person(record.estudiante_emisor, visor),
+    estudiante_destino_id: record.estudiante_destino.id, estudiante_destino: person(record.estudiante_destino, visor),
     estado: expired ? InvitacionEstado.EXPIRADA : record.estado,
     fecha_envio: record.fecha_envio, expira_en: record.expira_en, fecha_respuesta: record.fecha_respuesta,
   };
@@ -61,11 +63,7 @@ export class InvitacionesService {
         if (await this.groups.countActiveMembers(manager, group.id) >= period.max_integrantes_default) throw new ConflictException('El grupo ya alcanzó el máximo de integrantes del período.');
         const targetId = dto.estudiante_destino_id;
         if (senderId === targetId) throw new ConflictException('No puedes invitarte a ti mismo.');
-        await this.habilitados.getEligibleStudentForGroup(periodoId, targetId, manager);
-        await this.groups.assertNoActiveMembership(manager, periodoId, targetId);
-        await this.groups.assertNeverMemberOfGroup(manager, group.id, targetId);
-        const targetAlreadyInGroup = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: group.id }, estudiante: { id: targetId }, estado: GrupoIntegranteEstado.ACTIVO } });
-        if (targetAlreadyInGroup) throw new ConflictException('El estudiante ya forma parte de este grupo.');
+        await this.assertInvitable(manager, periodoId, group.id, targetId);
         const existing = await manager.getRepository(Invitacion).findOne({ where: { grupo: { id: group.id }, estudiante_destino: { id: targetId }, estado: InvitacionEstado.PENDIENTE } });
         if (existing && existing.expira_en.getTime() > Date.now()) throw new ConflictException('Ya existe una invitación pendiente para este estudiante.');
         if (existing) {
@@ -83,7 +81,7 @@ export class InvitacionesService {
         await this.notificaciones.invitacion(manager, item.id, NotificacionTipo.INVITACION_RECIBIDA, actor.id);
         return item.id;
       });
-      return await this.getOne(periodoId, id);
+      return await this.getOne(periodoId, id, await visorDe(this.dataSource.manager, actor));
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -95,7 +93,7 @@ export class InvitacionesService {
         const sender = await this.groups.studentIdForUser(this.invitations.manager, actor.id);
         await this.groups.assertRepresentative(this.invitations.manager, group.id, sender);
       }
-      return this.listBy({ periodoId, grupoId }, query);
+      return this.listBy({ periodoId, grupoId }, query, isAdmin ? VISOR_ADMIN : await visorDe(this.dataSource.manager, actor));
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -105,7 +103,7 @@ export class InvitacionesService {
       if (!period) throw new NotFoundException('No existe el período indicado.');
       const student = await this.students.findOne({ where: { usuario: { id: actor.id } } });
       if (!student) throw new NotFoundException('No tienes perfil de estudiante.');
-      return this.listBy({ periodoId, destinoId: student.id }, query);
+      return this.listBy({ periodoId, destinoId: student.id }, query, { esAdmin: false, estudianteId: student.id });
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
@@ -198,11 +196,30 @@ export class InvitacionesService {
         return { expired: false, id: invitation.id };
       });
       if (outcome.expired) return { expired: true as const, item: null };
-      return { expired: false as const, item: await this.getOne(periodoId, outcome.id) };
+      return { expired: false as const, item: await this.getOne(periodoId, outcome.id, await visorDe(this.dataSource.manager, actor)) };
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  private async listBy(filter: { periodoId: string; grupoId?: string; destinoId?: string }, query: ListInvitacionesQueryDto): Promise<PagedInvitacionesResponseDto> {
+  /**
+   * Comprueba que el destinatario pueda recibir la invitación. Todas las causas de rechazo
+   * (id inexistente, cuenta inactiva, sin habilitación elegible, ya en un grupo, ex-integrante)
+   * responden el mismo 409 con el mismo mensaje: un estudiante no debe poder averiguar la
+   * situación académica de otro probando identificadores. Los errores no HTTP se propagan.
+   */
+  private async assertInvitable(manager: EntityManager, periodoId: string, groupId: string, targetId: string): Promise<void> {
+    try {
+      await this.habilitados.getEligibleStudentForGroup(periodoId, targetId, manager);
+      await this.groups.assertNoActiveMembership(manager, periodoId, targetId);
+      await this.groups.assertNeverMemberOfGroup(manager, groupId, targetId);
+      const targetAlreadyInGroup = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: groupId }, estudiante: { id: targetId }, estado: GrupoIntegranteEstado.ACTIVO } });
+      if (targetAlreadyInGroup) throw new ConflictException('El estudiante ya forma parte de este grupo.');
+    } catch (error: unknown) {
+      if (error instanceof HttpException && error.getStatus() < 500) throw new ConflictException(MENSAJE_NO_INVITABLE);
+      throw error;
+    }
+  }
+
+  private async listBy(filter: { periodoId: string; grupoId?: string; destinoId?: string }, query: ListInvitacionesQueryDto, visor: VisorDatos): Promise<PagedInvitacionesResponseDto> {
     const now = new Date();
     const qb = this.invitations.createQueryBuilder('i').leftJoinAndSelect('i.periodo', 'p')
       .leftJoinAndSelect('i.grupo', 'g').leftJoinAndSelect('i.estudiante_emisor', 'sender')
@@ -215,13 +232,13 @@ export class InvitacionesService {
     else if (query.estado) qb.andWhere('i.estado = :state', { state: query.estado });
     const [items, total] = await qb.orderBy('i.fecha_envio', 'DESC').addOrderBy('i.id', 'ASC')
       .skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-    return { data: items.map(response), total, page: query.page, limit: query.limit };
+    return { data: items.map((item) => response(item, visor)), total, page: query.page, limit: query.limit };
   }
 
-  private async getOne(periodoId: string, id: string): Promise<InvitacionResponseDto> {
+  private async getOne(periodoId: string, id: string, visor: VisorDatos): Promise<InvitacionResponseDto> {
     const item = await this.invitations.findOne({ where: { id, periodo: { id: periodoId } }, relations });
     if (!item) throw new NotFoundException('No existe esa invitación en el período indicado.');
-    return response(item);
+    return response(item, visor);
   }
 
   private handleDatabaseError(error: unknown): never {

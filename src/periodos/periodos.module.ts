@@ -1,4 +1,4 @@
-import { BullModule, getQueueToken } from '@nestjs/bullmq';
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AcademicoModule } from '../academico/academico.module.js';
@@ -15,15 +15,10 @@ import { ResumenPeriodoService } from './resumen-periodo.service.js';
 import { COLA_TRANSICIONES_PERIODO, TransicionesPeriodoService } from './transiciones-periodo.service.js';
 import { TransicionesPeriodoWorker } from './transiciones-periodo.worker.js';
 
-const testMode = process.env.NODE_ENV === 'test';
-const queueModules = testMode ? [] : [ColasModule, BullModule.registerQueue({ name: COLA_TRANSICIONES_PERIODO })];
-const queueProviders = testMode
-  ? [{ provide: getQueueToken(COLA_TRANSICIONES_PERIODO), useValue: { upsertJobScheduler: async () => undefined } }]
-  : [TransicionesPeriodoWorker];
-
+// Las pruebas sin Redis sustituyen la cola y el worker en el módulo de pruebas (test/support/e2e-app.ts).
 @Module({
-  imports: [TypeOrmModule.forFeature([PeriodoTitulacion]), AuditoriaModule, AcademicoModule, HabilitadosModule, ConflictosModule, ...queueModules],
+  imports: [TypeOrmModule.forFeature([PeriodoTitulacion]), AuditoriaModule, AcademicoModule, HabilitadosModule, ConflictosModule, ColasModule, BullModule.registerQueue({ name: COLA_TRANSICIONES_PERIODO })],
   controllers: [PeriodosController],
-  providers: [PeriodosService, InicioTitulacionService, ArchivoPeriodoService, ResumenPeriodoService, TransicionesPeriodoService, ...queueProviders],
+  providers: [PeriodosService, InicioTitulacionService, ArchivoPeriodoService, ResumenPeriodoService, TransicionesPeriodoService, TransicionesPeriodoWorker],
 })
 export class PeriodosModule {}

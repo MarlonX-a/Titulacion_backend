@@ -33,7 +33,9 @@ import { GeneracionesPatModule } from './generaciones-pat/generaciones-pat.modul
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      ignoreEnvFile: process.env.NODE_ENV === 'test',
+      // Se decide antes de cargar la configuración, por eso se lee de process.env; validateEnvironment
+      // valida y documenta el mismo valor (IGNORE_ENV_FILE). Las pruebas lo activan en test/setup-env.ts.
+      ignoreEnvFile: process.env.IGNORE_ENV_FILE === 'true',
       validate: validateEnvironment,
     }),
     DatabaseModule,

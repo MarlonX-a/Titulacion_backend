@@ -1,10 +1,10 @@
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import type { INestApplication } from '@nestjs/common';
 import { vi } from 'vitest';
 import { AppModule } from '../src/app.module.js';
+import { createE2eTestingModule } from './support/e2e-app.js';
 import { AuthenticationService } from '../src/auth/authentication.service.js';
 import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
@@ -69,7 +69,7 @@ describe('Grupos e invitaciones (e2e)', () => {
       DB_HOST: '127.0.0.1', DB_PORT: 5432, DB_SCHEMA: 'test', DB_USERNAME: 'test_user',
       DB_PASSWORD: 'test_password', DB_NAME: 'test_database', AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
     });
-    const module = await Test.createTestingModule({ imports: [AppModule] })
+    const module = await createE2eTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)
       .overrideProvider(AuthenticationService).useValue(authService)

@@ -16,6 +16,7 @@ import { LoteImportacion } from './entities/lote-importacion.entity.js';
 import { PreparacionImportacion } from './entities/preparacion-importacion.entity.js';
 import { PreparacionImportacionEstado as Estado } from './enums/preparacion-importacion-estado.enum.js';
 import { ImportacionesService } from './importaciones.service.js';
+import { importTempTtlMs } from '../auth/credentials.js';
 
 async function studentWorkbook(career: string | null): Promise<Buffer> {
   const book = new ExcelJS.Workbook();
@@ -48,7 +49,7 @@ function setup(buffer: Buffer) {
     ])],
   ]);
   const harness = importacionesHarness(repos, buffer, 'estudiantes-import-');
-  return { service: new ImportacionesService(...harness.args), repos, admin: harness.admin, auditoria: harness.auditoria };
+  return { service: new ImportacionesService(...harness.args), repos, admin: harness.admin, auditoria: harness.auditoria, args: harness.args };
 }
 
 describe('ImportacionesService carrera de la importación', () => {
@@ -78,6 +79,40 @@ describe('ImportacionesService carrera de la importación', () => {
     await context.service.confirm('periodo-1', id, context.admin, null);
     await context.service.importConfirmed(id);
     expect(context.repos.get(Estudiante)!.rows).toEqual([expect.objectContaining({ cedula: '1316661675', carrera_id: 'car-software' })]);
+  });
+
+  it('la clave temporal importada vence a las IMPORT_TEMP_TTL_HOURS configuradas y el correo de acceso comparte ese vencimiento', async () => {
+    const buffer = await studentWorkbook(null);
+    const context = setup(buffer);
+    const args = [...context.args] as unknown as ConstructorParameters<typeof ImportacionesService>;
+    const config = args[3] as unknown as { get: (key: string) => unknown };
+    const base = config.get;
+    (args as unknown as unknown[])[3] = { get: (key: string) => key === 'IMPORT_TEMP_TTL_HOURS' ? 6 : base(key) };
+    const service = new ImportacionesService(...args);
+    const { id } = await service.submit('periodo-1', context.admin, 'estudiantes.xlsx', buffer, null, 'car-software');
+    await service.validateFile(id);
+    await service.confirm('periodo-1', id, context.admin, null);
+    const antes = Date.now();
+    await service.importConfirmed(id);
+    const despues = Date.now();
+
+    const [credencial] = context.repos.get(CredencialUsuario)!.rows as Array<{ temporal_expira_en: Date; requiere_cambio: boolean }>;
+    const [correo] = context.repos.get(CorreoSalida)!.rows as Array<{ expira_en: Date; tipo: string }>;
+    const seisHoras = 6 * 3_600_000;
+    expect(credencial!.requiere_cambio).toBe(true);
+    expect(credencial!.temporal_expira_en.getTime()).toBeGreaterThanOrEqual(antes + seisHoras);
+    expect(credencial!.temporal_expira_en.getTime()).toBeLessThanOrEqual(despues + seisHoras);
+    expect(correo).toMatchObject({ tipo: 'ACCESO' });
+    expect(correo!.expira_en).toEqual(credencial!.temporal_expira_en);
+  });
+
+  it('sin IMPORT_TEMP_TTL_HOURS válido usa 24 horas', () => {
+    expect(importTempTtlMs(undefined)).toBe(24 * 3_600_000);
+    expect(importTempTtlMs('/ruta/a/otra/clave')).toBe(24 * 3_600_000);
+    expect(importTempTtlMs(0)).toBe(24 * 3_600_000);
+    expect(importTempTtlMs(169)).toBe(24 * 3_600_000);
+    expect(importTempTtlMs(1)).toBe(3_600_000);
+    expect(importTempTtlMs(168)).toBe(168 * 3_600_000);
   });
 
   it('marca como error la fila de un estudiante existente de otra carrera', async () => {

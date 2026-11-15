@@ -319,8 +319,10 @@ describe('HabilitadosService datos del estudiante en respuestas', () => {
     const repository = { findOne: vi.fn(async () => record), createQueryBuilder: vi.fn(() => qb) };
     const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, catalogo);
     const page = await service.candidatosInvitacion('p1', { id: 'u2' } as never, { page: 1, limit: 20 });
-    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1' });
+    // La matrícula de un estudiante importado es su cédula: no se muestra a compañeros.
+    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez' });
     expect(page.data[0]).not.toHaveProperty('resuelto_por');
+    for (const campo of ['condicion_ingreso', 'requisito_pendiente', 'observacion_ingreso']) expect(page.data[0]).not.toHaveProperty(campo);
   });
 
   it('filtra el listado por la carrera del estudiante', async () => {

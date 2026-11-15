@@ -2,8 +2,8 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsArray, IsUUID } from 'class-validator';
 
 export class TutoresPropuestosInputDto {
-  @ApiProperty({ type: [String], format: 'uuid', minItems: 1, maxItems: 32767, example: ['00000000-0000-4000-8000-000000000001'] })
-  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(32767) @ArrayUnique((id: string) => id.toLowerCase()) @IsUUID('all', { each: true })
+  @ApiProperty({ type: [String], format: 'uuid', minItems: 1, maxItems: 5, example: ['00000000-0000-4000-8000-000000000001'] })
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(5, { message: 'Se pueden proponer como máximo 5 tutores.' }) @ArrayUnique((id: string) => id.toLowerCase()) @IsUUID('all', { each: true })
   tutores_propuestos: string[];
 }
 

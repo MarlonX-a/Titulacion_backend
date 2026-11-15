@@ -1,13 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { EstudiantePersonaDto } from '../../common/dto/estudiante-persona.dto.js';
 import { AsignacionTutorEstado } from '../enums/asignacion-tutor-estado.enum.js';
 import { AsignacionTutorTipo } from '../enums/asignacion-tutor-tipo.enum.js';
 
-export class ParticipanteTutorResponseDto {
-  @ApiProperty({ format: 'uuid' }) id: string;
-  @ApiProperty() nombres: string;
-  @ApiProperty() apellidos: string;
-  @ApiProperty() matricula: string;
-}
+export class ParticipanteTutorResponseDto extends EstudiantePersonaDto {}
 
 export class AsignacionTutorResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;

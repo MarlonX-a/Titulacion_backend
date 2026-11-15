@@ -45,7 +45,8 @@ export class ExportacionesService implements OnModuleInit, OnModuleDestroy {
   private publishTimer?: NodeJS.Timeout;
   private cleanupTimer?: NodeJS.Timeout;
   private publishing = false;
-  private readonly testMode: boolean;
+  /** `BACKGROUND_TASKS_ENABLED`: publicación de solicitudes pendientes y limpieza de vencidas. */
+  private readonly tareasActivas: boolean;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -56,10 +57,10 @@ export class ExportacionesService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService<AppEnvironment, true>,
     @InjectRepository(SolicitudExportacion) private readonly repository: Repository<SolicitudExportacion>,
     @InjectQueue('exportaciones') private readonly queue: Queue<ExportacionJob>,
-  ) { this.testMode = config.get('NODE_ENV', { infer: true }) === 'test'; }
+  ) { this.tareasActivas = config.get('BACKGROUND_TASKS_ENABLED', { infer: true }) === true; }
 
   onModuleInit(): void {
-    if (this.testMode) return;
+    if (!this.tareasActivas) return;
     this.publishTimer = setInterval(() => void this.dispatchPending(), 5_000);
     this.publishTimer.unref();
     this.cleanupTimer = setInterval(() => void this.enqueueExpiredCleanup(), 30_000);
@@ -189,7 +190,7 @@ export class ExportacionesService implements OnModuleInit, OnModuleDestroy {
   }
 
   async dispatchPending(): Promise<void> {
-    if (this.publishing || this.testMode) return;
+    if (this.publishing) return;
     this.publishing = true;
     try {
       await this.recoverExpiredLeases();

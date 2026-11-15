@@ -22,6 +22,8 @@ import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { ModalidadPostulacion } from '../postulaciones/enums/modalidad-postulacion.enum.js';
 import { TutorPropuesto } from '../postulaciones/entities/tutor-propuesto.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { VISOR_ADMIN, datosEstudianteVisibles, visorDe, type VisorDatos } from '../common/privacidad/visor-datos.js';
+import { GrupoIntegranteEstado } from '../grupos/enums/grupo-integrante-estado.enum.js';
 import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { AsignacionTutor } from './entities/asignacion-tutor.entity.js';
@@ -202,7 +204,7 @@ export class AsignacionesTutorService {
       if (query.estado) qb.andWhere('tutor.estado = :state', { state: query.estado });
       if (query.tipo) qb.andWhere('tutor.tipo = :type', { type: query.tipo });
       const [rows, total] = await qb.orderBy('tutor.fecha_asignacion', 'DESC').addOrderBy('tutor.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await Promise.all(rows.map((row) => this.toResponse(row))), total, page: query.page, limit: query.limit };
+      return { data: await Promise.all(rows.map((row) => this.toResponse(row, VISOR_ADMIN))), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleError(error); }
   }
 
@@ -221,14 +223,15 @@ export class AsignacionesTutorService {
         const schema = this.schema(this.dataSource.manager);
         qb.andWhere(`(work.estudiante_id = :studentId OR EXISTS (
           SELECT 1 FROM ${schema}."grupo_integrante" member
-          WHERE member."grupo_id" = work.grupo_id AND member."estudiante_id" = :studentId
+          WHERE member."grupo_id" = work.grupo_id AND member."estudiante_id" = :studentId AND member."estado" = 'ACTIVO'
         ))`, { studentId: student.id });
       }
       if (query.asignacion_tema_id) qb.andWhere('tutor.asignacion_tema_id = :workId', { workId: query.asignacion_tema_id });
       if (query.estado) qb.andWhere('tutor.estado = :state', { state: query.estado });
       if (query.tipo) qb.andWhere('tutor.tipo = :type', { type: query.tipo });
       const [rows, total] = await qb.orderBy('tutor.fecha_asignacion', 'DESC').addOrderBy('tutor.id', 'ASC').skip((query.page - 1) * query.limit).take(query.limit).getManyAndCount();
-      return { data: await Promise.all(rows.map((row) => this.toResponse(row))), total, page: query.page, limit: query.limit };
+      const visor = await visorDe(this.dataSource.manager, actor);
+      return { data: await Promise.all(rows.map((row) => this.toResponse(row, visor))), total, page: query.page, limit: query.limit };
     } catch (error: unknown) { this.handleError(error); }
   }
 
@@ -238,7 +241,7 @@ export class AsignacionesTutorService {
       if (!record || record.asignacion_tema.periodo_id !== periodoId) throw new NotFoundException('No existe esa asignación de tutor en el período indicado.');
       if (actor.rol === UsuarioRol.DOCENTE && record.docente.usuario.id !== actor.id) throw new NotFoundException('No existe esa asignación visible para el usuario.');
       if (actor.rol === UsuarioRol.ESTUDIANTE && !await this.isParticipant(record.asignacion_tema, actor.id)) throw new NotFoundException('No existe esa asignación visible para el usuario.');
-      return this.toResponse(record);
+      return this.toResponse(record, await visorDe(this.dataSource.manager, actor));
     } catch (error: unknown) { this.handleError(error); }
   }
 
@@ -310,7 +313,7 @@ export class AsignacionesTutorService {
         bloquear_al_superar: projected.configuracion.bloquear_al_superar,
       },
     };
-    return { asignacion: await this.toResponse(record), carga, advertencias: projected.advertencia ? [projected.advertencia] : [] };
+    return { asignacion: await this.toResponse(record, VISOR_ADMIN), carga, advertencias: projected.advertencia ? [projected.advertencia] : [] };
   }
 
   private queryAssignments(periodoId: string) {
@@ -326,9 +329,9 @@ export class AsignacionesTutorService {
       .where('work.periodo_id = :periodoId', { periodoId });
   }
 
-  private async toResponse(record: AsignacionTutor): Promise<AsignacionTutorResponseDto> {
+  private async toResponse(record: AsignacionTutor, visor: VisorDatos): Promise<AsignacionTutorResponseDto> {
     const work = record.asignacion_tema;
-    const participants = await this.participants(work.estudiante_id, work.grupo_id);
+    const participants = (await this.participants(work.estudiante_id, work.grupo_id, visor.esAdmin)).map((row) => datosEstudianteVisibles(visor, row));
     return {
       id: record.id,
       periodo_id: work.periodo_id,
@@ -367,7 +370,8 @@ export class AsignacionesTutorService {
     };
   }
 
-  private async participants(estudianteId: string | null, grupoId: string | null): Promise<ParticipanteTutorResponseDto[]> {
+  /** ADMIN recibe también a los ex-integrantes (historial); el resto, solo a los integrantes ACTIVOS. */
+  private async participants(estudianteId: string | null, grupoId: string | null, incluirRetirados: boolean): Promise<Array<ParticipanteTutorResponseDto & { matricula: string }>> {
     const schema = this.schema(this.dataSource.manager);
     return this.dataSource.query(`
       SELECT e."id",u."nombres",u."apellidos",e."matricula"
@@ -375,9 +379,9 @@ export class AsignacionesTutorService {
       WHERE ($1::uuid IS NOT NULL AND e."id"=$1)
          OR ($2::uuid IS NOT NULL AND EXISTS (
            SELECT 1 FROM ${schema}."grupo_integrante" member
-           WHERE member."grupo_id"=$2 AND member."estudiante_id"=e."id"
+           WHERE member."grupo_id"=$2 AND member."estudiante_id"=e."id" AND ($3::boolean OR member."estado"='ACTIVO')
          ))
-      ORDER BY e."id"`, [estudianteId, grupoId]) as Promise<ParticipanteTutorResponseDto[]>;
+      ORDER BY e."id"`, [estudianteId, grupoId, incluirRetirados]) as Promise<Array<ParticipanteTutorResponseDto & { matricula: string }>>;
   }
 
   private async isParticipant(work: AsignacionTema, usuarioId: string): Promise<boolean> {
@@ -385,7 +389,7 @@ export class AsignacionesTutorService {
     if (!student) return false;
     if (work.estudiante_id === student.id) return true;
     if (!work.grupo_id) return false;
-    return this.integrantes.exist({ where: { grupo: { id: work.grupo_id }, estudiante: { id: student.id } } });
+    return this.integrantes.exist({ where: { grupo: { id: work.grupo_id }, estudiante: { id: student.id }, estado: GrupoIntegranteEstado.ACTIVO } });
   }
 
   private async lockPeriod(manager: EntityManager, id: string): Promise<PeriodoTitulacion> {

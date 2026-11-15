@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { HttpException } from '@nestjs/common';
-import { QueryFailedError } from 'typeorm';
+import { QueryFailedError, type QueryRunner } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
@@ -15,7 +15,6 @@ import { CondicionIngreso } from '../habilitados/enums/condicion-ingreso.enum.js
 import { HabilitadoEstado } from '../habilitados/enums/habilitado-estado.enum.js';
 import { HabilitadoOrigen } from '../habilitados/enums/habilitado-origen.enum.js';
 import { SituacionIngreso } from '../habilitados/enums/situacion-ingreso.enum.js';
-import { LoteImportacion } from '../importaciones/entities/lote-importacion.entity.js';
 import { LineaInvestigacion } from '../lineas-investigacion/entities/linea-investigacion.entity.js';
 import { Grupo } from '../grupos/entities/grupo.entity.js';
 import { GrupoIntegrante } from '../grupos/entities/grupo-integrante.entity.js';
@@ -31,20 +30,9 @@ import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persis
 import { CreateInvitacionDto } from '../invitaciones/dto/create-invitacion.dto.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
-import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { CreateTutoresPropuestos20261002090000 } from './migrations/20261002090000-CreateTutoresPropuestos.js';
-import { CreateAsignacionesTema20261002110000 } from './migrations/20261002110000-CreateAsignacionesTema.js';
-import { AllowRetiroNoAdmitidoConPostulacion20261019100000 } from './migrations/20261019100000-AllowRetiroNoAdmitidoConPostulacion.js';
-import { AsignacionTema } from '../asignaciones-tema/entities/asignacion-tema.entity.js';
-import { CreateGruposInvitaciones20261002060000 } from './migrations/20261002060000-CreateGruposInvitaciones.js';
-import { GroupIntegrityLifecycle20261002070000 } from './migrations/20261002070000-GroupIntegrityLifecycle.js';
-import { CreateUsuario20261002000000 } from './migrations/20261002000000-CreateUsuario.js';
-import { CreateEstudianteDocente20261002010000 } from './migrations/20261002010000-CreateEstudianteDocente.js';
-import { CreatePeriodoTitulacion20261002020000 } from './migrations/20261002020000-CreatePeriodoTitulacion.js';
-import { CreateHabilitados20261002030000 } from './migrations/20261002030000-CreateHabilitados.js';
-import { CreateLineaInvestigacion20261002040000 } from './migrations/20261002040000-CreateLineaInvestigacion.js';
-import { CreateTemas20261002050000 } from './migrations/20261002050000-CreateTemas.js';
+import { TutorPropuestoBloqueoCompartido20261112110000 } from './migrations/20261112110000-TutorPropuestoBloqueoCompartido.js';
 import { Tema } from '../temas/entities/tema.entity.js';
 import { TemaHistorial } from '../temas/entities/tema-historial.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
@@ -65,7 +53,7 @@ import { TemasService } from '../temas/temas.service.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
-import { CARRERA_VERIFICACION_ID } from './verify-academico.js';
+import { catalogoSembrado } from './verify-academico.js';
 
 const schema = `test_postulaciones_${randomBytes(8).toString('hex')}`;
 const notifications = { invitacion: async () => undefined, postulacion: async () => undefined, asignacionTema: async () => undefined, tutor: async () => undefined, ingreso: async () => undefined } as unknown as NotificacionesPersistenciaService;
@@ -81,6 +69,19 @@ function schemaSql(): string {
 function code(error: unknown): string | undefined {
   return error instanceof QueryFailedError ? (error.driverError as { code?: string }).code : undefined;
 }
+async function triggerSource(): Promise<string> {
+  const rows = await isolated!.query(`SELECT p."prosrc" FROM pg_proc p JOIN pg_namespace n ON n."oid"=p."pronamespace" WHERE n."nspname"=$1 AND p."proname"='validar_tutor_propuesto'`, [schema]) as Array<{ prosrc: string }>;
+  if (rows.length !== 1) throw new Error('No existe una única función validar_tutor_propuesto en el esquema temporal.');
+  return rows[0]!.prosrc;
+}
+async function runInTransaction(work: (runner: QueryRunner) => Promise<void>): Promise<void> {
+  const runner = isolated!.createQueryRunner();
+  await runner.connect();
+  await runner.startTransaction();
+  try { await work(runner); await runner.commitTransaction(); }
+  catch (error: unknown) { if (runner.isTransactionActive) await runner.rollbackTransaction(); throw error; }
+  finally { await runner.release(); }
+}
 
 async function verify(): Promise<void> {
   const options = createDatabaseOptions(loadEnvironment());
@@ -88,9 +89,28 @@ async function verify(): Promise<void> {
   await admin.initialize();
   await admin.query(`CREATE SCHEMA ${schemaSql()}`);
   createdSchema = true;
-  isolated = new DatabaseDataSource({ ...options, schema, entities: [Usuario, Estudiante, Docente, PeriodoTitulacion, EstudianteHabilitado, LoteImportacion, Auditoria, LineaInvestigacion, Tema, TemaHistorial, Grupo, GrupoIntegrante, Invitacion, Postulacion, TutorPropuesto, AsignacionTema], migrations: [CreateUsuario20261002000000, CreateEstudianteDocente20261002010000, CreatePeriodoTitulacion20261002020000, CreateHabilitados20261002030000, CreateLineaInvestigacion20261002040000, CreateTemas20261002050000, CreateGruposInvitaciones20261002060000, GroupIntegrityLifecycle20261002070000, CreatePostulaciones20261002080000, CreateTutoresPropuestos20261002090000, CreateAsignacionesTema20261002110000, AllowRetiroNoAdmitidoConPostulacion20261019100000] });
+  // Cadena completa de migraciones y entidades, como el esquema real (catálogo de carreras incluido).
+  // La migración de bloqueos compartidos se excluye aquí y se aplica a mano más abajo.
+  isolated = new DatabaseDataSource({ ...options, schema });
   await isolated.initialize();
+  const pendingLockMigration = isolated.migrations.findIndex((migration) => migration.name === 'TutorPropuestoBloqueoCompartido20261112110000');
+  if (pendingLockMigration < 0) throw new Error('No se encontró la migración de bloqueos compartidos de tutores propuestos.');
+  isolated.migrations.splice(pendingLockMigration, 1);
   await isolated.runMigrations({ transaction: 'all' });
+  const { carreraId: CARRERA_VERIFICACION_ID, facultadId } = await catalogoSembrado(isolated, schemaSql());
+
+  step = 'disparador de tutores propuestos con bloqueos compartidos';
+  // Se aplica a mano para conservar la definición original y comprobar que down() la restaura.
+  const lockMigration = new TutorPropuestoBloqueoCompartido20261112110000();
+  const originalTrigger = await triggerSource();
+  if (!originalTrigger.includes('FOR UPDATE OF d,u')) throw new Error('La definición original del disparador de tutores no es la esperada.');
+  await runInTransaction((runner) => lockMigration.up(runner));
+  const sharedTrigger = await triggerSource();
+  if (/FOR\s+UPDATE/i.test(sharedTrigger) || !sharedTrigger.includes('FOR SHARE OF d,u')) throw new Error('validar_tutor_propuesto todavía toma bloqueos de escritura sobre docente o usuario.');
+  await runInTransaction((runner) => lockMigration.down(runner));
+  if (await triggerSource() !== originalTrigger) throw new Error('down() no restauró textualmente la definición anterior de validar_tutor_propuesto.');
+  await runInTransaction((runner) => lockMigration.up(runner));
+  if (await triggerSource() !== sharedTrigger) throw new Error('Volver a aplicar la migración no produjo la misma definición del disparador.');
 
   step = 'preparación de identidades elegibles';
   const userRepo = isolated.getRepository(Usuario);
@@ -105,20 +125,23 @@ async function verify(): Promise<void> {
   const studentRepo = isolated.getRepository(Estudiante);
   const studentUsers: Usuario[] = [];
   const students: Estudiante[] = [];
-  for (let index = 0; index < 5; index++) {
+  for (let index = 0; index < 6; index++) {
     const account = await userRepo.save(userRepo.create({ email: `estudiante${index}@postulaciones.verify`, nombres: `Estudiante ${index}`, apellidos: 'Verificación', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: `postulaciones-student-${index}`, ultimo_acceso: null }));
     studentUsers.push(account);
-    students.push(await studentRepo.save(studentRepo.create({ usuario: account, cedula: ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459'][index]!, matricula: `POST-${index}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 8 })));
+    students.push(await studentRepo.save(studentRepo.create({ usuario: account, cedula: ['0102030418', '0102030426', '0102030434', '0102030442', '0102030459', '0102030467'][index]!, matricula: `POST-${index}`, carrera_id: CARRERA_VERIFICACION_ID, nivel: 8 })));
   }
   const now = new Date();
   const periodRepo = isolated.getRepository(PeriodoTitulacion);
-  const period = await periodRepo.save(periodRepo.create({ codigo: 'POST-VERIFY', nombre: 'Verificación de postulaciones', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 600_000), fecha_inicio_titulacion: new Date(now.getTime() + 700_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 3 }));
+  const period = await periodRepo.save(periodRepo.create({ codigo: 'POST-VERIFY', nombre: 'Verificación de postulaciones', fecha_inicio_postulacion: new Date(now.getTime() - 60_000), fecha_fin_postulacion: new Date(now.getTime() + 600_000), fecha_inicio_titulacion: new Date(now.getTime() + 700_000), estado: PeriodoEstado.POSTULACION_ABIERTA, max_integrantes_default: 4, facultad_id: facultadId }));
   const habilitadoRepo = isolated.getRepository(EstudianteHabilitado);
   for (const student of students) await habilitadoRepo.save(habilitadoRepo.create({ periodo: period, estudiante: student, origen: HabilitadoOrigen.MANUAL, lote_importacion: null, estado: HabilitadoEstado.HABILITADO, condicion_ingreso: CondicionIngreso.CONDICIONADO, requisito_pendiente: 'Requisito de verificación', situacion_ingreso: SituacionIngreso.PENDIENTE, fecha_habilitacion: now, fecha_resolucion_ingreso: null, resuelto_por: null, observacion_ingreso: null }));
   const lineRepo = isolated.getRepository(LineaInvestigacion);
   const line = await lineRepo.save(lineRepo.create({ codigo: 'VERIFY', nombre: 'Verificación', descripcion: null, activa: true }));
   const topicRepo = isolated.getRepository(Tema);
+  // Banco de temas: el tipo fija los integrantes (INDIVIDUAL 1, PAREJA 2, GRUPO 3 hasta el máximo del período, 4).
   const topic = await topicRepo.save(topicRepo.create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema de verificación', descripcion: 'Tema publicado de verificación', tipo: TipoTema.GRUPO, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const individualTopic = await topicRepo.save(topicRepo.create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema individual de verificación', descripcion: 'Tema individual publicado de verificación', tipo: TipoTema.INDIVIDUAL, estado: EstadoTema.PUBLICADO, creado_en: now }));
+  const pairTopic = await topicRepo.save(topicRepo.create({ carrera_id: CARRERA_VERIFICACION_ID, linea: line, docente_proponente: teacher, titulo: 'Tema en pareja de verificación', descripcion: 'Tema en pareja publicado de verificación', tipo: TipoTema.PAREJA, estado: EstadoTema.PUBLICADO, creado_en: now }));
 
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
@@ -137,7 +160,7 @@ async function verify(): Promise<void> {
   step = 'postulación antigua sin preferencias y carga única';
   await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" DISABLE TRIGGER "TRG_postulacion_requiere_tutores"`);
   const legacy = await isolated.getRepository(Postulacion).save(isolated.getRepository(Postulacion).create({
-    tema: topic, periodo: period, grupo: null, estudiante: students[3]!, num_integrantes: 1,
+    tema: individualTopic, periodo: period, grupo: null, estudiante: students[3]!, num_integrantes: 1,
     registrada_por: studentUsers[3]!, estado: EstadoPostulacion.PENDIENTE, observacion: null,
   }));
   await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" ENABLE TRIGGER "TRG_postulacion_requiere_tutores"`);
@@ -152,7 +175,7 @@ async function verify(): Promise<void> {
   await deferredRunner.startTransaction();
   let deferredRejected = false;
   try {
-    await deferredRunner.query(`INSERT INTO ${schemaSql()}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id") VALUES ($1,$2,$3,1,$4)`, [topic.id, period.id, students[4]!.id, studentUsers[4]!.id]);
+    await deferredRunner.query(`INSERT INTO ${schemaSql()}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id") VALUES ($1,$2,$3,1,$4)`, [individualTopic.id, period.id, students[4]!.id, studentUsers[4]!.id]);
     await deferredRunner.commitTransaction();
   } catch (error: unknown) {
     deferredRejected = code(error) === '23514';
@@ -164,7 +187,7 @@ async function verify(): Promise<void> {
   await isolated.query(`CREATE TRIGGER "TRG_fallar_auditoria_tutores" BEFORE INSERT ON ${schemaSql()}."auditoria" FOR EACH ROW EXECUTE FUNCTION ${schemaSql()}."fallar_auditoria_tutores"()`);
   const beforeRollbackApps = await isolated.getRepository(Postulacion).countBy({ estudiante: { id: students[4]!.id } });
   const beforeRollbackPreferences = await isolated.getRepository(TutorPropuesto).count();
-  const rollbackConfirmed = await service.create(period.id, studentUsers[4]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.INDIVIDUAL, tutores_propuestos: [teacher.id] }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 503);
+  const rollbackConfirmed = await service.create(period.id, studentUsers[4]!, { tema_id: individualTopic.id, modalidad: ModalidadPostulacion.INDIVIDUAL, tutores_propuestos: [teacher.id] }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 503);
   await isolated.query(`DROP TRIGGER "TRG_fallar_auditoria_tutores" ON ${schemaSql()}."auditoria"`);
   await isolated.query(`DROP FUNCTION ${schemaSql()}."fallar_auditoria_tutores"()`);
   const afterRollbackApps = await isolated.getRepository(Postulacion).countBy({ estudiante: { id: students[4]!.id } });
@@ -172,9 +195,9 @@ async function verify(): Promise<void> {
   if (!rollbackConfirmed || beforeRollbackApps !== afterRollbackApps || beforeRollbackPreferences !== afterRollbackPreferences) throw new Error('La falla simulada de auditoría dejó una postulación o preferencias parcialmente guardadas.');
 
   step = 'postulación individual concurrente y cancelación';
-  const individualDto: CreatePostulacionDto = { tema_id: topic.id, modalidad: ModalidadPostulacion.INDIVIDUAL, tutores_propuestos: [secondTeacher.id, teacher.id] };
+  const individualDto: CreatePostulacionDto = { tema_id: individualTopic.id, modalidad: ModalidadPostulacion.INDIVIDUAL, tutores_propuestos: [secondTeacher.id, teacher.id] };
   step = 'catálogo de candidatos y preferencias ordenadas';
-  const candidates = await tutores.disponibles(period.id, topic.id, studentUsers[0]!, { page: 1, limit: 20 });
+  const candidates = await tutores.disponibles(period.id, individualTopic.id, studentUsers[0]!, { page: 1, limit: 20 });
   if (candidates.data[0]?.id !== teacher.id || candidates.data.some((candidate) => 'cedula' in candidate)) throw new Error('El catálogo no sugirió al proponente primero o expuso datos sensibles.');
   const ineligibleRejected = await service.create(period.id, studentUsers[3]!, { ...individualDto, tutores_propuestos: [disabledTeacher.id] }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
   if (!ineligibleRejected) throw new Error('El servicio permitió proponer un docente no habilitado.');
@@ -195,6 +218,8 @@ async function verify(): Promise<void> {
   const group = await groups.create(period.id, studentUsers[0]!, { nombre: 'Grupo de aplicación' } as CreateGrupoDto, null);
   const invitation = await invitations.create(period.id, group.id, studentUsers[0]!, { estudiante_destino_id: students[1]!.id } as CreateInvitacionDto, null);
   await invitations.accept(period.id, invitation.id, studentUsers[1]!, null);
+  const thirdInvitation = await invitations.create(period.id, group.id, studentUsers[0]!, { estudiante_destino_id: students[5]!.id } as CreateInvitacionDto, null);
+  await invitations.accept(period.id, thirdInvitation.id, studentUsers[5]!, null);
   const invitationDuringPost = await invitations.create(period.id, group.id, studentUsers[0]!, { estudiante_destino_id: students[3]!.id } as CreateInvitacionDto, null);
   const groupAndAcceptRace = await Promise.allSettled([
     service.create(period.id, studentUsers[0]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null),
@@ -204,9 +229,9 @@ async function verify(): Promise<void> {
   const concurrentAcceptResult = groupAndAcceptRace[1];
   if (groupApplicationResult.status !== 'fulfilled') throw new Error('La postulación grupal no pudo completarse en la carrera con aceptación.');
   const groupApplication = groupApplicationResult.value;
-  if (groupApplication.num_integrantes !== groupApplication.participantes.length || ![2, 3].includes(groupApplication.num_integrantes)) throw new Error('La postulación grupal no registró la composición real del grupo.');
-  if (concurrentAcceptResult.status === 'fulfilled' && groupApplication.num_integrantes !== 3) throw new Error('La aceptación y postulación concurrentes dejaron una composición distinta a la registrada.');
-  if (concurrentAcceptResult.status === 'rejected' && groupApplication.num_integrantes !== 2) throw new Error('La composición registrada no corresponde al orden serializado de aceptación/postulación.');
+  if (groupApplication.num_integrantes !== groupApplication.participantes.length || ![3, 4].includes(groupApplication.num_integrantes)) throw new Error('La postulación grupal no registró la composición real del grupo.');
+  if (concurrentAcceptResult.status === 'fulfilled' && groupApplication.num_integrantes !== 4) throw new Error('La aceptación y postulación concurrentes dejaron una composición distinta a la registrada.');
+  if (concurrentAcceptResult.status === 'rejected' && groupApplication.num_integrantes !== 3) throw new Error('La composición registrada no corresponde al orden serializado de aceptación/postulación.');
   if (!(await persistence.grupoTienePostulaciones(isolated.manager, group.id))) throw new Error('La primera postulación no cerró la composición del grupo.');
   const inviteBlocked = await invitations.create(period.id, group.id, studentUsers[0]!, { estudiante_destino_id: students[0]!.id }, null).then(() => false, (error: unknown) => error instanceof HttpException && error.getStatus() === 409);
   if (!inviteBlocked) throw new Error('El grupo permitió invitar después de cerrar su composición.');
@@ -231,7 +256,7 @@ async function verify(): Promise<void> {
 
   step = 'carrera entre postulación grupal y salida voluntaria';
   const groupExitRace = await Promise.allSettled([
-    service.create(period.id, studentUsers[2]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null),
+    service.create(period.id, studentUsers[2]!, { tema_id: pairTopic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null),
     groupManagement.salir(period.id, otherGroup.id, studentUsers[4]!, { motivo: 'Carrera con postulación' }, null),
   ]);
   if (groupExitRace.filter((result) => result.status === 'fulfilled').length !== 1) throw new Error('La carrera entre postulación grupal y salida cambió la composición simultáneamente o rechazó ambas operaciones.');
@@ -289,7 +314,7 @@ async function verify(): Promise<void> {
   const revertRejected = await migration.down(revertRunner).then(() => false, async (error: unknown) => { await revertRunner.rollbackTransaction(); return error instanceof Error && error.message.includes('contiene registros'); });
   if (revertRunner.isTransactionActive) await revertRunner.rollbackTransaction(); await revertRunner.release();
   if (!revertRejected) throw new Error('La migración permitió eliminar postulaciones con historial.');
-  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, retiro NO_ADMITIDO con postulación, cierre/reapertura/retiro de temas con rechazo de postulaciones abiertas, restricciones de tutores y reversión protegida.');
+  console.log('Verificación de postulaciones y tutores correcta: preferencias atómicas, concurrencia individual, cancelación histórica, integración de grupos/invitaciones, composición congelada, retiro NO_ADMITIDO con postulación, cierre/reapertura/retiro de temas con rechazo de postulaciones abiertas, restricciones de tutores, disparador de tutores sin FOR UPDATE con down() que restaura la definición anterior y reversión protegida.');
 }
 
 try { await verify(); }

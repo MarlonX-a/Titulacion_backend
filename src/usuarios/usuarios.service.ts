@@ -6,9 +6,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { argon2id, hash } from 'argon2';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, IsNull, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, LessThanOrEqual, Or, QueryFailedError, Repository } from 'typeorm';
 import { CreateUsuarioDto } from './dto/create-usuario.dto.js';
 import { ListUsuariosQueryDto } from './dto/list-usuarios-query.dto.js';
 import { UsuarioResponseDto } from './dto/usuario-response.dto.js';
@@ -17,10 +16,14 @@ import { UsuarioEstado } from './enums/usuario-estado.enum.js';
 import { UsuarioRol } from './enums/usuario-rol.enum.js';
 import type { AppEnvironment } from '../config/environment.js';
 import { generateOneTimeSecret, readEncryptionKey, setTemporaryPassword } from '../auth/credentials.js';
+import { hashPassword } from '../auth/password-hasher.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
 import { SesionUsuario } from '../auth/entities/sesion-usuario.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+
+/** Frecuencia máxima de escritura de `usuario.ultimo_acceso` (5 minutos). */
+export const ULTIMO_ACCESO_INTERVALO_MS = 5 * 60 * 1000;
 
 interface PostgresDriverError {
   code?: string;
@@ -170,11 +173,22 @@ export class UsuariosService {
     return responseFrom(usuario);
   }
 
-  async recordAccess(id: string): Promise<Date> {
-    const lastAccess = new Date();
+  /**
+   * Registra el último acceso como mucho una vez cada `ULTIMO_ACCESO_INTERVALO_MS` por usuario,
+   * para no escribir en `usuario` en cada solicitud. `previous` es el valor ya leído; la
+   * condición se repite en el UPDATE, así que solicitudes simultáneas escriben una sola vez.
+   * Devuelve el último acceso vigente.
+   */
+  async recordAccess(id: string, previous: Date | null): Promise<Date | null> {
+    const now = new Date();
+    const threshold = new Date(now.getTime() - ULTIMO_ACCESO_INTERVALO_MS);
+    if (previous !== null && previous > threshold) return previous;
     try {
-      await this.repository.update({ id }, { ultimo_acceso: lastAccess });
-      return lastAccess;
+      const result = await this.repository.update(
+        { id, ultimo_acceso: Or(IsNull(), LessThanOrEqual(threshold)) },
+        { ultimo_acceso: now },
+      );
+      return result.affected ? now : previous;
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -214,7 +228,7 @@ export class UsuariosService {
         const credential = manager.getRepository(CredencialUsuario);
         await credential.save(credential.create({
           usuario_id: user.id,
-          password_hash: await hash(dto.password, { type: argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 }),
+          password_hash: await hashPassword(dto.password),
           requiere_cambio: false,
           temporal_expira_en: null,
           version_sesion: 0,

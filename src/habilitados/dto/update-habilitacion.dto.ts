@@ -14,13 +14,13 @@ class RequisitoSegunCondicion implements ValidatorConstraintInterface {
   validate(value: unknown, args: ValidationArguments): boolean {
     const dto = args.object as UpdateHabilitacionDto;
     if (dto.condicion_ingreso === CondicionIngreso.CONDICIONADO) {
-      return typeof value === 'string' && value.trim().length > 0;
+      return typeof value === 'string' && value.trim().length > 0 && value.length <= 1000;
     }
     return value === undefined || value === null;
   }
 
   defaultMessage(): string {
-    return 'El requisito pendiente es obligatorio para CONDICIONADO y debe omitirse o ser null para REGULAR.';
+    return 'El requisito pendiente es obligatorio (máximo 1000 caracteres) para CONDICIONADO y debe omitirse o ser null para REGULAR.';
   }
 }
 

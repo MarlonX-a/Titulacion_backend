@@ -1,6 +1,8 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Queue } from 'bullmq';
+import type { AppEnvironment } from '../config/environment.js';
 import { PeriodosService } from './periodos.service.js';
 
 export const COLA_TRANSICIONES_PERIODO = 'transiciones-periodo';
@@ -23,16 +25,20 @@ export interface ResumenTransicionesPeriodo {
 @Injectable()
 export class TransicionesPeriodoService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TransicionesPeriodoService.name);
-  private readonly testMode = process.env.NODE_ENV === 'test';
+  /** `BACKGROUND_TASKS_ENABLED`: programa el scheduler al arrancar y reintenta si Redis falla. */
+  private readonly tareasActivas: boolean;
   private retry?: NodeJS.Timeout;
 
   constructor(
     private readonly periodos: PeriodosService,
     @InjectQueue(COLA_TRANSICIONES_PERIODO) private readonly queue: Queue,
-  ) {}
+    config: ConfigService<AppEnvironment, true>,
+  ) {
+    this.tareasActivas = config.get('BACKGROUND_TASKS_ENABLED', { infer: true }) === true;
+  }
 
   onModuleInit(): void {
-    if (this.testMode) return;
+    if (!this.tareasActivas) return;
     // Sin await: si Redis no está disponible, el arranque HTTP no debe quedar bloqueado.
     void this.programar();
   }
@@ -50,7 +56,7 @@ export class TransicionesPeriodoService implements OnModuleInit, OnModuleDestroy
       );
     } catch {
       this.logger.warn('No se pudo programar la transición automática de períodos; se reintentará en un minuto.');
-      if (this.testMode) return;
+      if (!this.tareasActivas) return;
       this.retry = setTimeout(() => void this.programar(), INTERVALO_TRANSICIONES_MS);
       this.retry.unref();
     }

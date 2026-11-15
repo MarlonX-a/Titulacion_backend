@@ -1,8 +1,9 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
+import { createE2eTestingModule } from './support/e2e-app.js';
 import { configureApplication } from './../src/config/setup-app.js';
 import { DatabaseModule } from '../src/database/database.module.js';
 import { DatabaseTestingModule } from './database-testing.module.js';
@@ -11,7 +12,7 @@ describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    const moduleFixture: TestingModule = await createE2eTestingModule({
       imports: [AppModule],
     })
       .overrideModule(DatabaseModule)
@@ -28,6 +29,22 @@ describe('AppController (e2e)', () => {
       .get('/')
       .expect(200)
       .expect('Hello World!');
+  });
+
+  it('marca toda respuesta como no almacenable y nosniff, también 401 y 404', async () => {
+    for (const [path, status] of [['/', 200], ['/usuarios/me', 401], ['/ruta-inexistente', 404]] as const) {
+      const response = await request(app.getHttpServer()).get(path).expect(status);
+      expect(response.headers['cache-control'], path).toBe('no-store');
+      expect(response.headers['x-content-type-options'], path).toBe('nosniff');
+    }
+  });
+
+  it('rechaza cuerpos JSON y urlencoded de más de 100 kB con 413', async () => {
+    const grande = 'x'.repeat(101 * 1024);
+    await request(app.getHttpServer()).post('/auth/login').set('Content-Type', 'application/json')
+      .send(JSON.stringify({ email: 'a@live.uleam.edu.ec', password: grande })).expect(413);
+    await request(app.getHttpServer()).post('/auth/login').set('Content-Type', 'application/x-www-form-urlencoded')
+      .send(`email=a%40live.uleam.edu.ec&password=${grande}`).expect(413);
   });
 
   it('documenta el módulo de carga tutorial y protege sus operaciones', async () => {

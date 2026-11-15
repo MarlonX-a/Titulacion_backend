@@ -1,10 +1,10 @@
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
 import request from 'supertest';
 import { vi } from 'vitest';
 import { AppModule } from '../src/app.module.js';
+import { createE2eTestingModule } from './support/e2e-app.js';
 import { AuthenticationService } from '../src/auth/authentication.service.js';
 import type { AppEnvironment } from '../src/config/environment.js';
 import { configureApplication } from '../src/config/setup-app.js';
@@ -35,7 +35,7 @@ describe('Notificaciones (e2e)', () => {
       AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
     });
     const auth = { verifyToken: vi.fn(async (token: string) => ({ subject: tokenSubjects.has(token) ? user.id : '', issuer: 'http://127.0.0.1:3000', firstAccess: false })) };
-    const module = await Test.createTestingModule({ imports: [AppModule] })
+    const module = await createE2eTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)
       .overrideProvider(AuthenticationService).useValue(auth)

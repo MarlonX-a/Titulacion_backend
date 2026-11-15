@@ -1,5 +1,4 @@
 import { ConfigService } from '@nestjs/config';
-import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import type { App } from 'supertest/types.js';
 import request from 'supertest';
@@ -9,7 +8,7 @@ import { configureApplication } from '../src/config/setup-app.js';
 import { DatabaseModule } from '../src/database/database.module.js';
 import { UsuarioRol } from '../src/usuarios/enums/usuario-rol.enum.js';
 import { addUsuarioTestRecord, clearUsuarioTestRecords, DatabaseTestingModule, CARRERA_PRUEBA_ID, FACULTAD_PRUEBA_ID } from './database-testing.module.js';
-import { testConfigService, tokenAuthenticationMock } from './support/e2e-app.js';
+import { testConfigService, tokenAuthenticationMock, createE2eTestingModule } from './support/e2e-app.js';
 
 describe('Catálogo académico (e2e)', () => {
   let app: INestApplication<App>;
@@ -23,7 +22,7 @@ describe('Catálogo académico (e2e)', () => {
     }
     const config = testConfigService();
     const auth = tokenAuthenticationMock(tokens);
-    const module = await Test.createTestingModule({ imports: [AppModule] })
+    const module = await createE2eTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)
       .overrideProvider(AuthenticationService).useValue(auth)
