@@ -21,6 +21,7 @@ import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { RevisionPatResponseDto } from '../revisiones-pat/dto/revision-pat-response.dto.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { GeneracionPat } from '../generaciones-pat/entities/generacion-pat.entity.js';
 
 interface AssignmentContext {
   periodo_id: string; periodo_estado: string; asignacion_estado: string;
@@ -42,12 +43,17 @@ export class DocumentosPatService {
 
   async cargar(periodoId: string, asignacionId: string, dto: CargarDocumentoPatDto, file: Express.Multer.File | undefined, actor: Usuario, ip: string | null): Promise<DocumentoPatResponseDto> {
     if (!file) throw new BadRequestException('Adjunta el archivo en el campo archivo.');
-    if (actor.rol !== UsuarioRol.ESTUDIANTE) throw new ForbiddenException('Solo el titular o representante puede entregar el PAT.');
+    if (actor.rol !== UsuarioRol.ESTUDIANTE) throw new ForbiddenException('Solo el estudiante titular o integrante puede entregar su PAT individual.');
+    if (!dto.generacion_id) throw new BadRequestException('Indica la generación individual a la que corresponde el PDF firmado.');
+    const generationId = dto.generacion_id;
     const validated = validatePlantillaFile(file);
+    if (validated.extension !== 'pdf' || file.mimetype !== 'application/pdf') throw new BadRequestException('El PAT firmado debe ser un archivo PDF.');
     const initial = await this.context(this.dataSource, periodoId, asignacionId);
     await this.authorizeUpload(this.dataSource, initial, actor);
-    await this.activeTemplate(this.dataSource, periodoId, dto.plantilla_id);
-    await this.assertCorrectionAllowed(this.dataSource, asignacionId);
+    const studentId = await this.studentId(this.dataSource, actor.id);
+    if (!studentId) throw new ForbiddenException('Se requiere un perfil de estudiante.');
+    await this.assertGeneration(this.dataSource, asignacionId, dto.generacion_id, studentId);
+    await this.assertCorrectionAllowed(this.dataSource, asignacionId, studentId);
 
     const key = this.storage.createPrivateKey('documentos-pat', validated.extension);
     try { await this.cleanup.registrar(periodoId, key); } catch (error: unknown) { this.handleError(error); }
@@ -64,11 +70,12 @@ export class DocumentosPatService {
         const context = await this.context(manager, periodoId, asignacionId, true);
         if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');
         await this.authorizeUpload(manager, context, actor);
-        const template = await this.activeTemplate(manager, periodoId, dto.plantilla_id, true);
-        if (!template) throw new ConflictException('La plantilla indicada ya no es la vigente del período.');
-        await this.assertCorrectionAllowed(manager, asignacionId);
+        const participantId = await this.studentId(manager, actor.id);
+        if (!participantId || participantId !== studentId) throw new ForbiddenException('No se pudo validar el estudiante de la sesión.');
+        const generation = await this.assertGeneration(manager, asignacionId, generationId, participantId, true);
+        await this.assertCorrectionAllowed(manager, asignacionId, participantId);
         const latest = await manager.query(
-          `SELECT COALESCE(MAX("version"),0)::int AS version FROM ${this.schema()}."documento_pat" WHERE "asignacion_tema_id"=$1`, [asignacionId],
+          `SELECT COALESCE(MAX("version"),0)::int AS version FROM ${this.schema()}."documento_pat" WHERE "asignacion_tema_id"=$1 AND "estudiante_id"=$2`, [asignacionId, participantId],
         ) as Array<{ version: number }>;
         const version = Number(latest[0]?.version ?? 0) + 1;
         if (version > 32767) throw new ConflictException('El trabajo alcanzó el máximo de versiones PAT permitido.');
@@ -76,8 +83,7 @@ export class DocumentosPatService {
         const created = await repo.save(repo.create({
           asignacion_tema_id: asignacionId,
           asignacion_tema: { id: asignacionId } as never,
-          plantilla_id: template.id,
-          plantilla: template,
+          plantilla_id: null,
           version,
           nombre_archivo: validated.fileName,
           ruta_almacenamiento: key,
@@ -86,13 +92,17 @@ export class DocumentosPatService {
           hash_sha256: hash,
           cargado_por_id: actor.id,
           cargado_por: actor,
+          estudiante_id: participantId,
+          estudiante: { id: participantId } as never,
+          generacion_id: generation.id,
+          generacion: generation,
           fecha_carga: new Date(),
         }));
         await this.notificaciones.registrarEventoPat(manager, { tipo: 'PAT_ENTREGADO', entidadTipo: 'documento_pat', entidadId: created.id, documentoId: created.id, asignacionId, actorId: actor.id });
         await this.audit.registrar(manager, {
           actor, accion: 'CARGAR_DOCUMENTO_PAT', entidad_tipo: 'documento_pat', entidad_id: created.id,
           valores_anteriores: null,
-          valores_nuevos: { id: created.id, asignacion_tema_id: asignacionId, plantilla_id: template.id, version, formato: created.formato, tamano_bytes: file.size, hash_sha256: hash },
+          valores_nuevos: { id: created.id, asignacion_tema_id: asignacionId, estudiante_id: participantId, generacion_id: generation.id, version, formato: created.formato, tamano_bytes: file.size, hash_sha256: hash },
           ip_origen: ip,
         });
         await manager.getRepository(ArchivoPendiente).delete({ ruta_almacenamiento: key });
@@ -110,8 +120,10 @@ export class DocumentosPatService {
   async listar(periodoId: string, asignacionId: string, actor: Usuario, page: number, limit: number): Promise<PagedDocumentoPatResponseDto> {
     await this.authorizeRead(periodoId, asignacionId, actor);
     try {
+      const studentId = actor.rol === UsuarioRol.ESTUDIANTE ? await this.studentId(this.dataSource, actor.id) : null;
+      const where = studentId ? { asignacion_tema_id: asignacionId, estudiante_id: studentId } : { asignacion_tema_id: asignacionId };
       const [rows, total] = await this.repository.findAndCount({
-        where: { asignacion_tema_id: asignacionId }, relations,
+        where, relations,
         order: { version: 'DESC', id: 'ASC' }, skip: (page - 1) * limit, take: limit,
       });
       return { data: rows.map((row) => this.toResponse(row)), total, page, limit };
@@ -121,7 +133,7 @@ export class DocumentosPatService {
   async ultima(periodoId: string, asignacionId: string, actor: Usuario): Promise<DocumentoPatResponseDto> {
     await this.authorizeRead(periodoId, asignacionId, actor);
     let item: DocumentoPat | null;
-    try { item = await this.repository.findOne({ where: { asignacion_tema_id: asignacionId }, relations, order: { version: 'DESC' } }); }
+    try { const sid = actor.rol === UsuarioRol.ESTUDIANTE ? await this.studentId(this.dataSource, actor.id) : null; item = await this.repository.findOne({ where: sid ? { asignacion_tema_id: asignacionId, estudiante_id: sid } : { asignacion_tema_id: asignacionId }, relations, order: { version: 'DESC' } }); }
     catch (error: unknown) { this.handleError(error); }
     if (!item) throw new NotFoundException('El trabajo todavía no tiene documentos PAT.');
     return this.toResponse(item);
@@ -133,7 +145,7 @@ export class DocumentosPatService {
    */
   async ultimasDelPeriodo(periodoId: string, query: ListUltimasPatQueryDto): Promise<PagedUltimasPatResponseDto> {
     const s = this.schema();
-    let rows: Array<{ asignacion_tema_id: string; tema_id: string; tema_titulo: string; grupo_id: string | null; grupo_nombre: string | null; documento_id: string | null; estado: EstadoUltimaPat; participantes: UltimaPatParticipanteDto[]; total: number }>;
+    let rows: Array<{ asignacion_tema_id: string; tema_id: string; tema_titulo: string; grupo_id: string | null; grupo_nombre: string | null; documento_id: string | null; estado: EstadoUltimaPat; participante: UltimaPatParticipanteDto; participantes: UltimaPatParticipanteDto[] }>;
     try {
       const period = await this.dataSource.query(`SELECT 1 FROM ${s}."periodo_titulacion" WHERE "id"=$1`, [periodoId]) as unknown[];
       if (!period.length) throw new NotFoundException('No existe el período indicado.');
@@ -142,16 +154,20 @@ export class DocumentosPatService {
            SELECT a."id" AS asignacion_tema_id, t."id" AS tema_id, t."titulo" AS tema_titulo, g."id" AS grupo_id, g."nombre" AS grupo_nombre,
              ult."id" AS documento_id, ult."fecha_carga",
              COALESCE(ult."resultado", CASE WHEN ult."id" IS NULL THEN 'SIN_ENTREGA' ELSE 'PENDIENTE' END) AS estado,
-             COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula") ORDER BY u."apellidos",u."nombres",e."id")
-               FROM ${s}."estudiante" e JOIN ${s}."usuario" u ON u."id"=e."usuario_id"
-               WHERE e."id"=a."estudiante_id" OR EXISTS (SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=e."id" AND gi."estado"='ACTIVO')), '[]'::jsonb) AS participantes
+             jsonb_build_object('id',e."id",'nombres',u."nombres",'apellidos',u."apellidos",'matricula',e."matricula") AS participante,
+             COALESCE((SELECT jsonb_agg(jsonb_build_object('id',ep."id",'nombres',up."nombres",'apellidos',up."apellidos",'matricula',ep."matricula") ORDER BY up."apellidos",up."nombres",ep."id")
+               FROM ${s}."estudiante" ep JOIN ${s}."usuario" up ON up."id"=ep."usuario_id"
+               WHERE ep."id"=a."estudiante_id" OR EXISTS (SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=ep."id" AND gi."estado"='ACTIVO')), '[]'::jsonb) AS participantes
            FROM ${s}."asignacion_tema" a
            JOIN ${s}."tema" t ON t."id"=a."tema_id"
            LEFT JOIN ${s}."grupo" g ON g."id"=a."grupo_id"
+           JOIN ${s}."estudiante" e ON (e."id"=a."estudiante_id" OR EXISTS(SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=e."id" AND gi."estado"='ACTIVO'))
+           JOIN ${s}."usuario" u ON u."id"=e."usuario_id"
            LEFT JOIN LATERAL (
              SELECT d."id", d."fecha_carga", r."resultado"::text AS resultado FROM ${s}."documento_pat" d
              LEFT JOIN ${s}."revision_pat" r ON r."documento_pat_id"=d."id"
-             WHERE d."asignacion_tema_id"=a."id" ORDER BY d."version" DESC LIMIT 1
+             WHERE d."asignacion_tema_id"=a."id" AND d."estudiante_id"=e."id"
+             ORDER BY d."version" DESC LIMIT 1
            ) ult ON true
            WHERE a."periodo_id"=$1 AND a."estado"='VIGENTE'
          ) x
@@ -174,6 +190,7 @@ export class DocumentosPatService {
           asignacion_tema_id: row.asignacion_tema_id,
           tema: { id: row.tema_id, titulo: row.tema_titulo },
           grupo: row.grupo_id ? { id: row.grupo_id, nombre: row.grupo_nombre ?? '' } : null,
+          estudiante: row.participante,
           participantes: row.participantes,
           estado: row.estado,
           documento: document ? this.toResponse(document) : null,
@@ -186,7 +203,7 @@ export class DocumentosPatService {
   async porId(periodoId: string, asignacionId: string, id: string, actor: Usuario): Promise<DocumentoPatResponseDto> {
     await this.authorizeRead(periodoId, asignacionId, actor);
     let item: DocumentoPat | null;
-    try { item = await this.repository.findOne({ where: { id, asignacion_tema_id: asignacionId }, relations }); }
+    try { item = await this.repository.findOne({ where: { id, asignacion_tema_id: asignacionId }, relations }); if (item && actor.rol === UsuarioRol.ESTUDIANTE && (!item.estudiante_id || item.estudiante_id !== await this.studentId(this.dataSource, actor.id))) item = null; }
     catch (error: unknown) { this.handleError(error); }
     if (!item) throw new NotFoundException('No existe esa versión PAT para el trabajo indicado.');
     return this.toResponse(item);
@@ -195,7 +212,7 @@ export class DocumentosPatService {
   async descargarUltima(periodoId: string, asignacionId: string, actor: Usuario): Promise<DocumentoPatDownloadDto> {
     await this.authorizeRead(periodoId, asignacionId, actor);
     let item: DocumentoPat | null;
-    try { item = await this.repository.findOne({ where: { asignacion_tema_id: asignacionId }, order: { version: 'DESC' } }); }
+    try { const sid = actor.rol === UsuarioRol.ESTUDIANTE ? await this.studentId(this.dataSource, actor.id) : null; item = await this.repository.findOne({ where: sid ? { asignacion_tema_id: asignacionId, estudiante_id: sid } : { asignacion_tema_id: asignacionId }, order: { version: 'DESC' } }); }
     catch (error: unknown) { this.handleError(error); }
     if (!item) throw new NotFoundException('El trabajo todavía no tiene documentos PAT.');
     return this.download(item);
@@ -204,7 +221,7 @@ export class DocumentosPatService {
   async descargarPorId(periodoId: string, asignacionId: string, id: string, actor: Usuario): Promise<DocumentoPatDownloadDto> {
     await this.authorizeRead(periodoId, asignacionId, actor);
     let item: DocumentoPat | null;
-    try { item = await this.repository.findOne({ where: { id, asignacion_tema_id: asignacionId } }); }
+    try { item = await this.repository.findOne({ where: { id, asignacion_tema_id: asignacionId } }); if (item && actor.rol === UsuarioRol.ESTUDIANTE && (!item.estudiante_id || item.estudiante_id !== await this.studentId(this.dataSource, actor.id))) item = null; }
     catch (error: unknown) { this.handleError(error); }
     if (!item) throw new NotFoundException('No existe esa versión PAT para el trabajo indicado.');
     return this.download(item);
@@ -235,12 +252,24 @@ export class DocumentosPatService {
     await this.authorizeRead(periodoId, assignmentId, actor);
   }
 
-  private async assertCorrectionAllowed(source: DataSource | import('typeorm').EntityManager, assignmentId: string): Promise<void> {
+  async autorizarLecturaDocumento(periodoId: string, assignmentId: string, documentId: string, actor: Usuario): Promise<void> {
+    await this.authorizeRead(periodoId, assignmentId, actor);
+    let rows: Array<{ estudiante_id: string | null }>;
+    try { rows = await this.dataSource.query(`SELECT d."estudiante_id" FROM ${this.schema()}."documento_pat" d JOIN ${this.schema()}."asignacion_tema" a ON a."id"=d."asignacion_tema_id" WHERE d."id"=$1 AND a."id"=$2 AND a."periodo_id"=$3`, [documentId, assignmentId, periodoId]) as Array<{ estudiante_id: string | null }>; }
+    catch (error: unknown) { this.handleError(error); }
+    if (!rows[0]) throw new NotFoundException('No existe el documento PAT indicado.');
+    if (actor.rol === UsuarioRol.ESTUDIANTE) {
+      const studentId = await this.studentId(this.dataSource, actor.id);
+      if (!rows[0].estudiante_id || studentId !== rows[0].estudiante_id) throw new NotFoundException('No existe el documento PAT indicado.');
+    }
+  }
+
+  private async assertCorrectionAllowed(source: DataSource | import('typeorm').EntityManager, assignmentId: string, studentId?: string): Promise<void> {
     let rows: Array<{ revision: RevisionPatResultado | null }>;
     try {
       rows = await source.query(
-        `SELECT r."resultado"::text AS revision FROM ${this.schema()}."documento_pat" d LEFT JOIN ${this.schema()}."revision_pat" r ON r."documento_pat_id"=d."id" WHERE d."asignacion_tema_id"=$1 ORDER BY d."version" DESC LIMIT 1`,
-        [assignmentId],
+        `SELECT r."resultado"::text AS revision FROM ${this.schema()}."documento_pat" d LEFT JOIN ${this.schema()}."revision_pat" r ON r."documento_pat_id"=d."id" WHERE d."asignacion_tema_id"=$1 AND ($2::uuid IS NULL OR d."estudiante_id"=$2) ORDER BY d."version" DESC LIMIT 1`,
+        [assignmentId, studentId ?? null],
       ) as Array<{ revision: RevisionPatResultado | null }>;
     } catch (error: unknown) { this.handleError(error); }
     if (rows[0] && ![RevisionPatResultado.OBSERVADO, RevisionPatResultado.RECHAZADO].includes(rows[0].revision as RevisionPatResultado)) {
@@ -248,6 +277,12 @@ export class DocumentosPatService {
         ? 'La última versión del PAT todavía está pendiente de revisión.'
         : 'La última versión del PAT ya fue aprobada y no admite otra entrega.');
     }
+  }
+
+  private async assertGeneration(source: DataSource | import('typeorm').EntityManager, assignmentId: string, generationId: string, studentId: string, lock = false): Promise<GeneracionPat> {
+    const generation = await source.getRepository(GeneracionPat).findOne({ where: { id: generationId, asignacion_tema_id: assignmentId, estudiante_id: studentId }, ...(lock ? { lock: { mode: 'pessimistic_write' } as const } : {}) });
+    if (!generation || generation.estado !== 'LISTO' || !generation.ruta_almacenamiento) throw new ConflictException('La generación PAT indicada no está disponible o no pertenece al estudiante y trabajo.');
+    return generation;
   }
 
   private async authorizeUpload(source: DataSource | import('typeorm').EntityManager, context: AssignmentContext, actor: Usuario): Promise<void> {
@@ -258,16 +293,8 @@ export class DocumentosPatService {
       if (context.estudiante_id !== student) throw new ForbiddenException('Solo el titular puede entregar el PAT individual.');
       return;
     }
-    if (context.grupo_id) {
-      let rows: unknown[];
-      try { rows = await source.query(
-          `SELECT 1 FROM ${this.schema()}."grupo_integrante" gi JOIN ${this.schema()}."estudiante" e ON e."id"=gi."estudiante_id" WHERE gi."grupo_id"=$1 AND gi."estudiante_id"=$2 AND gi."estado"='ACTIVO' AND gi."rol_en_grupo"='REPRESENTANTE' AND e."usuario_id"=$3 LIMIT 1`,
-          [context.grupo_id, student, actor.id],
-        ) as unknown[]; }
-      catch (error: unknown) { this.handleError(error); }
-      if (rows.length) return;
-      throw new ForbiddenException('Solo el representante actual del grupo puede entregar el PAT.');
-    }
+    if (context.grupo_id && await this.isGroupMember(source, context.grupo_id, student)) return;
+    if (context.grupo_id) throw new ForbiddenException('Solo un integrante activo del grupo puede entregar su PAT individual.');
     throw new ConflictException('La asignación de tema no identifica un titular válido.');
   }
 
@@ -322,12 +349,12 @@ export class DocumentosPatService {
 
   private toResponse(item: DocumentoPat): DocumentoPatResponseDto {
     return {
-      id: item.id, asignacion_tema_id: item.asignacion_tema_id, plantilla_id: item.plantilla_id,
+      id: item.id, asignacion_tema_id: item.asignacion_tema_id, plantilla_id: item.plantilla_id, estudiante_id: item.estudiante_id, generacion_id: item.generacion_id,
       version: item.version, nombre_archivo: item.nombre_archivo, formato: item.formato,
       tamano_bytes: Number(item.tamano_bytes), hash_sha256: item.hash_sha256, fecha_carga: item.fecha_carga,
       revision: item.revision?.resultado ?? 'PENDIENTE',
       detalle_revision: item.revision ? this.toRevisionResponse(item.revision) : null,
-      plantilla: { id: item.plantilla?.id ?? item.plantilla_id, version: item.plantilla?.version ?? '', nombre_archivo: item.plantilla?.nombre_archivo ?? '' },
+      plantilla: item.plantilla ? { id: item.plantilla.id, version: item.plantilla.version, nombre_archivo: item.plantilla.nombre_archivo } : null,
       cargador: { id: item.cargado_por?.id ?? item.cargado_por_id, nombres: item.cargado_por?.nombres ?? '', apellidos: item.cargado_por?.apellidos ?? '' },
     };
   }

@@ -57,9 +57,10 @@ usa `.env.example` como referencia.
 El código contiene módulos para autenticación y usuarios, períodos, perfiles y
 habilitaciones, líneas y temas, grupos e invitaciones, postulaciones, conflictos,
 asignaciones de tema y tutor, carga tutorial, PAT, notificaciones, importaciones,
-reportes y exportaciones. La presencia de un módulo no demuestra por sí sola que
-todos sus requisitos tengan pruebas suficientes: revisa el caso de uso, DTO,
-autorización, migración y pruebas que correspondan antes de ampliarlo.
+generación individual del PAT, reportes y exportaciones. La presencia de un
+módulo no demuestra por sí sola que todos sus requisitos tengan pruebas
+suficientes: revisa el caso de uso, DTO, autorización, migración y pruebas que
+correspondan antes de ampliarlo.
 
 GitHub Actions ejecuta lint, TypeScript estricto, pruebas unitarias y HTTP,
 compilación y una verificación de migraciones de exportaciones en PostgreSQL.
@@ -69,10 +70,10 @@ de Sonar al workflow sin cambiar primero esa configuración.
 
 ### Pendientes conocidos y orden sugerido
 
-1. **Archivo de períodos y revisión final de cobertura funcional.** Es el
-   siguiente alcance funcional acordado. Antes de definir transiciones, permisos
-   o efectos del archivo, contrasta los requisitos, el DER y el código; conserva
-   el historial y no inventes reglas que los documentos no indiquen.
+1. **Revisar la matriz de cobertura funcional y no funcional** en
+   [`docs/cobertura-backend.md`](docs/cobertura-backend.md), actualizarla con la
+   generación individual del PAT y elegir la siguiente brecha a partir de
+   evidencia.
 2. **Cerrar brechas de verificación.** Revisar las pruebas de concurrencia,
    restricciones PostgreSQL, reversión protegida y atomicidad de auditoría de
    todos los módulos críticos. El CI actual ejecuta automáticamente solo el
@@ -102,9 +103,11 @@ de Sonar al workflow sin cambiar primero esa configuración.
    no sustituirlos por credenciales inventadas.
 6. **Frontend.** La interfaz de inicio de sesión y carga de Excel no forma parte
    de este repositorio backend; coordinarla como trabajo separado.
-7. Revisar la matriz de cobertura funcional y no funcional en
-   [`docs/cobertura-backend.md`](docs/cobertura-backend.md) antes de elegir una
-   brecha nueva; actualizar su estado cuando se agregue evidencia.
+7. **Validar el nuevo flujo PAT integrado con servicios locales.** Iniciar
+   Redis y SeaweedFS, configurar una extensión del período de prueba y recorrer
+   datos complementarios → generación → descarga → firma → carga → revisión.
+   Comprobar las pruebas entre dos integrantes de grupo y que sus documentos no
+   sean visibles entre sí.
 
 La lista es una guía, no una afirmación de que los puntos posteriores estén
 terminados o bloqueados. Verifica el estado actual del código, CI y servicios
@@ -225,6 +228,7 @@ src/
 ├── plantillas-pat/
 ├── documentos-pat/
 ├── revisiones-pat/
+├── generaciones-pat/
 ├── notificaciones/
 ├── importaciones/
 ├── exportaciones/
@@ -309,6 +313,9 @@ Entidades principales:
 - plantilla_pat
 - documento_pat
 - revision_pat
+- estudiante_datos_pat
+- contenido_pat_estudiante
+- generacion_pat
 - notificacion
 - auditoria
 
@@ -561,8 +568,11 @@ asignación VIGENTE; `tipo` y `carrera_id` no cambian con postulaciones abiertas
 registra historial y auditoría.
 
 La migración asigna el `tipo` de los temas existentes por `max_integrantes`: 1 → INDIVIDUAL,
-2 → PAREJA, >= 3 → GRUPO. `up` aborta antes de cualquier cambio si una postulación activa
-(PENDIENTE/EN_CONFLICTO/ACEPTADA o con asignación VIGENTE) no encaja en el rango derivado.
+2 → PAREJA, >= 3 → GRUPO. Conserva como PAREJA un tema cuyo rango antiguo incluía dos
+integrantes cuando todos sus usos activos son de dos y al menos un período limitaba los grupos
+a menos de tres. Así conserva asignaciones válidas que el rango anterior permitía. `up` aborta
+antes de cualquier cambio si una postulación activa (PENDIENTE/EN_CONFLICTO/ACEPTADA o con
+asignación VIGENTE) sigue sin encajar en el tipo derivado.
 
 Los cambios relevantes del tema deben conservarse en el historial.
 
@@ -758,28 +768,49 @@ Centralizarla en el dominio correspondiente.
 
 ## PAT
 
-El PAT solo puede cargarse cuando existe una asignación de tema vigente.
+El PAT se genera individualmente desde la información guardada por cada
+estudiante, incluso si el trabajo es grupal. Los datos personales
+complementarios y el contenido académico individual se mantienen separados y
+solo el estudiante puede consultarlos o editarlos. La identidad institucional
+existente no se modifica desde el formulario. La auditoría de datos personales
+registra únicamente los nombres de campos modificados, no sus valores.
 
-Formatos permitidos:
+Antes de generar, deben estar completos los campos obligatorios y ADMIN debe
+haber configurado la extensión/sede del período. El estudiante solicita un PDF
+sin firma mediante BullMQ; cada generación conserva una instantánea inmutable y
+usa la versión de diseño del backend, no una plantilla PDF/DOCX publicada. El
+tutor vigente se selecciona automáticamente; si no hay tutor vigente, el
+estudiante debe seleccionar una propuesta asociada a su postulación. Nunca se
+aceptan nombres libres de tutor. El estudiante descarga, firma y carga su PDF.
 
-- PDF
-- DOCX
+La carga acepta únicamente PDF, requiere una generación propia y una asignación
+de tema vigente, y se permite en `POSTULACION_CERRADA` o `EN_CURSO`. Cada
+integrante puede entregar por su cuenta. Las versiones se numeran por
+asignación y estudiante, registran SHA-256 y no se sobrescriben. Una nueva
+versión solo se permite si la entrega individual más reciente está `OBSERVADO`
+o `RECHAZADO`; una pendiente o aprobada bloquea únicamente a ese estudiante.
+Las revisiones `APROBADO`, `OBSERVADO` y `RECHAZADO` corresponden a un documento
+individual; observar o rechazar exige observaciones.
 
-Cada carga genera una nueva versión.
+El estudiante solo accede a sus datos, generaciones, documentos y revisiones.
+ADMIN conserva la consulta administrativa y el tutor vigente la lectura del
+trabajo; un compañero no accede a documentos o datos personales individuales.
+Los documentos históricos previos a la migración permanecen sin atribución
+individual automática. Generaciones, documentos y revisiones son historial
+inmutable; no borrar archivos referenciados.
 
-Nunca sobrescribir versiones anteriores.
+Rutas principales:
 
-Cada documento debe registrar SHA-256.
+- `GET/PATCH /estudiantes/me/datos-pat`
+- `GET/PATCH /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me`
+- `POST .../pat/me/generaciones` y `GET .../generaciones/:id`
+- `GET .../generaciones/:id/descarga`
+- `POST .../documentos-pat` con `generacion_id` y PDF firmado
+- `PATCH /periodos/:periodoId/datos-formato-pat` para ADMIN
 
-Cada versión puede recibir una revisión.
-
-Resultados:
-
-- APROBADO
-- OBSERVADO
-- RECHAZADO
-
-Si el resultado es OBSERVADO o RECHAZADO, las observaciones son obligatorias.
+Al aplicar la migración, confirmar primero `DB_SCHEMA=titulacion_dev`; ejecutar
+`npm run db:verify-generaciones-pat` en verificaciones aisladas. No migrar
+`public` ni `local_demo`.
 
 ---
 

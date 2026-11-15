@@ -56,19 +56,19 @@ export class AlmacenamientoService implements OnModuleDestroy {
     return this.putPrivate(`plantillas-pat/${randomUUID()}.${extension}`, buffer, contentType, 'No se pudo guardar la plantilla PAT.');
   }
 
-  createPrivateKey(prefix: 'plantillas-pat' | 'documentos-pat' | 'exportaciones', extension: 'pdf' | 'docx' | 'xlsx' | 'csv'): string {
+  createPrivateKey(prefix: 'plantillas-pat' | 'documentos-pat' | 'exportaciones' | 'generaciones-pat', extension: 'pdf' | 'docx' | 'xlsx' | 'csv'): string {
     return `${prefix}/${randomUUID()}.${extension}`;
   }
 
   async saveAtPrivateKey(key: string, buffer: Buffer, contentType: string): Promise<void> {
-    if (!['plantillas-pat/', 'documentos-pat/', 'exportaciones/'].some((prefix) => key.startsWith(prefix))) {
+    if (!['plantillas-pat/', 'documentos-pat/', 'exportaciones/', 'generaciones-pat/'].some((prefix) => key.startsWith(prefix))) {
       throw new ServiceUnavailableException('La ruta privada del archivo no es válida.');
     }
     await this.putPrivate(key, buffer, contentType, 'No se pudo guardar el archivo privado.');
   }
 
   async signPrivateDownload(key: string, fileName: string, contentType: string, expiresIn = 300): Promise<string> {
-    if (!this.bucket || !['plantillas-pat/', 'documentos-pat/', 'exportaciones/'].some((prefix) => key.startsWith(prefix))) {
+    if (!this.bucket || !['plantillas-pat/', 'documentos-pat/', 'exportaciones/', 'generaciones-pat/'].some((prefix) => key.startsWith(prefix))) {
       throw new ServiceUnavailableException('El archivo privado no está disponible.');
     }
     try {

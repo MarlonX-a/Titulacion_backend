@@ -25,6 +25,7 @@ export class UltimaPatParticipanteDto {
 
 export class UltimaPatAsignacionDto {
   @ApiProperty({ format: 'uuid' }) asignacion_tema_id: string;
+  @ApiProperty({ type: UltimaPatParticipanteDto }) estudiante: UltimaPatParticipanteDto;
   @ApiProperty({ type: Object }) tema: { id: string; titulo: string };
   @ApiProperty({ type: Object, nullable: true }) grupo: { id: string; nombre: string } | null;
   @ApiProperty({ type: [UltimaPatParticipanteDto] }) participantes: UltimaPatParticipanteDto[];

@@ -10,6 +10,8 @@ function schemaName(queryRunner: QueryRunner): string {
 /** `periodo`: topics belong to a period with min/max columns. `banco`: range derives from tipo + period max. */
 type Modelo = 'periodo' | 'banco';
 
+import { inferirTipoTemaLegacy } from '../inferir-tipo-tema-legacy.js';
+
 const TABLAS = ['tema', 'postulacion', 'resolucion_conflicto', 'asignacion_tema', 'lote_importacion', 'preparacion_importacion'] as const;
 
 function validarPostulacionSql(s: string, modelo: Modelo): string {
@@ -142,14 +144,51 @@ async function contar(queryRunner: QueryRunner, sql: string): Promise<number> {
  * VIGENTE assignment has a member count outside the range of the tipo derived for its topic:
  * max=1 INDIVIDUAL (1), max=2 PAREJA (2), max>=3 GRUPO (3..max_integrantes_default of its period).
  */
-async function validarUsoActivo(queryRunner: QueryRunner, s: string): Promise<void> {
-  const where = `FROM ${s}."postulacion" p JOIN ${s}."tema" t ON t."id" = p."tema_id" JOIN ${s}."periodo_titulacion" per ON per."id" = p."periodo_id"
-    WHERE (p."estado"::text IN ('PENDIENTE', 'EN_CONFLICTO', 'ACEPTADA') OR EXISTS (SELECT 1 FROM ${s}."asignacion_tema" a WHERE a."postulacion_id" = p."id" AND a."estado"::text = 'VIGENTE'))
-      AND NOT (CASE WHEN t."max_integrantes" = 1 THEN p."num_integrantes" = 1 WHEN t."max_integrantes" = 2 THEN p."num_integrantes" = 2 ELSE p."num_integrantes" BETWEEN 3 AND per."max_integrantes_default" END)`;
-  const total = await contar(queryRunner, `SELECT count(DISTINCT t."id")::int AS total ${where}`);
-  if (total === 0) return;
-  const ejemplos = await queryRunner.query(`SELECT DISTINCT t."id"::text AS id ${where} ORDER BY 1 LIMIT 5`) as Array<{ id: string }>;
-  throw new Error(`No se puede migrar al banco de temas: ${total} tema(s) tienen postulaciones activas o asignaciones vigentes cuya cantidad de integrantes no cabe en el rango de su tipo derivado (individual 1, pareja 2, grupo 3 hasta el máximo del período). Temas: ${ejemplos.map((e) => e.id).join(', ')}. Corrija o anule esas postulaciones o asignaciones antes de migrar.`);
+async function validarUsoActivo(queryRunner: QueryRunner, s: string): Promise<string[]> {
+  const usos = await queryRunner.query(`
+    SELECT t."id"::text AS tema_id, t."min_integrantes", t."max_integrantes",
+           p."num_integrantes", per."max_integrantes_default"
+    FROM ${s}."postulacion" p
+    JOIN ${s}."tema" t ON t."id" = p."tema_id"
+    JOIN ${s}."periodo_titulacion" per ON per."id" = p."periodo_id"
+    WHERE p."estado"::text IN ('PENDIENTE', 'EN_CONFLICTO', 'ACEPTADA')
+       OR EXISTS (SELECT 1 FROM ${s}."asignacion_tema" a WHERE a."postulacion_id" = p."id" AND a."estado"::text = 'VIGENTE')
+    ORDER BY t."id", p."id"
+  `) as Array<{
+    tema_id: string;
+    min_integrantes: number;
+    max_integrantes: number;
+    num_integrantes: number;
+    max_integrantes_default: number;
+  }>;
+  const usosPorTema = new Map<string, typeof usos>();
+  for (const uso of usos) {
+    const lista = usosPorTema.get(uso.tema_id) ?? [];
+    lista.push(uso);
+    usosPorTema.set(uso.tema_id, lista);
+  }
+
+  const incompatibles: string[] = [];
+  const parejasInferidas: string[] = [];
+  for (const [temaId, lista] of usosPorTema) {
+    const primero = lista[0];
+    if (!primero) continue;
+    const tipo = inferirTipoTemaLegacy(primero.min_integrantes, primero.max_integrantes, lista);
+    if (tipo === 'PAREJA' && primero.max_integrantes > 2) parejasInferidas.push(temaId);
+    const admite = (numero: number, maxPeriodo: number): boolean => {
+      if (tipo === 'INDIVIDUAL') return numero === 1;
+      if (tipo === 'PAREJA') return numero === 2;
+      return numero >= 3 && numero <= maxPeriodo;
+    };
+    if (lista.some((uso) => !admite(uso.num_integrantes, uso.max_integrantes_default))) {
+      incompatibles.push(temaId);
+    }
+  }
+
+  if (incompatibles.length > 0) {
+    throw new Error(`No se puede migrar al banco de temas: ${incompatibles.length} tema(s) tienen postulaciones activas o asignaciones vigentes cuya cantidad de integrantes no cabe en el rango de su tipo derivado (individual 1, pareja 2, grupo 3 hasta el máximo del período). Temas: ${incompatibles.slice(0, 5).join(', ')}. Corrija o anule esas postulaciones o asignaciones antes de migrar.`);
+  }
+  return parejasInferidas;
 }
 
 /**
@@ -163,12 +202,15 @@ export class BancoTemas20261106100000 implements MigrationInterface {
   async up(queryRunner: QueryRunner): Promise<void> {
     const s = schemaName(queryRunner);
     await queryRunner.query(`LOCK TABLE ${TABLAS.map((t) => `${s}."${t}"`).join(', ')} IN ACCESS EXCLUSIVE MODE`);
-    await validarUsoActivo(queryRunner, s);
+    const parejasInferidas = await validarUsoActivo(queryRunner, s);
     await queryRunner.query(`DROP TRIGGER "TRG_tema_bloquear_periodo_archivado" ON ${s}."tema"`);
 
     await queryRunner.query(`CREATE TYPE ${s}."tema_tipo_enum" AS ENUM ('INDIVIDUAL', 'PAREJA', 'GRUPO')`);
     await queryRunner.query(`ALTER TABLE ${s}."tema" ADD COLUMN "tipo" ${s}."tema_tipo_enum" NULL`);
     await queryRunner.query(`UPDATE ${s}."tema" SET "tipo" = (CASE WHEN "max_integrantes" = 1 THEN 'INDIVIDUAL' WHEN "max_integrantes" = 2 THEN 'PAREJA' ELSE 'GRUPO' END)::${s}."tema_tipo_enum"`);
+    if (parejasInferidas.length > 0) {
+      await queryRunner.query(`UPDATE ${s}."tema" SET "tipo"='PAREJA' WHERE "id" = ANY($1::uuid[])`, [parejasInferidas]);
+    }
     // Flushes deferred constraint-trigger events queued by the UPDATE, or the next ALTER TABLE on tema fails (55006).
     await queryRunner.query('SET CONSTRAINTS ALL IMMEDIATE');
     await queryRunner.query(`ALTER TABLE ${s}."tema" ALTER COLUMN "tipo" SET NOT NULL`);
