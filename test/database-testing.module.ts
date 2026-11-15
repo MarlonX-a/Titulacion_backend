@@ -39,6 +39,9 @@ import { EntregaCorreoNotificacion } from '../src/notificaciones/entities/entreg
 import { SolicitudExportacion } from '../src/exportaciones/entities/solicitud-exportacion.entity.js';
 import { Facultad } from '../src/academico/entities/facultad.entity.js';
 import { Carrera } from '../src/academico/entities/carrera.entity.js';
+import { EstudianteDatosPat } from '../src/generaciones-pat/entities/estudiante-datos-pat.entity.js';
+import { ContenidoPatEstudiante } from '../src/generaciones-pat/entities/contenido-pat.entity.js';
+import { GeneracionPat } from '../src/generaciones-pat/entities/generacion-pat.entity.js';
 
 export const FACULTAD_PRUEBA_ID = '00000000-0000-4000-8000-0000000000f1';
 export const FACULTAD_OTRA_ID = '00000000-0000-4000-8000-0000000000f2';
@@ -472,6 +475,9 @@ const configCargaTutorialTestRepository = emptyRepository<ConfigCargaTutorial>()
 const asignacionTutorTestRepository = emptyRepository<AsignacionTutor>();
 const plantillaPatTestRepository = emptyRepository<PlantillaPat>();
 const documentoPatTestRepository = emptyRepository<DocumentoPat>();
+const estudianteDatosPatTestRepository = emptyRepository<EstudianteDatosPat>();
+const contenidoPatTestRepository = emptyRepository<ContenidoPatEstudiante>();
+const generacionPatTestRepository = emptyRepository<GeneracionPat>();
 const archivoPendienteTestRepository = emptyRepository<ArchivoPendiente>();
 const solicitudExportacionTestRepository = emptyRepository<SolicitudExportacion>();
 
@@ -515,6 +521,9 @@ function sharedTestRepository(entity: unknown) {
   if (entity === AsignacionTutor) return asignacionTutorTestRepository;
   if (entity === PlantillaPat) return plantillaPatTestRepository;
   if (entity === DocumentoPat) return documentoPatTestRepository;
+  if (entity === EstudianteDatosPat) return estudianteDatosPatTestRepository;
+  if (entity === ContenidoPatEstudiante) return contenidoPatTestRepository;
+  if (entity === GeneracionPat) return generacionPatTestRepository;
   if (entity === ArchivoPendiente) return archivoPendienteTestRepository;
   if (entity === Notificacion) return notificacionTestRepository;
   if (entity === EntregaCorreoNotificacion) return deliveryNotificationTestRepository;
@@ -557,6 +566,9 @@ export const usuarioTestDataSource = {
     { target: AsignacionTutor },
     { target: PlantillaPat },
     { target: DocumentoPat },
+    { target: EstudianteDatosPat },
+    { target: ContenidoPatEstudiante },
+    { target: GeneracionPat },
     { target: ArchivoPendiente },
     { target: RevisionPat },
     { target: Notificacion },

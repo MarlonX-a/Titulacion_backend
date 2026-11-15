@@ -4,9 +4,12 @@ import { PlantillaPat } from '../../plantillas-pat/entities/plantilla-pat.entity
 import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 import { DocumentoPatFormato } from '../enums/documento-pat-formato.enum.js';
 import type { RevisionPat } from '../../revisiones-pat/entities/revision-pat.entity.js';
+import type { Estudiante } from '../../estudiantes/entities/estudiante.entity.js';
+import type { GeneracionPat } from '../../generaciones-pat/entities/generacion-pat.entity.js';
 
 @Entity({ name: 'documento_pat' })
-@Index('UQ_documento_pat_asignacion_version', ['asignacion_tema_id', 'version'], { unique: true })
+@Index('UQ_documento_pat_asignacion_version_legacy', ['asignacion_tema_id', 'version'], { unique: true, where: '"estudiante_id" IS NULL' })
+@Index('UQ_documento_pat_estudiante_version', ['asignacion_tema_id', 'estudiante_id', 'version'], { unique: true, where: '"estudiante_id" IS NOT NULL' })
 @Index('IDX_documento_pat_asignacion_version', ['asignacion_tema_id', 'version'])
 @Check('CHK_documento_pat_version', '"version" >= 1')
 @Check('CHK_documento_pat_nombre_no_vacio', 'length(btrim("nombre_archivo")) > 0')
@@ -18,8 +21,8 @@ export class DocumentoPat {
   @Column({ type: 'uuid', name: 'asignacion_tema_id' }) asignacion_tema_id: string;
   @ManyToOne(() => AsignacionTema, { nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'asignacion_tema_id', foreignKeyConstraintName: 'FK_documento_pat_asignacion' }) asignacion_tema: AsignacionTema;
-  @Column({ type: 'uuid', name: 'plantilla_id' }) plantilla_id: string;
-  @ManyToOne(() => PlantillaPat, { nullable: false, onDelete: 'RESTRICT' })
+  @Column({ type: 'uuid', name: 'plantilla_id', nullable: true }) plantilla_id: string | null;
+  @ManyToOne(() => PlantillaPat, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'plantilla_id', foreignKeyConstraintName: 'FK_documento_pat_plantilla' }) plantilla: PlantillaPat;
   @Column({ type: 'smallint' }) version: number;
   @Column({ type: 'varchar', length: 200, name: 'nombre_archivo' }) nombre_archivo: string;
@@ -32,4 +35,8 @@ export class DocumentoPat {
   @JoinColumn({ name: 'cargado_por_id', foreignKeyConstraintName: 'FK_documento_pat_cargador' }) cargado_por: Usuario;
   @OneToOne('RevisionPat', (revision: RevisionPat) => revision.documento_pat) revision: RevisionPat | null;
   @Column({ type: 'timestamptz', name: 'fecha_carga', default: () => 'CURRENT_TIMESTAMP' }) fecha_carga: Date;
+  @Column({ type: 'uuid', name: 'estudiante_id', nullable: true }) estudiante_id: string | null;
+  @ManyToOne('Estudiante', { nullable: true, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'estudiante_id', foreignKeyConstraintName: 'FK_documento_pat_estudiante' }) estudiante: Estudiante | null;
+  @Column({ type: 'uuid', name: 'generacion_id', nullable: true }) generacion_id: string | null;
+  @ManyToOne('GeneracionPat', { nullable: true, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'generacion_id', foreignKeyConstraintName: 'FK_documento_pat_generacion' }) generacion: GeneracionPat | null;
 }

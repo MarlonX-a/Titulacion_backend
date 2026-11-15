@@ -2,7 +2,7 @@ import { Injectable, NestInterceptor, PayloadTooLargeException, UnsupportedMedia
 import multer from 'multer';
 import type { Request, Response } from 'express';
 import { from, switchMap, type Observable } from 'rxjs';
-import { DOCX_MIME, PDF_MIME, PLANTILLA_PAT_MAX_BYTES } from '../plantillas-pat/plantilla-pat-file.validator.js';
+import { PDF_MIME, PLANTILLA_PAT_MAX_BYTES } from '../plantillas-pat/plantilla-pat-file.validator.js';
 
 type UploadRequest = Request & { file?: Express.Multer.File };
 
@@ -18,8 +18,8 @@ export class DocumentoPatUploadInterceptor implements NestInterceptor {
         limits: { fileSize: PLANTILLA_PAT_MAX_BYTES, files: 1, fields: 1, parts: 2, fieldSize: 64 },
         fileFilter: (_request, file, callback) => {
           const ext = file.originalname.toLowerCase().split('.').pop();
-          if (!((ext === 'pdf' && file.mimetype === PDF_MIME) || (ext === 'docx' && file.mimetype === DOCX_MIME))) {
-            callback(new UnsupportedMediaTypeException('Solo se admiten PDF o DOCX válidos.'));
+          if (!(ext === 'pdf' && file.mimetype === PDF_MIME)) {
+            callback(new UnsupportedMediaTypeException('La entrega firmada del PAT debe ser PDF.'));
             return;
           }
           callback(null, true);

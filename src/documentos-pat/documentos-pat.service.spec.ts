@@ -11,6 +11,7 @@ import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { PlantillaPat } from '../plantillas-pat/entities/plantilla-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
+import { GeneracionPat } from '../generaciones-pat/entities/generacion-pat.entity.js';
 
 describe('DocumentosPatService', () => {
   function setup(options: { owner?: string; activeTemplate?: boolean; group?: boolean; currentTutor?: boolean; latestReview?: RevisionPatResultado | null } = {}) {
@@ -27,6 +28,8 @@ describe('DocumentosPatService', () => {
     };
     const externalTemplateRepo = { findOneBy: vi.fn().mockResolvedValue(template) };
     const pendingRepo = { delete: vi.fn().mockResolvedValue({ affected: 1 }) };
+    const generation = { id: 'generation-id', asignacion_tema_id: 'assignment-id', estudiante_id: 'student-id', estado: 'LISTO', ruta_almacenamiento: 'generaciones-pat/pat.pdf' };
+    const generationRepo = { findOne: vi.fn().mockResolvedValue(generation) };
     const manager = {
       query: vi.fn(async (sql: string) => {
         if (sql.includes('MAX("version")')) return [{ version: maxVersion }];
@@ -38,11 +41,11 @@ describe('DocumentosPatService', () => {
         if (sql.includes('plantilla_pat')) return [{ id: 'template-id' }];
         return [];
       }),
-      getRepository: (entity: typeof DocumentoPat | typeof PlantillaPat | typeof ArchivoPendiente) => entity === DocumentoPat ? docRepository : entity === PlantillaPat ? externalTemplateRepo : pendingRepo,
+      getRepository: (entity: typeof DocumentoPat | typeof PlantillaPat | typeof ArchivoPendiente | typeof GeneracionPat) => entity === DocumentoPat ? docRepository : entity === PlantillaPat ? externalTemplateRepo : entity === GeneracionPat ? generationRepo : pendingRepo,
     };
     const dataSource = {
       options: { schema: 'public' },
-      getRepository: () => externalTemplateRepo,
+      getRepository: (entity: typeof GeneracionPat) => entity === GeneracionPat ? generationRepo : externalTemplateRepo,
       query: vi.fn(async (sql: string) => {
         if (sql.includes('asignacion_tutor')) return options.currentTutor ? [{}] : [];
         if (sql.includes('revision_pat')) return maxVersion ? [{ revision: latestReview }] : [];
@@ -59,14 +62,14 @@ describe('DocumentosPatService', () => {
     const actor = { id: 'user-id', rol: UsuarioRol.ESTUDIANTE } as Usuario;
     const notifications = { registrarEventoPat: vi.fn().mockResolvedValue(undefined) } as unknown as NotificacionesPersistenciaService;
     const service = new DocumentosPatService(docRepository as unknown as Repository<DocumentoPat>, dataSource, storage, cleanup, audit, notifications);
-    return { service, actor, storage, cleanup, audit, manager, docRepository, pendingRepo, notifications, setLatestReview: (value: RevisionPatResultado | null) => { latestReview = value; } };
+    return { service, actor, storage, cleanup, audit, manager, docRepository, pendingRepo, notifications, generationRepo, setLatestReview: (value: RevisionPatResultado | null) => { latestReview = value; } };
   }
 
   const pdf = { originalname: 'entrega.pdf', mimetype: 'application/pdf', size: 14, buffer: Buffer.from('%PDF-1.7\n%%EOF') } as Express.Multer.File;
 
   it('guarda una versión con hash, auditoría y consumo atómico de la intención de carga', async () => {
     const { service, actor, storage, cleanup, audit, docRepository, pendingRepo, notifications, setLatestReview } = setup();
-    const result = await service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, '127.0.0.1');
+    const result = await service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, '127.0.0.1');
     expect(result).toMatchObject({ id: 'doc-id', version: 1, formato: DocumentoPatFormato.PDF, revision: 'PENDIENTE' });
     expect(result.hash_sha256).toBeDefined();
     expect(storage.saveAtPrivateKey).toHaveBeenCalledWith('documentos-pat/file.pdf', pdf.buffer, 'application/pdf');
@@ -76,32 +79,32 @@ describe('DocumentosPatService', () => {
     expect(cleanup.solicitar).not.toHaveBeenCalled();
     expect(docRepository.save).toHaveBeenCalledWith(expect.objectContaining({ version: 1 }));
     setLatestReview(RevisionPatResultado.OBSERVADO);
-    const second = await service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, '127.0.0.1');
+    const second = await service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, '127.0.0.1');
     expect(second.version).toBe(2);
   });
 
   it.each([null, RevisionPatResultado.APROBADO])('bloquea una corrección cuando la última versión está pendiente o aprobada (%s)', async (latestReview) => {
     const { service, actor, storage, cleanup } = setup({ latestReview });
-    await expect(service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, null)).rejects.toMatchObject({ status: 409 });
+    await expect(service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, null)).rejects.toMatchObject({ status: 409 });
     expect(storage.saveAtPrivateKey).not.toHaveBeenCalled();
     expect(cleanup.registrar).not.toHaveBeenCalled();
   });
 
   it('permite una nueva entrega solo después de observar o rechazar la última versión', async () => {
     const { service, actor } = setup({ latestReview: RevisionPatResultado.RECHAZADO });
-    const result = await service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, null);
+    const result = await service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, null);
     expect(result).toMatchObject({ version: 2, revision: 'PENDIENTE', detalle_revision: null });
   });
 
   it('rechaza que otra cuenta estudiante cargue un documento del titular', async () => {
     const { service, actor, storage } = setup({ owner: 'different-student' });
-    await expect(service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, null)).rejects.toMatchObject({ status: 403 });
+    await expect(service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, null)).rejects.toMatchObject({ status: 403 });
     expect(storage.saveAtPrivateKey).not.toHaveBeenCalled();
   });
 
-  it('permite que el representante actual cargue y un integrante consulte el historial grupal', async () => {
+  it('permite que un integrante activo cargue su PAT individual y consulte solo su historial', async () => {
     const { service, actor, docRepository } = setup({ group: true });
-    const result = await service.cargar('period-id', 'assignment-id', { plantilla_id: 'template-id' }, pdf, actor, null);
+    const result = await service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, null);
     expect(result.version).toBe(1);
     await expect(service.listar('period-id', 'assignment-id', actor, 1, 20)).resolves.toMatchObject({ data: [], total: 0 });
     expect(docRepository.findAndCount).toHaveBeenCalled();

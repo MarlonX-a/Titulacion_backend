@@ -70,7 +70,7 @@ export class RevisionesPatService {
   }
 
   async obtener(periodoId: string, asignacionId: string, documentoId: string, actor: Usuario): Promise<RevisionPatResponseDto> {
-    await this.documentos.autorizarLectura(periodoId, asignacionId, actor);
+    await this.documentos.autorizarLecturaDocumento(periodoId, asignacionId, documentoId, actor);
     let rows: RevisionRow[];
     try {
       rows = await this.dataSource.query(

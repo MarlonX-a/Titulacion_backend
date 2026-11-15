@@ -49,6 +49,9 @@ export class PeriodoTitulacion {
   @Column({ type: 'uuid', name: 'facultad_id' })
   facultad_id: string;
 
+  @Column({ type: 'varchar', length: 150, name: 'extension_pat', nullable: true })
+  extension_pat: string | null;
+
   @ManyToOne(() => Facultad, { nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'facultad_id', foreignKeyConstraintName: 'FK_periodo_titulacion_facultad' })
   facultad?: Facultad;

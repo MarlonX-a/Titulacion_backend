@@ -766,40 +766,76 @@ esquema temporal. La aplicación no publica plantillas de ejemplo.
 
 ## Carga y versionado del PAT
 
-El titular de un trabajo individual o el representante actual de un grupo puede
-entregar una versión con `POST
-/periodos/{periodoId}/asignaciones-tema/{asignacionId}/documentos-pat`, enviando
-`plantilla_id` y `archivo` como `multipart/form-data`. La asignación de tema debe
-seguir vigente, el período estar en `POSTULACION_CERRADA` o `EN_CURSO`, y la
-plantilla seleccionada debe continuar activa. Se admiten PDF y DOCX válidos de
-hasta 10 MiB. Cada carga recibe una versión consecutiva y SHA-256; los archivos
-anteriores se conservan y no pueden alterarse ni eliminarse.
+Cada integrante completa y genera su propio PAT, también en trabajos grupales.
+`GET/PATCH /estudiantes/me/datos-pat` permite consultar y guardar los datos
+personales complementarios (contacto personal, residencia, nacimiento y
+declaraciones, entre otros); la respuesta indica los campos obligatorios
+pendientes. Los datos institucionales que ya existen —identidad, cédula,
+carrera, facultad, nivel y correo institucional— se leen del sistema y no se
+editan desde este formulario. El correo personal no cambia el correo de acceso.
+La auditoría de estas modificaciones guarda nombres de campos, no los valores
+personales.
 
-ADMIN, los integrantes del trabajo y su tutor vigente pueden consultar el
-historial en `GET .../documentos-pat`, la última versión en `GET
-.../ultima`, y descargar la última o una versión histórica mediante las rutas
-`/descarga`. Las URL firmadas duran cinco minutos. Cada versión inicia como
-`PENDIENTE` y ADMIN puede revisarla una sola vez en `POST
-.../documentos-pat/{documentoId}/revision` con resultado `APROBADO`, `OBSERVADO`
-o `RECHAZADO`. Observar o rechazar exige observaciones; quienes tengan acceso
-al trabajo pueden leer la revisión con `GET
-.../documentos-pat/{documentoId}/revision`. Los metadatos incluyen `revision` y
-`detalle_revision`.
+Por cada asignación vigente, el estudiante completa su contenido en `GET/PATCH
+/periodos/{periodoId}/asignaciones-tema/{asignacionId}/pat/me`. El tema se ofrece
+como texto inicial de la problemática y debe confirmarse; modalidad y
+articulación se eligen explícitamente. Antes de generar, ADMIN configura la
+extensión/sede con `PATCH /periodos/{periodoId}/datos-formato-pat` y el período
+debe estar en `POSTULACION_CERRADA` o `EN_CURSO`.
 
-Después de la primera entrega, solo se admite una nueva versión cuando la última
-fue `OBSERVADO` o `RECHAZADO`. Una versión pendiente o aprobada bloquea otra
-carga. ADMIN puede revisar versiones antiguas aún no revisadas; ese resultado
-no cambia la situación de la versión más reciente. Revisiones, observaciones y
-versiones anteriores se conservan como historial.
+`POST /periodos/{periodoId}/asignaciones-tema/{asignacionId}/pat/me/generaciones`
+solicita, con respuesta `202`, un PDF sin firma construido solo con los datos
+guardados. Si falta el tutor vigente, el estudiante debe seleccionar una
+propuesta perteneciente a esa postulación; no se aceptan nombres libres. La
+generación usa una instantánea inmutable, se procesa en segundo plano y puede
+consultarse en `GET .../generaciones/{id}`. Una vez lista, `GET
+.../generaciones/{id}/descarga` entrega una URL privada temporal de cinco
+minutos. El PDF deja el espacio de firma vacío; cada estudiante lo descarga,
+firma y carga su propio archivo.
+
+La entrega se realiza con `POST
+/periodos/{periodoId}/asignaciones-tema/{asignacionId}/documentos-pat` mediante
+`multipart/form-data`, con `generacion_id` y el PDF firmado en `archivo`. Ya no
+se acepta DOCX ni una selección de plantilla: la generación se vincula con el
+diseño interno versionado, mientras las plantillas publicadas históricamente se
+conservan. Cualquier integrante activo puede cargar su documento individual,
+sin depender del representante. La asignación debe seguir vigente y el período
+estar en `POSTULACION_CERRADA` o `EN_CURSO`. Cada estudiante tiene su propia
+secuencia de versiones por asignación; las cargas registran SHA-256 y nunca
+sobrescriben versiones anteriores.
+
+ADMIN consulta todas las entregas; un estudiante ve únicamente sus documentos y
+observaciones, y el tutor vigente conserva acceso de lectura al trabajo. Los
+compañeros no pueden consultar entre sí los datos personales ni los PAT
+individuales. Las entregas históricas anteriores a esta funcionalidad se
+conservan para ADMIN y el tutor autorizado, pero no se atribuyen a un estudiante
+por inferencia. Las descargas usan URLs privadas de cinco minutos.
+
+Cada entrega inicia como `PENDIENTE` y ADMIN puede revisarla una sola vez en
+`POST .../documentos-pat/{documentoId}/revision` con resultado `APROBADO`,
+`OBSERVADO` o `RECHAZADO`. Observar o rechazar exige observaciones; el estudiante
+correspondiente puede leer la revisión con `GET
+.../documentos-pat/{documentoId}/revision`. La bandeja administrativa y los
+reportes calculan el estado PAT más reciente por participante.
+
+Para cada estudiante, después de su primera entrega solo se admite una nueva
+versión cuando su versión más reciente fue `OBSERVADO` o `RECHAZADO`. Una
+versión pendiente o aprobada bloquea nuevas cargas de ese estudiante, sin
+bloquear las entregas independientes de los compañeros. ADMIN puede revisar
+versiones antiguas aún no revisadas; ese resultado no altera la situación de la
+versión más reciente. Revisiones, observaciones, generaciones y documentos
+anteriores se conservan como historial inmutable.
 
 Las revisiones nuevas requieren período `POSTULACION_CERRADA` o `EN_CURSO` y
 asignación de tema vigente. Las consultas históricas continúan disponibles
 después del archivo o anulación, aunque no se aceptan revisiones nuevas.
 
-El flujo de prueba es: entregar un PAT, consultarlo como ADMIN, registrar una
-observación, leerla con la cuenta estudiante, cargar una corrección y aprobar
-esa versión. La revisión no cambia automáticamente el estado del tema, período
-ni asignación.
+Flujo de prueba: completar los datos y el contenido PAT del estudiante, solicitar
+una generación, esperar `LISTO`, descargar y firmar el PDF, subirlo con su
+`generacion_id`, consultarlo como ADMIN, observarlo, leer la observación con la
+misma cuenta, cargar una corrección generada y aprobarla. Repetir el recorrido
+con otro integrante del grupo comprueba la separación de expedientes. La
+revisión no cambia automáticamente el estado del tema, período ni asignación.
 
 La migración se ejecuta explícitamente tras confirmar
 `DB_SCHEMA=titulacion_dev`. `npm run db:verify-documentos-pat` verifica la
@@ -813,6 +849,12 @@ tras confirmar `DB_SCHEMA=titulacion_dev`. `npm run db:verify-revisiones-pat`
 comprueba las versiones históricas, reglas de corrección, revisiones únicas e
 inmutables, concurrencia, auditoría atómica y reversión protegida en un esquema
 temporal aislado.
+
+La migración de generación individual se ejecuta explícitamente después de
+confirmar `DB_SCHEMA=titulacion_dev`. `npm run db:verify-generaciones-pat`
+comprueba la migración y su reversión protegida en un esquema aislado. La
+generación no crea documentos ni envía notificaciones de entrega; el archivo
+firmado sí sigue el flujo ordinario de revisión PAT.
 
 ## Notificaciones PAT
 

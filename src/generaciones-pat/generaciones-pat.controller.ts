@@ -1,0 +1,56 @@
+import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
+import { ApiAcceptedResponse, ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
+import { Roles } from '../common/roles.decorator.js';
+import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
+import { Usuario } from '../usuarios/entities/usuario.entity.js';
+import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
+import { ActualizarContenidoPatDto, ActualizarDatosPatDto, ConfigurarFormatoPatDto, GenerarPatDto } from './dto/actualizar-datos-pat.dto.js';
+import { GeneracionesPatService } from './generaciones-pat.service.js';
+
+@ApiTags('Generación individual del PAT')
+@ApiBearerAuth('bearer')
+@Controller()
+export class GeneracionesPatController {
+  constructor(private readonly service: GeneracionesPatService) {}
+
+  @Get('estudiantes/me/datos-pat') @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Consultar datos complementarios propios y campos pendientes del PAT' })
+  datos(@CurrentUsuario() actor: Usuario) { return this.service.obtenerDatos(actor); }
+
+  @Patch('estudiantes/me/datos-pat') @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Guardar o corregir datos complementarios personales del PAT' })
+  actualizarDatos(@Body() dto: ActualizarDatosPatDto,@CurrentUsuario() actor:Usuario,@Req()req:Request){return this.service.actualizarDatos(dto,actor,req.ip??null);}
+
+  @Get('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me') @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Consultar contenido individual del PAT y campos pendientes' })
+  contenido(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@CurrentUsuario()actor:Usuario){return this.service.obtenerContenido(p,a,actor);}
+
+  @Patch('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me') @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Completar o corregir el contenido individual del PAT' })
+  actualizarContenido(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Body()dto:ActualizarContenidoPatDto,@CurrentUsuario()actor:Usuario,@Req()req:Request){return this.service.actualizarContenido(p,a,dto,actor,req.ip??null);}
+
+  @Post('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones') @HttpCode(HttpStatus.ACCEPTED) @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Solicitar el PDF individual del PAT desde la información guardada' })
+  @ApiAcceptedResponse({ schema: { type: 'object', properties: { id: { type: 'string', format: 'uuid' }, estado: { type: 'string', example: 'EN_COLA' } } } })
+  generar(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Body()dto:GenerarPatDto,@CurrentUsuario()actor:Usuario,@Req()req:Request){return this.service.solicitar(p,a,dto,actor,req.ip??null);}
+
+  @Get('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id') @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Consultar el procesamiento de una generación PAT propia' })
+  generacion(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Param('id',new ParseUUIDPipe())id:string,@CurrentUsuario()actor:Usuario){return this.service.porId(p,a,id,actor);}
+
+  @Get('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/descarga') @Roles(UsuarioRol.ESTUDIANTE) @Header('Cache-Control','no-store')
+  @ApiOperation({ summary: 'Obtener URL temporal para descargar el PAT generado sin firma' })
+  descargar(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Param('id',new ParseUUIDPipe())id:string,@CurrentUsuario()actor:Usuario){return this.service.descarga(p,a,id,actor);}
+
+  @Post('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/reintentar') @Roles(UsuarioRol.ESTUDIANTE)
+  reintentar(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Param('id',new ParseUUIDPipe())id:string,@CurrentUsuario()actor:Usuario,@Req()req:Request){return this.service.reintentar(p,a,id,actor,req.ip??null);}
+}
+
+@ApiTags('Períodos') @ApiBearerAuth('bearer') @Controller('periodos')
+export class ConfigurarFormatoPatController {
+  constructor(private readonly service:GeneracionesPatService){}
+  @Patch(':periodoId/datos-formato-pat') @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({summary:'Configurar la extensión o sede que se imprimirá en los PAT del período'})
+  configurar(@Param('periodoId',new ParseUUIDPipe())id:string,@Body()body:ConfigurarFormatoPatDto,@CurrentUsuario()actor:Usuario,@Req()req:Request){return this.service.configurar(id,body.extension,actor,req.ip??null);}
+}

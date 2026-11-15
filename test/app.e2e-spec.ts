@@ -66,6 +66,24 @@ describe('AppController (e2e)', () => {
       .expect(401);
   });
 
+  it('documenta la generación individual del PAT y protege formularios y descargas', async () => {
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.paths['/estudiantes/me/datos-pat']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/asignaciones-tema/{asignacionId}/pat/me']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/asignaciones-tema/{asignacionId}/pat/me/generaciones']).toBeDefined();
+    expect(docs.body.paths['/periodos/{periodoId}/asignaciones-tema/{asignacionId}/pat/me/generaciones/{id}/descarga']).toBeDefined();
+
+    await request(app.getHttpServer()).get('/estudiantes/me/datos-pat').expect(401);
+    await request(app.getHttpServer())
+      .post('/periodos/00000000-0000-4000-8000-000000000001/asignaciones-tema/00000000-0000-4000-8000-000000000002/pat/me/generaciones')
+      .send({})
+      .expect(401);
+    await request(app.getHttpServer())
+      .patch('/periodos/00000000-0000-4000-8000-000000000001/datos-formato-pat')
+      .send({ extension: 'Extensión de prueba' })
+      .expect(401);
+  });
+
   it('documenta exportaciones administrativas y exige autenticación', async () => {
     const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
     expect(docs.body.paths['/periodos/{periodoId}/exportaciones']).toBeDefined();
