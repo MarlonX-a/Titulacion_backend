@@ -84,14 +84,17 @@ Closing postulación (manual, forced or automatic) also expires reservations sti
    - In both cases the topic goes `PUBLICADO → RESERVADO` in the same transaction (tema_historial + audit `RESERVAR_TEMA`).
    - A `RESERVADO` topic rejects other groups/students with `409`: «El tema está reservado por otro grupo o estudiante mientras se confirma o se resuelve su postulación.» (Lazy check: if the reserving postulación is an expired `PENDIENTE_CONFIRMACION`, it is expired first and the new postulación proceeds.)
 2. Each other member confirms or rejects (endpoints below).
-   - All rows `CONFIRMADA` → postulación `PENDIENTE` (topic stays `RESERVADO`), audit `CONFIRMAR_POSTULACION_COMPLETA`.
-   - Any `RECHAZADA` → postulación `RECHAZADA` with `observacion` «Rechazada por un integrante del grupo (Nombres Apellidos)[: motivo]», topic back to `PUBLICADO`, notification `POSTULACION_RECHAZADA`. Note: the existing unique index `UQ_postulacion_tema_grupo_no_cancelada` means that group cannot postulate again to that same topic.
-3. Expiration → postulación `CANCELADA` («Reserva vencida: …»), topic back to `PUBLICADO`, audit `EXPIRAR_RESERVA_POSTULACION` (system actor, `automatico: true`), notification `POSTULACION_CANCELADA`:
-   - `PENDIENTE_CONFIRMACION` older than 48 h — swept every 60 s by the existing BullMQ job `transiciones-periodo`, plus lazy checks in create/confirm/reject;
-   - when the period's postulación closes (inside the close transaction; manual, forced or automatic).
+   - Each answer is audited on the postulación (`CONFIRMAR_POSTULACION` / `RECHAZAR_POSTULACION_INTEGRANTE`, with `estudiante_id`).
+   - All rows `CONFIRMADA` → postulación `PENDIENTE` (topic stays `RESERVADO`), audit `CONFIRMAR_POSTULACION_COMPLETA`, notification `POSTULACION_REGISTRADA` again (now «quedó pendiente»).
+   - Any `RECHAZADA` → postulación `RECHAZADA` with `observacion` «Rechazada por un integrante del grupo (Nombres Apellidos): motivo» (or ending in «.» without motivo), audit `RECHAZAR_POSTULACION_POR_INTEGRANTE`, topic back to `PUBLICADO`, notification `POSTULACION_RECHAZADA`. Note: the existing unique index `UQ_postulacion_tema_grupo_no_cancelada` means that group cannot postulate again to that same topic.
+3. Expiration → postulación `CANCELADA` («Reserva vencida: no todos los integrantes confirmaron en 48 horas.» or «Reserva vencida: cerró el plazo de postulación sin la confirmación de todos los integrantes.»), topic back to `PUBLICADO` (audit `LIBERAR_TEMA_RESERVA`), audit `EXPIRAR_RESERVA_POSTULACION`, notification `POSTULACION_CANCELADA`:
+   - `PENDIENTE_CONFIRMACION` older than 48 h — swept every 60 s by the existing BullMQ job `transiciones-periodo` (each postulación in its own transaction, locks período → tema → postulación), plus lazy checks in create/confirm/reject; these are system actions (`usuario_id` NULL, `automatico: true`, `tema_historial.usuario_id` NULL);
+   - when the period's postulación closes, inside the close transaction (manual or forced close: audited with the ADMIN as actor; automatic close: system actor).
 4. ADMIN assigns (`POST /periodos/:periodoId/postulaciones/:postulacionId/asignar-tema`, unchanged): accepts topic `RESERVADO` (new) or `PUBLICADO` (legacy) with postulación `PENDIENTE` → topic `ASIGNADO`.
 5. Every cancel/annul path releases a `RESERVADO` topic back to `PUBLICADO` when no other active (`PENDIENTE_CONFIRMACION`/`PENDIENTE`) postulación of a non-archived period remains: student/admin cancel (`POST .../postulaciones/:id/cancelar`, now also accepts `PENDIENTE_CONFIRMACION`), no-admission cancellation, and archiving a period (open `PENDIENTE_CONFIRMACION`/`PENDIENTE` postulaciones of that period are cancelled with «Período archivado sin asignación.» before archiving, so archived history never holds a reservation).
-6. Topic close/withdraw (`/temas/:id/cerrar`, `/retirar`) now also accept a `RESERVADO` topic and reject its `PENDIENTE_CONFIRMACION` postulaciones too.
+6. Topic close/withdraw (`/temas/:id/cerrar`, `/retirar`) now also accept a `RESERVADO` topic and reject its `PENDIENTE_CONFIRMACION` postulaciones too. Archive cancellations are audited as `CANCELAR_POSTULACION_POR_ARCHIVO`.
+7. Conflicts module: unchanged API; it now also accepts `RESERVADO` topics (legacy competing `PENDIENTE` rows). With the new flow it normally finds no conflicts.
+8. Exports: the `TEMAS_OFERTADOS` `estado` filter accepts `RESERVADO`.
 
 `tema_historial.usuario_id` becomes nullable (only for automatic expirations, `cambios.automatico = true`); `TemaHistorialResponseDto.usuario_id` and `responsable` are now nullable.
 
@@ -103,7 +106,7 @@ Closing postulación (manual, forced or automatic) also expires reservations sti
 | POST | `/postulaciones/:id/confirmar` | — (empty) | `200 ConfirmacionPostulacionResponseDto` |
 | POST | `/postulaciones/:id/rechazar` | `{ motivo?: string }` trimmed, 1–500 | `200 ConfirmacionPostulacionResponseDto` |
 
-`GET` returns the postulaciones in `PENDIENTE_CONFIRMACION` where the caller's row is `PENDIENTE` and the reservation has not expired, ordered by `vence_en` ascending.
+`GET` returns the postulaciones in `PENDIENTE_CONFIRMACION` where the caller's row is `PENDIENTE` and the reservation has not expired (less than 48 h, period `POSTULACION_ABIERTA` and before `fecha_fin_postulacion`), ordered by `vence_en` ascending. A student account without a student profile gets `[]`.
 
 `ConfirmacionPostulacionResponseDto`:
 
@@ -159,7 +162,7 @@ Rules and errors:
 
 `UsuarioRol.COORDINADOR` (`usuario_rol_enum` rebuilt in migration `20261115110000-ProgramasCoordinador`). Created by ADMIN through `POST /usuarios` (`rol: "COORDINADOR"`, institutional `@uleam.edu.ec` or `@live.uleam.edu.ec` email, same as DOCENTE/ADMIN). Login/session are role-agnostic.
 
-COORDINADOR is added to these read endpoints: `GET /facultades`, `GET /lineas-investigacion`, `GET /lineas-investigacion/:id`, `GET /docentes`, `GET /docentes/:id`, `GET /temas`, `GET /temas/:id` (sees the whole bank like ADMIN), and to `POST /temas`, `PATCH /temas/:id`, `POST /temas/:id/publicar` (only for topics of programas they are responsible for).
+COORDINADOR is added to these read endpoints: `GET /facultades`, `GET /lineas-investigacion`, `GET /lineas-investigacion/:id` (active lines only, like DOCENTE), `GET /docentes` (to pick the proposing teacher; `cedula` is returned as `null` for COORDINADOR), `GET /temas`, `GET /temas/:id` (sees the whole bank like ADMIN), and to `POST /temas`, `PATCH /temas/:id`, `POST /temas/:id/publicar` (only for topics of programas they are responsible for; otherwise `403`). Closing/withdrawing topics, periods, users and assignments stay ADMIN-only. Every other endpoint answers `403` to COORDINADOR.
 
 ### Table `programa`
 
@@ -191,16 +194,16 @@ Trigger `TRG_programa_validar`: responsable usuario is COORDINADOR; `max_temas` 
 
 Visibility: ADMIN, COORDINADOR and DOCENTE read every programa (`mios=true` narrows to the caller's own: COORDINADOR by `responsable_usuario_id`, DOCENTE by `responsable_docente_id`). ESTUDIANTE only sees active programas of their own carrera (`carrera_id`/`facultad_id` cannot widen it). No DELETE: deactivate with `PATCH { activo: false }` (history is preserved).
 
-`CreateProgramaDto`: `nombre` (trimmed, 1–150), `descripcion?` (trimmed, ≤ 2000, nullable), `carrera_id` (uuid), `responsable_docente_id?` (uuid), `responsable_usuario_id?` (uuid), `max_temas?` (int 1–50, default 15). Exactly one responsable (`400` otherwise). For COORDINADOR the responsable is forced to themselves (`responsable_usuario_id = caller`); sending another responsable → `403`. The docente responsable must belong to the programa carrera.
+`CreateProgramaDto`: `nombre` (trimmed, 1–150), `descripcion?` (trimmed, 1–2000, nullable), `carrera_id` (uuid), `responsable_docente_id?` (uuid), `responsable_usuario_id?` (uuid), `max_temas?` (int 1–50, default 15). Exactly one responsable (`400` otherwise). For COORDINADOR the responsable is forced to themselves (`responsable_usuario_id = caller`); sending another responsable → `403`. The docente responsable must belong to the programa carrera and have an active account; the usuario responsable must be an active COORDINADOR.
 
-`UpdateProgramaDto`: all optional (`nombre`, `descripcion`, `carrera_id`, `responsable_docente_id`, `responsable_usuario_id`, `max_temas`, `activo`); setting one responsable clears the other. COORDINADOR can only edit programas where they are `responsable_usuario_id` and cannot change the responsable (`403`). Empty body → `400`.
+`UpdateProgramaDto`: all optional (`nombre`, `descripcion` (null clears it), `carrera_id`, `responsable_docente_id`, `responsable_usuario_id`, `max_temas`, `activo`); setting one responsable clears the other, sending both → `400`. COORDINADOR can only edit programas where they are `responsable_usuario_id` and cannot change the responsable (`403`). Empty body → `400`. Lists are ordered by `nombre` ASC.
 
 `ProgramaResponseDto`:
 
 ```json
 {
   "id": "uuid", "nombre": "string", "descripcion": "string|null",
-  "carrera_id": "uuid", "carrera": { "id": "uuid", "codigo": "string", "nombre": "string" },
+  "carrera_id": "uuid", "carrera": { "id": "uuid", "nombre": "string" },
   "responsable_docente_id": "uuid|null", "responsable_usuario_id": "uuid|null",
   "responsable": { "tipo": "DOCENTE|COORDINADOR", "id": "uuid", "nombres": "string", "apellidos": "string" },
   "max_temas": 15, "temas_registrados": 3, "activo": true,
@@ -208,11 +211,19 @@ Visibility: ADMIN, COORDINADOR and DOCENTE read every programa (`mios=true` narr
 }
 ```
 
-Errors: `404` programa/carrera/docente/usuario missing; `409` duplicated name in the carrera («Ya existe un programa con ese nombre en la carrera.»), responsable usuario not COORDINADOR active, docente of another carrera, `max_temas` below current topics, carrera change with topics.
+Errors: `400` unknown carrera («No existe la carrera indicada.»); `404` programa/docente/usuario missing (or programa not visible to the student); `409` duplicated name in the carrera («Ya existe un programa con ese nombre en la carrera.»), responsable usuario not an active COORDINADOR, docente of another carrera, `max_temas` below current topics («El programa tiene N temas; el máximo no puede ser menor.»), carrera change with topics.
 
 ### Topic changes
 
-- `CreateTemaDto` / `UpdateTemaDto` accept `programa_id?: uuid | null` and `categoria?: string | null` (trimmed, 1–120). For COORDINADOR `programa_id` is required on create and must be a programa they are responsible for; on update they can only edit topics of their programas and cannot move them to a programa they do not manage (`403`).
-- Rules (service + trigger): programa active (on assignment), same carrera as the topic («La carrera del tema debe coincidir con la del programa.»), limit («El programa alcanzó su máximo de N temas.») → `409`.
+- `CreateTemaDto` / `UpdateTemaDto` accept `programa_id?: uuid | null` and `categoria?: string | null` (trimmed, 1–120; `null` on update clears it). For COORDINADOR `programa_id` is required on create (`400` «Indica el programa (programa_id) del tema.») and must be a programa they are responsible for; on update/publish they can only touch topics of their programas, cannot move them to a programa they do not manage and cannot remove the programa (`403`).
+- Rules (service with the programa row locked + trigger `TRG_tema_programa`): programa exists (`404`), active when assigning (`409` «El programa está inactivo.»), same carrera as the topic (`409` «La carrera del tema debe coincidir con la del programa.»), limit counting non-RETIRADO topics (`409` «El programa alcanzó su máximo de N temas.»).
 - `GET /temas` adds filter `programa_id`; `TemaResponseDto` adds `programa_id: uuid|null`, `programa: { id, nombre } | null`, `categoria: string|null`.
 - Each topic is still assigned to one group (unchanged).
+
+---
+
+## Verification
+
+- Unit specs: `src/periodos/transiciones-forzadas.spec.ts`, `src/periodos/reservas-periodo.spec.ts`, `src/postulaciones/{postulaciones.reserva,confirmaciones-postulacion.service,reserva-tema.service}.spec.ts`, `src/programas/programas.service.spec.ts`, plus additions to the temas and asignaciones specs.
+- PostgreSQL (temporary schemas): `npm run db:verify-reserva-temas` (also runs the topic list filtered by facultad on two seeded facultades) and `npm run db:verify-programas`.
+- Existing verifiers adjusted to the new rules: `db:verify-tutores-propuestos` / `db:verify-postulaciones` (group postulación now `PENDIENTE_CONFIRMACION`, topic `RESERVADO`) and `db:verify-banco-temas-sql` (its competing `PENDIENTE` fixtures are dated before the reservation migration, i.e. legacy data).
