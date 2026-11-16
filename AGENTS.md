@@ -352,6 +352,9 @@ Roles válidos:
 - ESTUDIANTE
 - DOCENTE
 - ADMIN
+- COORDINADOR (migración `20261115110000`): gestiona programas de temas de los que es responsable
+  y crea, edita y publica temas solo dentro de ellos; lectura de facultades, líneas, docentes (sin
+  cédula) y banco de temas. El resto de rutas le responde 403.
 
 ADMIN es un rol dentro de usuario.
 
@@ -497,6 +500,13 @@ vuelve a comprobar estado y fechas bajo el bloqueo. Se auditan como `ABRIR_POSTU
 `20261029110000`: `auditoria.usuario_id` admite NULL solo con esa marca). No se automatiza
 CERRADA → EN_CURSO ni la reapertura CERRADA → ABIERTA.
 
+Transiciones forzadas (`abrir-postulacion`, `cerrar-postulacion`, `iniciar-titulacion` con cuerpo
+`{ forzar: true, motivo }`, motivo de 10–500 caracteres): si la fecha aún no se alcanzó, la fecha
+correspondiente pasa a la hora de PostgreSQL (`clock_timestamp()`) en la misma transacción del cambio
+de estado; las precondiciones de estado no cambian. Se auditan como `*_FORZADA` con la fecha anterior
+y el motivo. El scheduler sigue siendo idempotente (vuelve a leer bajo bloqueo). El cierre de
+postulación vence en su transacción las reservas `PENDIENTE_CONFIRMACION`.
+
 `POST /periodos/:id/archivar` archiva desde cualquier estado distinto de ARCHIVADO (migración
 `20261029100000`); ARCHIVADO sigue siendo terminal e inmutable y no se puede insertar un
 período ya archivado. La auditoría `ARCHIVAR_PERIODO` guarda el estado anterior y el motivo.
@@ -622,6 +632,11 @@ Estados:
 - CERRADO
 - ASIGNADO
 - RETIRADO
+- RESERVADO (retenido por una postulación PENDIENTE_CONFIRMACION o PENDIENTE; migración `20261115100000`)
+
+Programas (bloque 4): `programa` agrupa temas de una carrera con un responsable (DOCENTE o
+COORDINADOR) y `max_temas` (1–50, 15 por defecto); `tema.programa_id` y `tema.categoria` son
+opcionales y `TRG_tema_programa` exige misma carrera y cupo (temas no RETIRADOS). API `/programas`.
 
 Un tema está disponible cuando:
 
@@ -705,6 +720,15 @@ El número de integrantes debe corresponder al `tipo` del tema: INDIVIDUAL = 1,
 PAREJA = 2, GRUPO = 3 hasta `max_integrantes_default` del período de la postulación.
 
 Un estudiante o grupo puede tener como máximo una postulación activa.
+
+Reserva y confirmación obligatoria (diseño `docs/superpowers/specs/2026-11-15-bloques-2-3-4-design.md`):
+la postulación grupal nace PENDIENTE_CONFIRMACION (la individual, PENDIENTE) y deja el tema
+RESERVADO; cada integrante responde en `postulacion_confirmacion` (`/postulaciones/:id/confirmar`,
+`/rechazar`, `/postulaciones/confirmaciones-pendientes`). Todas confirmadas → PENDIENTE; un rechazo →
+RECHAZADA y el tema vuelve a PUBLICADO. Vence (CANCELADA) a las 48 h o al cerrar la postulación
+(scheduler `transiciones-periodo` y comprobación perezosa). Cancelar, la no admisión y archivar el
+período liberan el tema. `UQ_postulacion_reserva_tema` solo cubre postulaciones creadas desde la
+migración: las anteriores pueden competir y se resuelven con conflictos.
 
 No permitir postulaciones:
 
