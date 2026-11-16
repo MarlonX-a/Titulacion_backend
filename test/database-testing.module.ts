@@ -22,6 +22,7 @@ import { GrupoIntegrante } from '../src/grupos/entities/grupo-integrante.entity.
 import { Invitacion } from '../src/invitaciones/entities/invitacion.entity.js';
 import { Postulacion } from '../src/postulaciones/entities/postulacion.entity.js';
 import { TutorPropuesto } from '../src/postulaciones/entities/tutor-propuesto.entity.js';
+import { PostulacionConfirmacion } from '../src/postulaciones/entities/postulacion-confirmacion.entity.js';
 import { ResolucionConflicto } from '../src/conflictos/entities/resolucion-conflicto.entity.js';
 import { ConflictoParticipante } from '../src/conflictos/entities/conflicto-participante.entity.js';
 import { AsignacionTema } from '../src/asignaciones-tema/entities/asignacion-tema.entity.js';
@@ -515,6 +516,8 @@ function sharedTestRepository(entity: unknown) {
   if (entity === TutorPropuesto) return tutorPropuestoTestRepository;
   if (entity === ResolucionConflicto || entity === ConflictoParticipante) return { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, find: async () => [] };
   if (entity === AsignacionTema) return assignmentTemaTestRepository;
+  // Confirmaciones de reserva (bloque 3): las pruebas HTTP no recorren el flujo con datos.
+  if (entity === PostulacionConfirmacion) return { create: (value: unknown) => value, save: async (value: unknown) => value, find: async () => [], findOne: async () => null, update: async () => ({ affected: 0 }) };
   if (entity === CredencialUsuario) return credencialTestRepository;
   if (entity === CorreoSalida) return correoTestRepository;
   if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
@@ -557,6 +560,7 @@ export const usuarioTestDataSource = {
     { target: Invitacion },
     { target: Postulacion },
     { target: TutorPropuesto },
+    { target: PostulacionConfirmacion },
     { target: ResolucionConflicto },
     { target: ConflictoParticipante },
     { target: AsignacionTema },

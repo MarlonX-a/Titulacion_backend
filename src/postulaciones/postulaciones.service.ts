@@ -32,8 +32,14 @@ import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignaci
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
 import { PostulacionPersistenciaService } from './postulacion-persistencia.service.js';
+import { PostulacionConfirmacion } from './entities/postulacion-confirmacion.entity.js';
+import { EstadoConfirmacion } from './enums/estado-confirmacion.enum.js';
+import { ReservaTemaService } from './reserva-tema.service.js';
+import { venceEn } from './reserva-tema.js';
 
-interface DriverError { code?: string; }
+export const MENSAJE_TEMA_RESERVADO = 'El tema está reservado por otro grupo o estudiante mientras se confirma o se resuelve su postulación.';
+
+interface DriverError { code?: string; constraint?: string; }
 const relations = { periodo: true, tema: { linea: true, docente_proponente: { usuario: true } }, grupo: true, estudiante: { usuario: true }, registrada_por: true } as const;
 
 @Injectable()
@@ -50,6 +56,7 @@ export class PostulacionesService {
     private readonly asignaciones: AsignacionTemaPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
     private readonly persistencia: PostulacionPersistenciaService,
+    private readonly reservas: ReservaTemaService,
     private readonly academico: AcademicoService = new AcademicoService(),
   ) {}
 
@@ -60,13 +67,18 @@ export class PostulacionesService {
         this.assertStudentWindow(period);
         const topic = await manager.getRepository(Tema).findOne({ where: { id: dto.tema_id }, lock: { mode: 'pessimistic_write' } });
         if (!topic) throw new NotFoundException('No existe ese tema.');
+        // Comprobación perezosa: una reserva vencida que aún retiene el tema se vence aquí.
+        if (topic.estado === EstadoTema.RESERVADO && await this.reservas.liberarReservasVencidasDelTema(manager, topic.id)) topic.estado = EstadoTema.PUBLICADO;
+        if (topic.estado === EstadoTema.RESERVADO) throw new ConflictException(MENSAJE_TEMA_RESERVADO);
         if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('Solo se puede postular a temas publicados.');
+        let actorStudentId: string;
         let studentId: string | null = null;
         let groupId: string | null = null;
         let participantIds: string[];
         let count: number;
         if (dto.modalidad === ModalidadPostulacion.INDIVIDUAL) {
           studentId = await this.studentId(manager, actor.id);
+          actorStudentId = studentId;
           await this.lockAssignmentStudent(manager, studentId);
           const estudiante = await this.habilitados.getEligibleStudentForGroup(periodoId, studentId, manager);
           await this.academico.assertMismaCarrera(this.dataSource, estudiante.carrera_id, topic.carrera_id, 'del estudiante');
@@ -75,6 +87,7 @@ export class PostulacionesService {
           participantIds = [studentId]; count = 1;
         } else {
           const student = await this.studentId(manager, actor.id);
+          actorStudentId = student;
           const representative = await manager.getRepository(GrupoIntegrante).findOne({ where: { periodo: { id: periodoId }, estudiante: { id: student }, estado: GrupoIntegranteEstado.ACTIVO, rol_en_grupo: GrupoIntegranteRol.REPRESENTANTE }, relations: { grupo: true } });
           if (!representative) throw new ForbiddenException('Solo el representante de un grupo activo puede registrar la postulación grupal.');
           const group = await manager.getRepository(Grupo).findOne({ where: { id: representative.grupo.id }, lock: { mode: 'pessimistic_write' } });
@@ -97,8 +110,18 @@ export class PostulacionesService {
         if (groupId && !(await manager.getRepository(Postulacion).findOne({ where: { grupo: { id: groupId } } }))) {
           await this.invitaciones.resolverPendientesDelGrupo(manager, groupId, actor, 'Composición cerrada por primera postulación grupal', ip, 'POSTULAR_GRUPO');
         }
-        const item = await repo.save(repo.create({ tema: topic, periodo: period, grupo: groupId ? { id: groupId } as Grupo : null, estudiante: studentId ? { id: studentId } as Estudiante : null, num_integrantes: count, registrada_por: actor, estado: EstadoPostulacion.PENDIENTE, fecha_postulacion: new Date(), observacion: null }));
+        // Grupal: espera la confirmación de los demás integrantes. Individual: el único participante ya confirmó.
+        const now = new Date();
+        const estado = groupId ? EstadoPostulacion.PENDIENTE_CONFIRMACION : EstadoPostulacion.PENDIENTE;
+        const item = await repo.save(repo.create({ tema: topic, periodo: period, grupo: groupId ? { id: groupId } as Grupo : null, estudiante: studentId ? { id: studentId } as Estudiante : null, num_integrantes: count, registrada_por: actor, estado, fecha_postulacion: now, observacion: null }));
         await this.tutores.agregar(manager, item.id, dto.tutores_propuestos);
+        const confirmaciones = manager.getRepository(PostulacionConfirmacion);
+        await confirmaciones.save(participantIds.map((participantId) => confirmaciones.create({
+          postulacion_id: item.id, estudiante_id: participantId,
+          estado: participantId === actorStudentId ? EstadoConfirmacion.CONFIRMADA : EstadoConfirmacion.PENDIENTE,
+          motivo: null, respondida_en: participantId === actorStudentId ? now : null,
+        })));
+        await this.reservas.reservar(manager, topic.id, item.id, actor, ip);
         await this.auditoria.registrar(manager, { actor, accion: 'CREAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tema_id: topic.id, periodo_id: period.id, grupo_id: groupId, estudiante_id: studentId, participantes: participantIds, num_integrantes: count, estado: item.estado, fecha_postulacion: item.fecha_postulacion, tutores_propuestos: dto.tutores_propuestos.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
         await this.auditoria.registrar(manager, { actor, accion: 'REGISTRAR_TUTORES_PROPUESTOS', entidad_tipo: 'postulacion', entidad_id: item.id, valores_anteriores: null, valores_nuevos: { tutores_propuestos: dto.tutores_propuestos.map((docente_id, index) => ({ docente_id, orden_prioridad: index + 1 })) }, ip_origen: ip });
         await this.notificaciones.postulacion(manager, item.id, NotificacionTipo.POSTULACION_REGISTRADA, actor.id);
@@ -127,10 +150,10 @@ export class PostulacionesService {
         const repo = manager.getRepository(Postulacion);
         const item = await repo.findOne({ where: { id }, relations: { tema: true, grupo: true, estudiante: true } });
         if (!item) throw new NotFoundException('No existe esa postulación en el período indicado.');
-        if (item.estado !== EstadoPostulacion.PENDIENTE) throw new ConflictException('Solo se pueden completar postulaciones PENDIENTE.');
+        if (item.estado !== EstadoPostulacion.PENDIENTE && item.estado !== EstadoPostulacion.PENDIENTE_CONFIRMACION) throw new ConflictException('Solo se pueden completar postulaciones PENDIENTE o PENDIENTE_CONFIRMACION.');
         const existing = await manager.query(`SELECT 1 FROM ${schema}."tutor_propuesto" WHERE "postulacion_id"=$1 LIMIT 1`, [id]) as unknown[];
         if (existing.length) throw new ConflictException('Esta postulación ya tiene una lista de tutores y no puede modificarse.');
-        if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('El tema ya no está publicado.');
+        if (topic.estado !== EstadoTema.PUBLICADO && topic.estado !== EstadoTema.RESERVADO) throw new ConflictException('El tema ya no está publicado.');
         if (item.grupo) {
           const representative = await manager.getRepository(GrupoIntegrante).findOne({ where: { grupo: { id: item.grupo.id }, estudiante: { usuario: { id: actor.id } }, estado: GrupoIntegranteEstado.ACTIVO, rol_en_grupo: GrupoIntegranteRol.REPRESENTANTE } });
           if (!representative) throw new NotFoundException('No existe esa postulación visible para el usuario.');
@@ -156,11 +179,13 @@ export class PostulacionesService {
         const period = await this.lockPeriod(manager, periodoId);
         const repo = manager.getRepository(Postulacion);
         const schema = this.schemaName(manager);
+        // Orden de bloqueo período → tema → postulación, como en la creación: cancelar libera el tema.
+        await manager.query(`SELECT t."id" FROM ${schema}."tema" t JOIN ${schema}."postulacion" p ON p."tema_id"=t."id" WHERE p."id"=$1 AND p."periodo_id"=$2 FOR UPDATE OF t`, [id, periodoId]);
         const locked = await manager.query(`SELECT "id" FROM ${schema}."postulacion" WHERE "id"=$1 AND "periodo_id"=$2 FOR UPDATE`, [id, periodoId]) as Array<{ id: string }>;
         if (!locked[0]) throw new NotFoundException('No existe esa postulación en el período indicado.');
         const item = await repo.findOne({ where: { id, periodo: { id: periodoId } }, relations: { tema: true, grupo: true, estudiante: true } });
         if (!item) throw new NotFoundException('No existe esa postulación en el período indicado.');
-        if (item.estado !== EstadoPostulacion.PENDIENTE) throw new ConflictException('Solo se pueden cancelar postulaciones PENDIENTE.');
+        if (item.estado !== EstadoPostulacion.PENDIENTE && item.estado !== EstadoPostulacion.PENDIENTE_CONFIRMACION) throw new ConflictException('Solo se pueden cancelar postulaciones PENDIENTE o PENDIENTE_CONFIRMACION.');
         if (isAdmin) {
           const now = Date.now();
           if (![PeriodoEstado.POSTULACION_ABIERTA, PeriodoEstado.POSTULACION_CERRADA].includes(period.estado) || now >= period.fecha_inicio_titulacion.getTime()) throw new ConflictException('ADMIN solo puede cancelar antes del inicio de titulación.');
@@ -264,6 +289,7 @@ export class PostulacionesService {
     const periodIds = [...new Set(items.map((item) => item.periodo.id))];
     const enabled = studentIds.length ? await this.dataSource.getRepository(EstudianteHabilitado).find({ where: { periodo: { id: In(periodIds) }, estudiante: { id: In(studentIds) } }, relations: { periodo: true, estudiante: true } }) : [];
     const tutors = await this.tutores.porPostulaciones(items.map((item) => ({ id: item.id, proponenteId: item.tema.docente_proponente?.id ?? null })));
+    const confirmations = await this.dataSource.getRepository(PostulacionConfirmacion).find({ where: { postulacion_id: In(items.map((item) => item.id)) }, relations: { estudiante: { usuario: true } }, order: { creado_en: 'ASC', id: 'ASC' } });
     const studentById = new Map(students.map((student) => [student.id, student]));
     return items.map((item) => {
       const participants = participantIdsOf(item).flatMap((participantId) => {
@@ -279,7 +305,9 @@ export class PostulacionesService {
         num_integrantes: item.num_integrantes, registrada_por_id: item.registrada_por.id,
         registrada_por: { id: item.registrada_por.id, nombres: item.registrada_por.nombres, apellidos: item.registrada_por.apellidos },
         estado: item.estado, fecha_postulacion: item.fecha_postulacion, observacion: item.observacion,
-        tutores_propuestos: tutors.get(item.id) ?? [] };
+        tutores_propuestos: tutors.get(item.id) ?? [],
+        confirmaciones: confirmations.filter((row) => row.postulacion_id === item.id).map((row) => ({ estudiante_id: row.estudiante_id, nombres: row.estudiante?.usuario.nombres ?? '', apellidos: row.estudiante?.usuario.apellidos ?? '', estado: row.estado, respondida_en: row.respondida_en })),
+        vence_en: item.estado === EstadoPostulacion.PENDIENTE_CONFIRMACION ? venceEn(item.fecha_postulacion) : null };
     });
   }
 
@@ -315,7 +343,9 @@ export class PostulacionesService {
     if (error instanceof HttpException) throw error;
     if (error instanceof QueryFailedError) {
       const code = (error.driverError as DriverError).code;
+      if (code === '23505' && (error.driverError as DriverError).constraint === 'UQ_postulacion_reserva_tema') throw new ConflictException(MENSAJE_TEMA_RESERVADO);
       if (code === '23505') throw new ConflictException('Ya existe una postulación activa incompatible para el participante o el tema.');
+      if (code === '40001' || code === '40P01') throw new ConflictException('La operación coincidió con otra actualización. Vuelve a intentarlo.');
       if (code === '23503' || code === '23514') throw new ConflictException('La operación incumple el plazo, rango o integridad de una postulación.');
     }
     throw new ServiceUnavailableException('No fue posible completar la operación de postulaciones.');

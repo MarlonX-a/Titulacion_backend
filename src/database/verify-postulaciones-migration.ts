@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { HttpException } from '@nestjs/common';
-import { QueryFailedError, type QueryRunner } from 'typeorm';
+import { In, QueryFailedError, type QueryRunner } from 'typeorm';
 import { Auditoria } from '../auditoria/entities/auditoria.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
@@ -47,6 +47,7 @@ import { TutorPropuesto } from '../postulaciones/entities/tutor-propuesto.entity
 import { ModalidadPostulacion } from '../postulaciones/enums/modalidad-postulacion.enum.js';
 import { EstadoPostulacion } from '../postulaciones/enums/estado-postulacion.enum.js';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 import { PostulacionesService } from '../postulaciones/postulaciones.service.js';
 import { TutoresPropuestosService } from '../postulaciones/tutores-propuestos.service.js';
 import { TemasService } from '../temas/temas.service.js';
@@ -146,7 +147,7 @@ async function verify(): Promise<void> {
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
   const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications);
-  const persistence = new PostulacionPersistenciaService(audit, notifications);
+  const persistence = new PostulacionPersistenciaService(audit, notifications, new ReservaTemaService(isolated, audit, notifications));
   const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
   const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence, notifications, persistence, groupMembership);
   const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit, notifications);
@@ -155,7 +156,7 @@ async function verify(): Promise<void> {
   const groups = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), studentRepo, isolated, habilitados, audit, persistence);
   const groupManagement = new GrupoGestionService(isolated, groups, habilitados, audit, invitePersistence, persistence, groupMembership);
   const invitations = new InvitacionesService(isolated.getRepository(Invitacion), studentRepo, isolated, groups, habilitados, audit, persistence, notifications);
-  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence, notifications, persistence);
+  const service = new PostulacionesService(isolated.getRepository(Postulacion), studentRepo, isolated.getRepository(GrupoIntegrante), isolated, habilitados, audit, invitePersistence, tutores, assignmentPersistence, notifications, persistence, new ReservaTemaService(isolated, audit, notifications));
 
   step = 'postulación antigua sin preferencias y carga única';
   await isolated.query(`ALTER TABLE ${schemaSql()}."postulacion" DISABLE TRIGGER "TRG_postulacion_requiere_tutores"`);
@@ -238,7 +239,9 @@ async function verify(): Promise<void> {
   const cancelledGroupApplication = await service.cancel(period.id, groupApplication.id, studentUsers[0]!, false, { motivo: 'Ajuste de preferencias' }, null);
   if (cancelledGroupApplication.estado !== EstadoPostulacion.CANCELADA) throw new Error('No se pudo cancelar la postulación grupal pendiente.');
   const groupRetry = await service.create(period.id, studentUsers[0]!, { tema_id: topic.id, modalidad: ModalidadPostulacion.GRUPAL, tutores_propuestos: [teacher.id] }, null);
-  if (groupRetry.estado !== EstadoPostulacion.PENDIENTE) throw new Error('El grupo no pudo volver a postular después de cancelar, conservando su composición.');
+  // Bloque 3: una postulación grupal nueva espera la confirmación de los integrantes y reserva el tema.
+  if (groupRetry.estado !== EstadoPostulacion.PENDIENTE_CONFIRMACION || groupRetry.confirmaciones.filter((fila) => fila.estado === 'CONFIRMADA').length !== 1) throw new Error('El grupo no pudo volver a postular después de cancelar, conservando su composición.');
+  if ((await isolated.getRepository(Tema).findOneByOrFail({ id: topic.id })).estado !== EstadoTema.RESERVADO) throw new Error('La postulación grupal no reservó el tema.');
 
   step = 'carrera entre postulación individual y aceptación de invitación';
   const otherGroup = await groups.create(period.id, studentUsers[2]!, { nombre: 'Grupo para carrera de pertenencia' } as CreateGrupoDto, null);
@@ -292,12 +295,13 @@ async function verify(): Promise<void> {
   if (admittedStillBlocked !== '23514') throw new Error(`Tras el retiro NO_ADMITIDO, el trigger dejó de proteger al integrante ADMITIDO (${admittedStillBlocked}).`);
 
   step = 'cierre, reapertura y retiro de tema con postulaciones abiertas';
-  const openBeforeClose = await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: EstadoPostulacion.PENDIENTE } });
+  const abiertas = In([EstadoPostulacion.PENDIENTE, EstadoPostulacion.PENDIENTE_CONFIRMACION]);
+  const openBeforeClose = await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: abiertas } });
   if (openBeforeClose < 1) throw new Error('La verificación de cierre de tema requiere al menos una postulación PENDIENTE.');
   const closedTopic = await temasService.close(topic.id, { motivo: 'Cierre de verificación' }, adminUser, null);
   const rejectedByClose = await isolated.getRepository(Postulacion).findOneByOrFail({ id: groupRetry.id });
   if (closedTopic.estado !== EstadoTema.CERRADO || rejectedByClose.estado !== EstadoPostulacion.RECHAZADA || rejectedByClose.observacion !== 'Tema cerrado: Cierre de verificación') throw new Error('El cierre del tema no rechazó sus postulaciones PENDIENTE en PostgreSQL.');
-  if (await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: EstadoPostulacion.PENDIENTE } }) !== 0) throw new Error('El cierre del tema dejó postulaciones PENDIENTE.');
+  if (await isolated.getRepository(Postulacion).count({ where: { tema: { id: topic.id }, estado: abiertas } }) !== 0) throw new Error('El cierre del tema dejó postulaciones PENDIENTE.');
   const reopenedTopic = await temasService.publish(topic.id, {}, adminUser, null);
   if (reopenedTopic.estado !== EstadoTema.PUBLICADO || rejectedByClose.estado !== EstadoPostulacion.RECHAZADA) throw new Error('La reapertura del tema no lo devolvió a PUBLICADO.');
   const withdrawnTopic = await temasService.withdraw(topic.id, { motivo: 'Retiro de verificación' }, adminUser, null);

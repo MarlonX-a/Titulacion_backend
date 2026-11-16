@@ -109,8 +109,8 @@ function historialResponseFrom(item: TemaHistorial): TemaHistorialResponseDto {
   return {
     id: item.id,
     tema_id: item.tema.id,
-    usuario_id: item.usuario.id,
-    responsable: { id: item.usuario.id, nombres: item.usuario.nombres, apellidos: item.usuario.apellidos },
+    usuario_id: item.usuario?.id ?? null,
+    responsable: item.usuario ? { id: item.usuario.id, nombres: item.usuario.nombres, apellidos: item.usuario.apellidos } : null,
     estado_anterior: item.estado_anterior,
     estado_nuevo: item.estado_nuevo,
     cambios: item.cambios,
@@ -286,7 +286,7 @@ export class TemasService {
     } catch (error: unknown) { this.handleDatabaseError(error); }
   }
 
-  /** RF-25: PUBLICADO → CERRADO; rejects the topic's PENDIENTE or EN_CONFLICTO applications of every period. */
+  /** RF-25: PUBLICADO | RESERVADO → CERRADO; rejects the topic's PENDIENTE_CONFIRMACION, PENDIENTE or EN_CONFLICTO applications of every period. */
   async close(id: string, dto: MotivoTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     return this.endTopic(id, dto, actor, ip, EstadoTema.CERRADO);
   }
@@ -317,9 +317,9 @@ export class TemasService {
         if (tema.estado === EstadoTema.ASIGNADO || await this.hasCurrentAssignment(manager, tema.id)) {
           throw new ConflictException(`El tema tiene una asignación VIGENTE; anúlala antes de ${cierre ? 'cerrarlo' : 'retirarlo'}.`);
         }
-        const origins = cierre ? [EstadoTema.PUBLICADO] : [EstadoTema.BORRADOR, EstadoTema.PUBLICADO, EstadoTema.CERRADO];
+        const origins = cierre ? [EstadoTema.PUBLICADO, EstadoTema.RESERVADO] : [EstadoTema.BORRADOR, EstadoTema.PUBLICADO, EstadoTema.RESERVADO, EstadoTema.CERRADO];
         if (!origins.includes(tema.estado)) {
-          throw new ConflictException(cierre ? 'Solo se pueden cerrar temas PUBLICADOS.' : 'Solo se pueden retirar temas en BORRADOR, PUBLICADO o CERRADO.');
+          throw new ConflictException(cierre ? 'Solo se pueden cerrar temas PUBLICADOS o RESERVADOS.' : 'Solo se pueden retirar temas en BORRADOR, PUBLICADO, RESERVADO o CERRADO.');
         }
         const previous = temaValues(tema);
         tema.estado = destino;
@@ -354,13 +354,13 @@ export class TemasService {
   private async rejectOpenApplications(manager: EntityManager, temaId: string, observacion: string, accion: string, actor: Usuario, ip: string | null): Promise<void> {
     const schema = schemaFrom(manager.connection.options);
     const rows = await manager.query(
-      `SELECT p."id" FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)} ORDER BY p."id" FOR UPDATE OF p`,
+      `SELECT p."id" FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE_CONFIRMACION','PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)} ORDER BY p."id" FOR UPDATE OF p`,
       [temaId],
     ) as Array<{ id: string }>;
     const repository = manager.getRepository(Postulacion);
     for (const row of rows) {
       const application = await repository.findOneBy({ id: row.id });
-      if (!application || ![EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(application.estado)) continue;
+      if (!application || ![EstadoPostulacion.PENDIENTE_CONFIRMACION, EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(application.estado)) continue;
       const previous = { estado: application.estado, observacion: application.observacion };
       application.estado = EstadoPostulacion.RECHAZADA;
       application.observacion = observacion;
@@ -376,7 +376,7 @@ export class TemasService {
   private async openApplications(manager: EntityManager, temaId: string): Promise<number> {
     const schema = schemaFrom(manager.connection.options);
     const rows = await manager.query(
-      `SELECT count(*)::int AS total FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}`,
+      `SELECT count(*)::int AS total FROM ${schema}."postulacion" p WHERE p."tema_id"=$1 AND p."estado" IN ('PENDIENTE_CONFIRMACION','PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}`,
       [temaId],
     ) as Array<{ total: number }>;
     return Number(rows[0]?.total ?? 0);
@@ -446,7 +446,7 @@ export class TemasService {
     const ids = responses.map((item) => item.id);
     const schema = schemaFrom(this.dataSource.options);
     const stats = await this.dataSource.query(
-      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND ($1::uuid IS NULL OR p."periodo_id"=$1) AND p."estado" IN ('PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."id"=ANY($2::uuid[])`,
+      `SELECT t."id",(t."estado"='PUBLICADO' AND NOT EXISTS (SELECT 1 FROM ${schema}."asignacion_tema" a WHERE a."tema_id"=t."id" AND a."estado"='VIGENTE')) AS disponible,(SELECT count(*)::int FROM ${schema}."postulacion" p WHERE p."tema_id"=t."id" AND ($1::uuid IS NULL OR p."periodo_id"=$1) AND p."estado" IN ('PENDIENTE_CONFIRMACION','PENDIENTE','EN_CONFLICTO') AND ${notArchived(schema)}) AS postulaciones_abiertas FROM ${schema}."tema" t WHERE t."id"=ANY($2::uuid[])`,
       [periodoId, ids],
     ) as Array<{ id: string; disponible: boolean; postulaciones_abiertas: number }>;
     const byId = new Map(stats.map((row) => [row.id, row]));

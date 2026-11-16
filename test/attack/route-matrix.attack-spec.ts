@@ -385,6 +385,8 @@ const RUTAS_OBJETO: Record<string, CasoObjeto> = {
   'POST /periodos/:periodoId/postulaciones/:id/tutores-propuestos': { params: sinTutores, body: (e) => ({ tutores_propuestos: [e.docenteTutor.docenteId!] }), lectura: false },
   'GET /periodos/:periodoId/postulaciones/:id/tutores-propuestos': { params: { ...enCerrado, id: (e) => e.postulacionGrupalCerrada }, lectura: true },
   'GET /periodos/:periodoId/postulaciones/me': { params: enCerrado, lectura: true, permitida: propio },
+  'POST /postulaciones/:id/confirmar': { params: { id: (e) => e.postulacionGrupalCerrada }, lectura: false },
+  'POST /postulaciones/:id/rechazar': { params: { id: (e) => e.postulacionGrupalCerrada }, lectura: false },
   'GET /periodos/:periodoId/temas/:temaId/tutores-disponibles': { params: { ...enAbierto, temaId: (e) => e.temaAbierto }, lectura: true, permitida: 'Docentes elegibles de un tema PUBLICADO: TemasService.getById exige al estudiante habilitación en el período y misma carrera, y al docente ser el proponente.' },
   'GET /temas/:id': { params: { id: (e) => e.temaAbierto }, query: (e) => `periodo_id=${e.periodoAbierto}`, lectura: true, permitida: 'Tema PUBLICADO del banco de la carrera: TemasService.getById exige al estudiante período habilitado y misma carrera, y al docente ser el proponente.' },
 };

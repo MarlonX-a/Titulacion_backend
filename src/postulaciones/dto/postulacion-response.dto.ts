@@ -1,6 +1,7 @@
 import { TipoTema } from '../../temas/enums/tipo-tema.enum.js';
 import { ApiProperty } from '@nestjs/swagger';
 import { EstadoPostulacion } from '../enums/estado-postulacion.enum.js';
+import { EstadoConfirmacion } from '../enums/estado-confirmacion.enum.js';
 import { TutorPropuestoResponseDto } from './tutores-propuestos.dto.js';
 
 export class PagedPostulacionesResponseDto {
@@ -26,4 +27,6 @@ export class PostulacionResponseDto {
   @ApiProperty() fecha_postulacion: Date;
   @ApiProperty({ nullable: true }) observacion: string | null;
   @ApiProperty({ type: [TutorPropuestoResponseDto], description: 'Tutores propuestos ordenados por prioridad (cargados en lote).' }) tutores_propuestos: TutorPropuestoResponseDto[];
+  @ApiProperty({ type: [Object], description: 'Respuesta de cada participante a la reserva (vacío en postulaciones anteriores a la confirmación obligatoria).' }) confirmaciones: Array<{ estudiante_id: string; nombres: string; apellidos: string; estado: EstadoConfirmacion; respondida_en: Date | null }>;
+  @ApiProperty({ type: String, format: 'date-time', nullable: true, description: 'Vencimiento de la reserva; solo mientras la postulación está PENDIENTE_CONFIRMACION.' }) vence_en: Date | null;
 }

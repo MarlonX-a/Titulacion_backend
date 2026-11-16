@@ -20,6 +20,7 @@ import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { periodoResponse } from './periodo-response.mapper.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 
 interface PostgresDriverError {
   code?: string;
@@ -154,6 +155,8 @@ export class PeriodosService {
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
     private readonly academico: AcademicoService = new AcademicoService(),
+    /** Opcional solo para pruebas unitarias; Nest siempre lo inyecta (PostulacionesPersistenciaModule). */
+    private readonly reservas?: ReservaTemaService,
   ) {}
 
   async create(dto: CreatePeriodoDto): Promise<PeriodoResponseDto> {
@@ -474,6 +477,8 @@ export class PeriodosService {
       valores_nuevos: { estado: PeriodoEstado.POSTULACION_CERRADA, ...(responsable.automatico ? { automatico: true } : {}), ...valoresNuevosAjuste(ajuste) },
       ip_origen: responsable.ip,
     });
+    // Las reservas que no se confirmaron dentro del plazo vencen con el cierre (misma transacción).
+    await this.reservas?.expirarPorCierre(manager, periodo.id, { actor: responsable.actor, ip: responsable.ip });
     return updated;
   }
 

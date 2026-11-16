@@ -4,4 +4,6 @@ export enum EstadoTema {
   CERRADO = 'CERRADO',
   ASIGNADO = 'ASIGNADO',
   RETIRADO = 'RETIRADO',
+  /** Reservado por una postulación PENDIENTE_CONFIRMACION o PENDIENTE; vuelve a PUBLICADO al liberarse. */
+  RESERVADO = 'RESERVADO',
 }

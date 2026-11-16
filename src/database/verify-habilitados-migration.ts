@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { ConflictException, HttpException, ServiceUnavailableException } from '@nestjs/common';
@@ -121,7 +122,7 @@ async function verify(): Promise<void> {
     audit,
     new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications),
     notifications,
-    new PostulacionPersistenciaService(audit, notifications),
+    new PostulacionPersistenciaService(audit, notifications, new ReservaTemaService(isolatedDataSource, audit, notifications)),
     new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications)),
   );
   const conditional = {

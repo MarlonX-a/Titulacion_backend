@@ -16,6 +16,7 @@ import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import type { ArchivarPeriodoDto } from './dto/archivar-periodo.dto.js';
 import type { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { periodoResponse } from './periodo-response.mapper.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 
 interface PostgresError { code?: string }
 
@@ -31,6 +32,8 @@ export class ArchivoPeriodoService {
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
     private readonly academico: AcademicoService = new AcademicoService(),
+    /** Opcional solo para pruebas unitarias; Nest siempre lo inyecta (PostulacionesPersistenciaModule). */
+    private readonly reservas?: ReservaTemaService,
   ) {}
 
   async archivar(
@@ -59,6 +62,8 @@ export class ArchivoPeriodoService {
           throw new ConflictException('Se requiere una cuenta ADMIN activa para archivar el período.');
         }
 
+        // Un período archivado es inmutable: sus reservas abiertas se cancelan y liberan el tema antes.
+        await this.reservas?.cancelarPorArchivo(manager, current.id, responsible, ip);
         const previous = { estado: current.estado };
         current.estado = PeriodoEstado.ARCHIVADO;
         const updated = await repository.save(current);

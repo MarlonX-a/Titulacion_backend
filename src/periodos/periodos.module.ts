@@ -11,13 +11,14 @@ import { InicioTitulacionService } from './inicio-titulacion.service.js';
 import { ArchivoPeriodoService } from './archivo-periodo.service.js';
 import { HabilitadosModule } from '../habilitados/habilitados.module.js';
 import { ConflictosModule } from '../conflictos/conflictos.module.js';
+import { PostulacionesPersistenciaModule } from '../postulaciones/postulaciones-persistencia.module.js';
 import { ResumenPeriodoService } from './resumen-periodo.service.js';
 import { COLA_TRANSICIONES_PERIODO, TransicionesPeriodoService } from './transiciones-periodo.service.js';
 import { TransicionesPeriodoWorker } from './transiciones-periodo.worker.js';
 
 // Las pruebas sin Redis sustituyen la cola y el worker en el módulo de pruebas (test/support/e2e-app.ts).
 @Module({
-  imports: [TypeOrmModule.forFeature([PeriodoTitulacion]), AuditoriaModule, AcademicoModule, HabilitadosModule, ConflictosModule, ColasModule, BullModule.registerQueue({ name: COLA_TRANSICIONES_PERIODO })],
+  imports: [TypeOrmModule.forFeature([PeriodoTitulacion]), AuditoriaModule, AcademicoModule, HabilitadosModule, ConflictosModule, PostulacionesPersistenciaModule, ColasModule, BullModule.registerQueue({ name: COLA_TRANSICIONES_PERIODO })],
   controllers: [PeriodosController],
   providers: [PeriodosService, InicioTitulacionService, ArchivoPeriodoService, ResumenPeriodoService, TransicionesPeriodoService, TransicionesPeriodoWorker],
 })
