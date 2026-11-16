@@ -218,7 +218,12 @@ export class HabilitadosService {
           ...(query.condicion_ingreso ? { condicion_ingreso: query.condicion_ingreso } : {}),
           ...(query.situacion_ingreso ? { situacion_ingreso: query.situacion_ingreso } : {}),
           ...(query.estado ? { estado: query.estado } : {}),
-          ...(query.carrera_id ? { estudiante: { carrera_id: query.carrera_id } } : {}),
+          ...(query.carrera_id || query.facultad_id
+            ? { estudiante: {
+              ...(query.carrera_id ? { carrera_id: query.carrera_id } : {}),
+              ...(query.facultad_id ? { carrera: { facultad_id: query.facultad_id } } : {}),
+            } }
+            : {}),
         },
         relations: { periodo: true, estudiante: { usuario: true }, lote_importacion: true, resuelto_por: true },
         order: { fecha_habilitacion: 'DESC', id: 'ASC' },
