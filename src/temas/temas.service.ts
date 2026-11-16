@@ -44,6 +44,7 @@ import { TemaHistorial } from './entities/tema-historial.entity.js';
 import { Tema } from './entities/tema.entity.js';
 import { EstadoTema } from './enums/estado-tema.enum.js';
 import { integrantesPermitidos } from './integrantes-tema.js';
+import { ProgramasService } from '../programas/programas.service.js';
 
 interface PostgresDriverError { code?: string; }
 export interface PagedTemas { data: TemaResponseDto[]; total: number; page: number; limit: number; }
@@ -74,6 +75,8 @@ function temaValues(tema: Tema): Record<string, unknown> {
     descripcion: tema.descripcion,
     estado: tema.estado,
     lote_importacion_id: tema.lote_importacion_id ?? null,
+    programa_id: tema.programa_id ?? null,
+    categoria: tema.categoria ?? null,
     creado_en: tema.creado_en,
   };
 }
@@ -99,6 +102,9 @@ function responseFrom(tema: Tema, catalogo: CatalogoAcademico, maxGrupo?: number
     max_integrantes: rango.max,
     estado: tema.estado,
     lote_importacion_id: tema.lote_importacion_id ?? null,
+    programa_id: tema.programa_id ?? null,
+    programa: tema.programa ? { id: tema.programa.id, nombre: tema.programa.nombre } : null,
+    categoria: tema.categoria ?? null,
     creado_en: tema.creado_en,
     disponible: tema.estado === EstadoTema.PUBLICADO,
     postulaciones_abiertas: 0,
@@ -118,7 +124,7 @@ function historialResponseFrom(item: TemaHistorial): TemaHistorialResponseDto {
   };
 }
 
-const temaRelations = { linea: true, docente_proponente: { usuario: true } } as const;
+const temaRelations = { linea: true, docente_proponente: { usuario: true }, programa: true } as const;
 
 /** Career topic bank: topics are not bound to a period; applications and assignments carry the period. */
 @Injectable()
@@ -134,6 +140,8 @@ export class TemasService {
     private readonly auditoria: AuditoriaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
     private readonly academico: AcademicoService = new AcademicoService(),
+    /** Opcional solo para pruebas unitarias; Nest siempre lo inyecta (ProgramasModule). TRG_tema_programa repite la regla. */
+    private readonly programas?: ProgramasService,
   ) {}
 
   private async respuesta(tema: Tema, maxGrupo?: number): Promise<TemaResponseDto> {
@@ -143,13 +151,16 @@ export class TemasService {
   async create(dto: CreateTemaDto, actor: Usuario, ip: string | null): Promise<TemaResponseDto> {
     try {
       return await this.dataSource.transaction(async (manager) => {
+        if (actor.rol === UsuarioRol.COORDINADOR && !dto.programa_id) throw new BadRequestException('Indica el programa (programa_id) del tema.');
         const carrera = await this.academico.buscarCarrera(this.dataSource, dto.carrera_id);
+        if (dto.programa_id) await this.programas?.validarParaTema(manager, dto.programa_id, carrera.id, actor, null);
         const refs = await this.references(manager, dto.linea_id, dto.docente_proponente_id);
         await this.academico.assertMismaCarrera(this.dataSource, refs.docente.carrera_id, carrera.id, 'del docente proponente');
         const repo = manager.getRepository(Tema);
         const tema = await repo.save(repo.create({
           carrera_id: carrera.id, linea: refs.linea, docente_proponente: refs.docente, tipo: dto.tipo,
           titulo: dto.titulo.trim(), descripcion: dto.descripcion.trim(), estado: EstadoTema.BORRADOR, lote_importacion_id: null,
+          programa_id: dto.programa_id ?? null, categoria: dto.categoria?.trim() || null,
         }));
         const loaded = await this.loadForResponse(manager, tema.id);
         await this.writeHistory(manager, loaded, actor, null);
@@ -186,6 +197,7 @@ export class TemasService {
         ...(carreraId ? { carrera_id: carreraId } : {}),
         ...(query.facultad_id ? { carrera: { facultad_id: query.facultad_id } } : {}),
         ...(query.linea_id ? { linea: { id: query.linea_id } } : {}),
+        ...(query.programa_id ? { programa_id: query.programa_id } : {}),
         ...(docenteId ? { docente_proponente: { id: docenteId } } : {}),
         ...(query.tipo ? { tipo: query.tipo } : {}),
         ...(estados ? { estado: estados.length === 1 ? estados[0] : In(estados) } : {}),
@@ -230,6 +242,7 @@ export class TemasService {
     try {
       return await this.dataSource.transaction(async (manager) => {
         const tema = await this.lockTema(manager, id);
+        await this.programas?.assertCoordinadorDelPrograma(manager, tema.programa_id, actor);
         if (!puedeEditarse(tema.estado, await this.hasCurrentAssignment(manager, tema.id))) {
           throw new ConflictException('El tema tiene una asignación VIGENTE; anúlala antes de editarlo.');
         }
@@ -242,6 +255,13 @@ export class TemasService {
         if ((tipo !== tema.tipo || carreraId !== tema.carrera_id) && await this.openApplications(manager, tema.id) > 0) {
           throw new ConflictException('No se puede cambiar el tipo ni la carrera mientras el tema tiene postulaciones abiertas.');
         }
+        const programaId = dto.programa_id === undefined ? tema.programa_id : dto.programa_id;
+        if (programaId === null && actor.rol === UsuarioRol.COORDINADOR) throw new ForbiddenException('Solo ADMIN puede sacar un tema de su programa.');
+        if (programaId !== null && (programaId !== tema.programa_id || carreraId !== tema.carrera_id)) {
+          await this.programas?.validarParaTema(manager, programaId, carreraId, actor, tema.id);
+        }
+        tema.programa_id = programaId;
+        if (dto.categoria !== undefined) tema.categoria = dto.categoria?.trim() || null;
         tema.carrera_id = carreraId;
         tema.tipo = tipo;
         tema.linea = refs.linea;
@@ -266,6 +286,7 @@ export class TemasService {
     try {
       return await this.dataSource.transaction(async (manager) => {
         const tema = await this.lockTema(manager, id);
+        await this.programas?.assertCoordinadorDelPrograma(manager, tema.programa_id, actor);
         if (tema.estado === EstadoTema.CERRADO) return this.reopen(manager, tema, actor, ip);
         if (tema.estado !== EstadoTema.BORRADOR) {
           throw new ConflictException('Solo se pueden publicar temas en estado BORRADOR o reabrir temas CERRADOS.');

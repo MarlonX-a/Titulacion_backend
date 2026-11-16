@@ -14,7 +14,7 @@ export class AcademicoController {
   constructor(private readonly academico: AcademicoService, private readonly dataSource: DataSource) {}
 
   @Get()
-  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Listar facultades con sus carreras (ordenadas por nombre)' })
   @ApiOkResponse({ type: [FacultadResponseDto] })
   async listar(): Promise<FacultadResponseDto[]> {

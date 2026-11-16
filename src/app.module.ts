@@ -12,6 +12,7 @@ import { PeriodosModule } from './periodos/periodos.module.js';
 import { HabilitadosModule } from './habilitados/habilitados.module.js';
 import { LineasInvestigacionModule } from './lineas-investigacion/lineas-investigacion.module.js';
 import { TemasModule } from './temas/temas.module.js';
+import { ProgramasModule } from './programas/programas.module.js';
 import { GruposModule } from './grupos/grupos.module.js';
 import { InvitacionesModule } from './invitaciones/invitaciones.module.js';
 import { PostulacionesModule } from './postulaciones/postulaciones.module.js';
@@ -47,6 +48,7 @@ import { GeneracionesPatModule } from './generaciones-pat/generaciones-pat.modul
     HabilitadosModule,
     LineasInvestigacionModule,
     TemasModule,
+    ProgramasModule,
     GruposModule,
     InvitacionesModule,
     PostulacionesModule,

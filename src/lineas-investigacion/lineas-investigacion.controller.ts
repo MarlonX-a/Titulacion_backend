@@ -36,7 +36,7 @@ export class LineasInvestigacionController {
   }
 
   @Get()
-  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Listar líneas de investigación paginadas' })
   @ApiQuery({ name: 'page', required: false, type: Number, minimum: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, minimum: 1, maximum: 100 })
@@ -53,7 +53,7 @@ export class LineasInvestigacionController {
   }
 
   @Get(':id')
-  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Consultar una línea por UUID' })
   @ApiOkResponse({ type: LineaInvestigacionResponseDto })
   @ApiBadRequestResponse({ description: 'El identificador debe ser un UUID válido.' })

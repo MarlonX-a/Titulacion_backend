@@ -18,7 +18,10 @@ export class TemaResponseDto {
   @ApiProperty({ type: Number, nullable: true, description: 'Maximum members; for GRUPO it is the max_integrantes_default of periodo_id (null without periodo_id).' }) max_integrantes: number | null;
   @ApiProperty({ enum: EstadoTema }) estado: EstadoTema;
   @ApiProperty({ type: String, format: 'uuid', nullable: true }) lote_importacion_id: string | null;
+  @ApiProperty({ type: String, format: 'uuid', nullable: true }) programa_id: string | null;
+  @ApiProperty({ type: Object, nullable: true, description: '{ id, nombre } del programa, o null.' }) programa: { id: string; nombre: string } | null;
+  @ApiProperty({ type: String, nullable: true, maxLength: 120 }) categoria: string | null;
   @ApiProperty({ type: String, format: 'date-time' }) creado_en: Date;
   @ApiProperty({ description: 'True when the topic is PUBLICADO and has no VIGENTE assignment.' }) disponible: boolean;
-  @ApiProperty({ description: 'PENDIENTE and EN_CONFLICTO applications (of periodo_id when given, else of every period).' }) postulaciones_abiertas: number;
+  @ApiProperty({ description: 'PENDIENTE_CONFIRMACION, PENDIENTE and EN_CONFLICTO applications (of periodo_id when given, else of every period).' }) postulaciones_abiertas: number;
 }

@@ -388,6 +388,8 @@ const RUTAS_OBJETO: Record<string, CasoObjeto> = {
   'POST /postulaciones/:id/confirmar': { params: { id: (e) => e.postulacionGrupalCerrada }, lectura: false },
   'POST /postulaciones/:id/rechazar': { params: { id: (e) => e.postulacionGrupalCerrada }, lectura: false },
   'GET /periodos/:periodoId/temas/:temaId/tutores-disponibles': { params: { ...enAbierto, temaId: (e) => e.temaAbierto }, lectura: true, permitida: 'Docentes elegibles de un tema PUBLICADO: TemasService.getById exige al estudiante habilitación en el período y misma carrera, y al docente ser el proponente.' },
+  'PATCH /temas/:id': { params: { id: (e) => e.temaAbierto }, body: () => ({ titulo: 'Título alterado por un actor ajeno' }), lectura: false },
+  'POST /temas/:id/publicar': { params: { id: (e) => e.temaAbierto }, lectura: false },
   'GET /temas/:id': { params: { id: (e) => e.temaAbierto }, query: (e) => `periodo_id=${e.periodoAbierto}`, lectura: true, permitida: 'Tema PUBLICADO del banco de la carrera: TemasService.getById exige al estudiante período habilitado y misma carrera, y al docente ser el proponente.' },
 };
 
@@ -395,6 +397,8 @@ const RUTAS_OBJETO: Record<string, CasoObjeto> = {
 const RUTAS_NO_CUBIERTAS: Record<string, string> = {
   'POST /periodos/:periodoId/grupos': 'Crea un grupo del propio actor; el único identificador es el período (no hay objeto del dueño) y un éxito legítimo deja efectos.',
   'POST /periodos/:periodoId/postulaciones': 'Crea una postulación del propio actor; el único identificador es el período y un éxito legítimo deja efectos.',
+  'GET /programas/:id': 'El escenario de ataque no siembra programas (bloque 4); la visibilidad por carrera para ESTUDIANTE se prueba en programas.service.spec.ts.',
+  'PATCH /programas/:id': 'El escenario de ataque no siembra programas (bloque 4); la propiedad del COORDINADOR se prueba en programas.service.spec.ts y los demás actores reciben 403 por rol.',
 };
 
 /**

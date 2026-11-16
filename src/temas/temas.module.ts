@@ -13,9 +13,10 @@ import { TemaHistorial } from './entities/tema-historial.entity.js';
 import { Tema } from './entities/tema.entity.js';
 import { TemasController } from './temas.controller.js';
 import { TemasService } from './temas.service.js';
+import { ProgramasModule } from '../programas/programas.module.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Tema, TemaHistorial, Docente, Estudiante, EstudianteHabilitado, PeriodoTitulacion, Postulacion, AsignacionTema]), AuditoriaModule, NotificacionesModule, AcademicoModule],
+  imports: [TypeOrmModule.forFeature([Tema, TemaHistorial, Docente, Estudiante, EstudianteHabilitado, PeriodoTitulacion, Postulacion, AsignacionTema]), AuditoriaModule, NotificacionesModule, AcademicoModule, ProgramasModule],
   controllers: [TemasController],
   providers: [TemasService],
   exports: [TemasService],
