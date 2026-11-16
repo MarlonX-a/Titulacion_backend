@@ -71,6 +71,18 @@ describe('TemasService: student catalog scoped to the student career', () => {
     expect(result.data.map((item) => item.id)).toEqual(['t-software']);
   });
 
+  it('filters by facultad combined with carrera_id (AND) for an admin', async () => {
+    const state = setup();
+    await state.service.list({ ...page, carrera_id: 'car-sistemas', facultad_id: 'fac-vida' } as never, admin as never);
+    expect(state.repository.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ carrera_id: 'car-sistemas', carrera: { facultad_id: 'fac-vida' } }) }));
+  });
+
+  it('keeps the student career forced when facultad_id is also sent', async () => {
+    const state = setup();
+    await state.service.list({ ...page, periodo_id: 'periodo-id', carrera_id: 'car-sistemas', facultad_id: 'fac-otra' } as never, student as never);
+    expect(state.repository.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ carrera_id: 'car-software', carrera: { facultad_id: 'fac-otra' }, estado: EstadoTema.PUBLICADO }) }));
+  });
+
   it('cannot fetch a topic of another career by id', async () => {
     const state = setup();
     await expect(state.service.getById('t-sistemas', { periodo_id: 'periodo-id' } as never, student as never)).rejects.toBeInstanceOf(NotFoundException);

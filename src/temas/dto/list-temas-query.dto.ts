@@ -24,6 +24,11 @@ export class ListTemasQueryDto extends PaginationQueryDto {
   @IsUUID()
   carrera_id?: string;
 
+  @ApiPropertyOptional({ format: 'uuid', description: 'Filtra por facultad (combina con carrera_id mediante AND; para ESTUDIANTE nunca amplía su carrera).' })
+  @IsOptional()
+  @IsUUID()
+  facultad_id?: string;
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()

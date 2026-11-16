@@ -184,6 +184,7 @@ export class TemasService {
       if (estados && estados.length === 0) return { data: [], total: 0, page: query.page, limit: query.limit };
       const where: FindOptionsWhere<Tema> = {
         ...(carreraId ? { carrera_id: carreraId } : {}),
+        ...(query.facultad_id ? { carrera: { facultad_id: query.facultad_id } } : {}),
         ...(query.linea_id ? { linea: { id: query.linea_id } } : {}),
         ...(docenteId ? { docente_proponente: { id: docenteId } } : {}),
         ...(query.tipo ? { tipo: query.tipo } : {}),
