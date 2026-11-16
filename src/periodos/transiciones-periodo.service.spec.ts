@@ -58,7 +58,7 @@ describe('TransicionesPeriodoService', () => {
     const resumen = await service.ejecutar(new Date('2026-05-10T12:00:00Z'));
     expect(periodos.cerrarPostulacionAutomatica.mock.calls.map(([id]) => id)).toEqual(['c-1', 'c-2']);
     expect(periodos.abrirPostulacionAutomatica.mock.calls.map(([id]) => id)).toEqual(['a-1', 'a-2']);
-    expect(resumen).toEqual({ abiertos: 1, cerrados: 1, fallidos: 1 });
+    expect(resumen).toEqual({ abiertos: 1, cerrados: 1, fallidos: 1, reservasVencidas: 0 });
   });
 });
 

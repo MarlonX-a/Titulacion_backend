@@ -206,9 +206,9 @@ describe('TemasService: cierre, retiro y reapertura', () => {
     expect(state.postulacionRepo.save).not.toHaveBeenCalled();
   });
 
-  it('solo cierra temas PUBLICADOS', async () => {
+  it('solo cierra temas PUBLICADOS o RESERVADOS', async () => {
     const draft = setup({ temaEstado: EstadoTema.BORRADOR });
-    await expect(draft.service.close('tema-id', { motivo: 'Cierre' }, draft.actor as never, null)).rejects.toThrow('Solo se pueden cerrar temas PUBLICADOS.');
+    await expect(draft.service.close('tema-id', { motivo: 'Cierre' }, draft.actor as never, null)).rejects.toThrow('Solo se pueden cerrar temas PUBLICADOS o RESERVADOS.');
   });
 
   it('reabre un tema CERRADO y registra historial y auditoría', async () => {
