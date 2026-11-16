@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { AcademicoService } from '../academico/academico.service.js';
 import { construirCatalogo } from '../academico/catalogo-academico.js';
@@ -24,12 +24,15 @@ interface SetupOptions {
   docenteCarrera?: string;
   encontrado?: boolean;
   postulaciones?: Array<{ id: string; estado: EstadoPostulacion; observacion: string | null; archivado?: boolean }>;
+  programas?: unknown;
+  rol?: UsuarioRol;
+  programaId?: string | null;
 }
 
 const ABIERTAS = [EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO];
 
 function setup(options: SetupOptions = {}) {
-  const actor = { id: 'admin-id', rol: UsuarioRol.ADMIN };
+  const actor = { id: 'admin-id', rol: options.rol ?? UsuarioRol.ADMIN };
   const cuenta = { id: 'docente-user', nombres: 'Doc', apellidos: 'Ente', estado: UsuarioEstado.ACTIVO, rol: UsuarioRol.DOCENTE };
   const docente = { id: 'docente-id', carrera_id: options.docenteCarrera ?? 'car-software', usuario: cuenta };
   const linea = { id: 'linea-id', codigo: 'IA', nombre: 'IA', activa: true };
@@ -37,6 +40,7 @@ function setup(options: SetupOptions = {}) {
     id: 'tema-id', carrera_id: 'car-software', linea, docente_proponente: docente, tipo: TipoTema.GRUPO,
     titulo: 'Tema', descripcion: 'Descripción', estado: options.temaEstado ?? EstadoTema.PUBLICADO,
     lote_importacion_id: null, creado_en: new Date('2026-01-01T00:00:00Z'),
+    programa_id: options.programaId ?? null, programa: options.programaId ? { id: options.programaId, nombre: 'Programa IA' } : null, categoria: null as string | null,
   };
   const postulaciones = (options.postulaciones ?? []).map((item) => ({ ...item }));
   const temaRepo = {
@@ -85,7 +89,7 @@ function setup(options: SetupOptions = {}) {
   ));
   const service = new TemasService(
     {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
-    dataSource as never, auditoria as never, notificaciones as never, academico,
+    dataSource as never, auditoria as never, notificaciones as never, academico, options.programas as never,
   );
   return { service, actor, tema, postulaciones, temaRepo, historialRepo, postulacionRepo, query, auditoria, notificaciones };
 }
@@ -228,5 +232,56 @@ describe('TemasService: cierre, retiro y reapertura', () => {
   it('responde 404 si el tema no existe', async () => {
     const state = setup({ encontrado: false });
     await expect(state.service.close('tema-id', { motivo: 'Cierre' }, state.actor as never, null)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('TemasService: programas y COORDINADOR', () => {
+  const programas = () => ({ validarParaTema: vi.fn(async () => ({ id: 'prog-id' })), assertCoordinadorDelPrograma: vi.fn(async () => undefined) });
+
+  it('COORDINADOR debe indicar el programa al crear', async () => {
+    const state = setup({ rol: UsuarioRol.COORDINADOR, programas: programas() });
+    await expect(state.service.create(alta as never, state.actor as never, null)).rejects.toThrow('Indica el programa (programa_id) del tema.');
+    expect(state.temaRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('valida el programa (carrera, cupo y responsable) y guarda programa y categoría', async () => {
+    const reglas = programas();
+    const state = setup({ rol: UsuarioRol.COORDINADOR, programas: reglas, programaId: 'prog-id' });
+    const result = await state.service.create({ ...alta, programa_id: 'prog-id', categoria: '  Visión  ' } as never, state.actor as never, null);
+    expect(reglas.validarParaTema).toHaveBeenCalledWith(expect.anything(), 'prog-id', 'car-software', state.actor, null);
+    expect(state.temaRepo.create).toHaveBeenCalledWith(expect.objectContaining({ programa_id: 'prog-id', categoria: 'Visión' }));
+    expect(result).toMatchObject({ programa_id: 'prog-id', programa: { id: 'prog-id', nombre: 'Programa IA' } });
+  });
+
+  it('propaga el rechazo del programa (otra carrera o sin cupo) sin guardar', async () => {
+    const reglas = programas();
+    reglas.validarParaTema.mockRejectedValueOnce(new ConflictException('El programa alcanzó su máximo de 15 temas.'));
+    const state = setup({ programas: reglas });
+    await expect(state.service.create({ ...alta, programa_id: 'prog-id' } as never, state.actor as never, null)).rejects.toThrow('El programa alcanzó su máximo de 15 temas.');
+    expect(state.temaRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('al mover un tema a otro programa valida el destino excluyendo al propio tema', async () => {
+    const reglas = programas();
+    const state = setup({ programas: reglas, programaId: 'prog-a' });
+    await state.service.update('tema-id', { programa_id: 'prog-b' }, state.actor as never, null);
+    expect(reglas.validarParaTema).toHaveBeenCalledWith(expect.anything(), 'prog-b', 'car-software', state.actor, 'tema-id');
+    expect(state.temaRepo.save).toHaveBeenCalledWith(expect.objectContaining({ programa_id: 'prog-b' }));
+  });
+
+  it('COORDINADOR no edita temas de programas ajenos ni saca un tema de su programa', async () => {
+    const ajeno = programas();
+    ajeno.assertCoordinadorDelPrograma.mockRejectedValueOnce(new ForbiddenException('Solo puedes gestionar temas de los programas de los que eres responsable.'));
+    const state = setup({ rol: UsuarioRol.COORDINADOR, programas: ajeno, programaId: 'prog-otro' });
+    await expect(state.service.update('tema-id', { titulo: 'Nuevo' }, state.actor as never, null)).rejects.toBeInstanceOf(ForbiddenException);
+    const propio = setup({ rol: UsuarioRol.COORDINADOR, programas: programas(), programaId: 'prog-id' });
+    await expect(propio.service.update('tema-id', { programa_id: null }, propio.actor as never, null)).rejects.toThrow('Solo ADMIN puede sacar un tema de su programa.');
+  });
+
+  it('no impide títulos similares: no existe una regla de similitud', async () => {
+    const state = setup({ temaEstado: EstadoTema.BORRADOR });
+    await state.service.create({ ...alta, titulo: 'Tema' } as never, state.actor as never, null);
+    await state.service.create({ ...alta, titulo: 'Tema.' } as never, state.actor as never, null);
+    expect(state.temaRepo.save).toHaveBeenCalledTimes(2);
   });
 });
