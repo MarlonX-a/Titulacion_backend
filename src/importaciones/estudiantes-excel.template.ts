@@ -10,25 +10,24 @@ export async function buildStudentsTemplate(): Promise<Buffer> {
   sheet.getCell('A2').value = 'CARRERA <NOMBRE>';
   sheet.getCell('A1').font = { bold: true, size: 14 };
   sheet.getCell('A2').font = { bold: true };
-  sheet.getCell('A3').value = 'La carrera se elige al importar; la celda de carrera es solo informativa. Registra los estudiantes desde la fila 7; ACADEMICO e INGLES aceptan SI o NO.';
+  sheet.getCell('A3').value = 'La carrera se elige al importar. Registra estudiantes completos; las filas con algún dato obligatorio vacío se omiten. ingles y academico aceptan SI o NO.';
   sheet.getCell('A3').font = { italic: true };
   sheet.columns = [
     { key: 'numero', width: 6 },
-    { key: 'campus', width: 14 },
     { key: 'identificacion', width: 16 },
     { key: 'apellidos', width: 28 },
     { key: 'nombres', width: 28 },
-    { key: 'nivel', width: 8 },
-    { key: 'academico', width: 12 },
+    { key: 'nivelEstudiante', width: 18 },
     { key: 'ingles', width: 10 },
+    { key: 'academico', width: 12 },
   ];
   const header = sheet.getRow(STUDENT_TEMPLATE_HEADER_ROW);
-  header.values = ['#', 'Campus', 'Identificación', 'Apellidos', 'Nombres', 'nivel', 'ACADEMICO', 'INGLES'];
+  header.values = ['#', 'Identificación', 'Apellidos', 'Nombres', 'Nivel Estudiante', 'ingles', 'academico'];
   header.font = { bold: true };
   sheet.views = [{ state: 'frozen', ySplit: STUDENT_TEMPLATE_HEADER_ROW }];
   for (let row = STUDENT_TEMPLATE_HEADER_ROW + 1; row <= STUDENT_TEMPLATE_HEADER_ROW + TEMPLATE_DATA_ROWS; row += 1) {
-    sheet.getCell(`C${row}`).numFmt = '@';
-    for (const column of ['G', 'H']) {
+    sheet.getCell(`B${row}`).numFmt = '@';
+    for (const column of ['F', 'G']) {
       sheet.getCell(`${column}${row}`).dataValidation = {
         type: 'list', formulae: ['"SI,NO"'], allowBlank: true, showErrorMessage: true,
         errorTitle: 'Valor no permitido', error: 'Escribe SI o NO.',

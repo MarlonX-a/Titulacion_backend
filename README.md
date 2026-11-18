@@ -332,13 +332,16 @@ valida en segundo plano; consulta su progreso y vista previa mediante
 sin errores puede confirmarse con `POST
 /periodos/:periodoId/importaciones/estudiantes/:id/confirmar`.
 
-Se usa el formato institucional y se lee la primera hoja. Sobre los
-encabezados debe existir una celda `CARRERA <NOMBRE>` (por ejemplo, `CARRERA
-SOFTWARE`). La fila de encabezados se busca en las primeras 20 filas y debe
-contener `Identificación`, `Apellidos`, `Nombres`, `nivel`, `ACADEMICO` e
-`INGLES`; otras columnas se ignoran y se admiten filas ocultas. ACADEMICO e
-INGLES aceptan SI o NO. Se aceptan `.xlsx` de hasta 5 MiB y 1000 filas. Una
-cédula numérica sin el cero inicial se completa a 10 dígitos.
+Se lee la primera hoja. La fila de encabezados se busca en las primeras 20
+filas y debe contener `Identificación`, `Apellidos`, `Nombres`, `Nivel
+Estudiante` (o el alias anterior `nivel`), `ingles` y `academico`, sin importar
+mayúsculas ni tildes. Las columnas se reconocen por nombre aunque cambien de
+posición. La segunda repetición de esos encabezados marca el inicio de la tabla
+inferior y detiene la lectura. Las filas en las que falte cualquiera de los seis
+datos obligatorios se omiten por completo. Las columnas auxiliares como
+`Habilitado` y `Total habilitados` se ignoran, incluidas sus fórmulas. `ingles` y
+`academico` aceptan SI o NO. Se aceptan `.xlsx` de hasta 5 MiB y 1000 filas
+completas. Una cédula numérica sin el cero inicial se completa a 10 dígitos.
 La confirmación crea cuentas ESTUDIANTE con correo `e{cedula}@live.uleam.edu.ec`,
 perfiles (matrícula igual a la cédula) y habilitaciones; la clave temporal
 inicial es la cédula, exige cambio en el primer acceso y se pone en cola para

@@ -36,7 +36,7 @@ export class ImportacionesController {
 
   @Get('importaciones/estudiantes/plantilla')
   @ApiOperation({ summary: 'Descargar plantilla para estudiantes habilitados' })
-  @ApiOkResponse({ description: 'Libro XLSX con el formato institucional: título informativo "CARRERA <NOMBRE>" (la carrera se elige con carrera_id) y encabezados en la fila 6 (#, Campus, Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES).' })
+  @ApiOkResponse({ description: 'Libro XLSX con encabezados #, Identificación, Apellidos, Nombres, Nivel Estudiante, ingles y academico. Las filas incompletas se omiten y las columnas auxiliares se ignoran.' })
   async downloadTemplate(@Res() response: Response): Promise<void> {
     const bytes = await buildStudentsTemplate();
     response.setHeader('Content-Type', XLSX_MIME);

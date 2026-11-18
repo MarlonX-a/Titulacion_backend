@@ -17,8 +17,16 @@ export interface EstudianteExcelRow {
 export interface ExcelRowError { fila: number; columna: string; mensaje: string; }
 export interface ParsedStudentWorkbook { sha256: string; rows: EstudianteExcelRow[]; errors: ExcelRowError[]; }
 
-export const STUDENT_REQUIRED_HEADERS = ['identificacion', 'apellidos', 'nombres', 'nivel', 'academico', 'ingles'] as const;
+export const STUDENT_REQUIRED_HEADERS = ['identificacion', 'apellidos', 'nombres', 'nivelestudiante', 'academico', 'ingles'] as const;
 type RequiredHeader = (typeof STUDENT_REQUIRED_HEADERS)[number];
+const HEADER_ALIASES: Record<RequiredHeader, readonly string[]> = {
+  identificacion: ['identificacion'],
+  apellidos: ['apellidos'],
+  nombres: ['nombres'],
+  nivelestudiante: ['nivelestudiante', 'nivel'],
+  academico: ['academico'],
+  ingles: ['ingles'],
+};
 
 export const HEADER_SCAN_ROWS = 20;
 export const MAX_ROWS = 1000;
@@ -28,6 +36,10 @@ const LOWERCASE_WORDS = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'y', 'e'
 
 export function normalizeExcelText(value: string): string {
   return value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeHeader(value: string): string {
+  return normalizeExcelText(value).replace(/\s+/g, '');
 }
 
 export function cellText(value: ExcelJS.CellValue): string | null {
@@ -88,11 +100,11 @@ function findHeaderRow(sheet: ExcelJS.Worksheet): number {
     let found = false;
     sheet.getRow(number).eachCell({ includeEmpty: false }, (cell) => {
       const value = cellText(cell.value);
-      if (value !== null && normalizeExcelText(value) === 'identificacion') found = true;
+      if (value !== null && HEADER_ALIASES.identificacion.includes(normalizeHeader(value))) found = true;
     });
     if (found) return number;
   }
-  throw new BadRequestException(`No se encontró la fila de encabezados en las primeras ${HEADER_SCAN_ROWS} filas. Encabezados obligatorios: Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES.`);
+  throw new BadRequestException(`No se encontró la fila de encabezados en las primeras ${HEADER_SCAN_ROWS} filas. Encabezados obligatorios: Identificación, Apellidos, Nombres, Nivel Estudiante, academico, ingles.`);
 }
 
 function mapColumns(sheet: ExcelJS.Worksheet, headerRow: number): Record<RequiredHeader, number> {
@@ -100,12 +112,22 @@ function mapColumns(sheet: ExcelJS.Worksheet, headerRow: number): Record<Require
   sheet.getRow(headerRow).eachCell({ includeEmpty: false }, (cell, column) => {
     const value = cellText(cell.value);
     if (value === null) return;
-    const header = STUDENT_REQUIRED_HEADERS.find((item) => item === normalizeExcelText(value));
+    const normalized = normalizeHeader(value);
+    const header = STUDENT_REQUIRED_HEADERS.find((item) => HEADER_ALIASES[item].includes(normalized));
     if (header && !columns.has(header)) columns.set(header, column);
   });
   const missing = STUDENT_REQUIRED_HEADERS.filter((header) => !columns.has(header));
-  if (missing.length > 0) throw new BadRequestException(`Faltan encabezados obligatorios en la fila ${headerRow}: ${missing.join(', ')}. Encabezados obligatorios: Identificación, Apellidos, Nombres, nivel, ACADEMICO, INGLES.`);
+  if (missing.length > 0) throw new BadRequestException(`Faltan encabezados obligatorios en la fila ${headerRow}: ${missing.join(', ')}. Encabezados obligatorios: Identificación, Apellidos, Nombres, Nivel Estudiante (o nivel), academico, ingles.`);
   return Object.fromEntries(columns) as Record<RequiredHeader, number>;
+}
+
+function isRepeatedHeader(row: ExcelJS.Row): boolean {
+  const values = new Set<string>();
+  row.eachCell({ includeEmpty: false }, (cell) => {
+    const value = cellText(cell.value);
+    if (value !== null) values.add(normalizeHeader(value));
+  });
+  return STUDENT_REQUIRED_HEADERS.every((header) => HEADER_ALIASES[header].some((alias) => values.has(alias)));
 }
 
 export function readCedula(value: ExcelJS.CellValue): string {
@@ -148,12 +170,16 @@ export async function parseStudentsXlsx(buffer: Buffer): Promise<ParsedStudentWo
   const headerRow = findHeaderRow(sheet);
   const columns = mapColumns(sheet, headerRow);
   // La carrera se elige al importar (carrera_id); el título del libro (p. ej. «CARRERA SOFTWARE») se ignora.
-  const mapped = STUDENT_REQUIRED_HEADERS.map((header) => columns[header]);
-
   const dataRows: ExcelJS.Row[] = [];
-  sheet.eachRow({ includeEmpty: false }, (row, number) => {
-    if (number > headerRow && mapped.some((column) => !isEmpty(row.getCell(column).value))) dataRows.push(row);
-  });
+  const requiredColumns = STUDENT_REQUIRED_HEADERS.map((header) => columns[header]);
+  for (let number = headerRow + 1; number <= sheet.rowCount; number += 1) {
+    const row = sheet.getRow(number);
+    if (isRepeatedHeader(row)) break;
+    const values = requiredColumns.map((column) => row.getCell(column).value);
+    if (values.every(isEmpty)) continue;
+    if (values.some(isEmpty)) continue;
+    dataRows.push(row);
+  }
   if (dataRows.length > MAX_ROWS) throw new BadRequestException('El archivo supera el máximo de 1000 filas de estudiantes.');
 
   const errors: ExcelRowError[] = [];
@@ -162,7 +188,7 @@ export async function parseStudentsXlsx(buffer: Buffer): Promise<ParsedStudentWo
   const cedulaCheck = new CedulaEcuatorianaValidator();
   for (const row of dataRows) {
     const number = row.number;
-    if (mapped.some((column) => isUnsafeCell(row.getCell(column)))) {
+    if (requiredColumns.some((column) => isUnsafeCell(row.getCell(column)))) {
       errors.push({ fila: number, columna: 'fila', mensaje: 'No se permiten fórmulas ni enlaces en las columnas importadas.' });
       continue;
     }
@@ -172,7 +198,7 @@ export async function parseStudentsXlsx(buffer: Buffer): Promise<ParsedStudentWo
     const cedula = readCedula(value('identificacion'));
     const apellidos = cellText(value('apellidos')) ?? '';
     const nombres = cellText(value('nombres')) ?? '';
-    const nivel = readNivel(value('nivel'));
+    const nivel = readNivel(value('nivelestudiante'));
     const academico = readSiNo(value('academico'));
     const ingles = readSiNo(value('ingles'));
     if (!cedulaCheck.validate(cedula)) field('identificacion', 'La cédula debe tener 10 dígitos y ser válida.');
