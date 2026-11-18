@@ -44,6 +44,28 @@ describe('parseStudentsXlsx (formato institucional)', () => {
     expect(parsed.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('acepta Nivel Estudiante en cualquier posición y omite filas incompletas sin consumir sus cédulas', async () => {
+    const headers = ['Identificación', 'Apellidos', 'Nombres', 'Nivel Estudiante', 'ingles', 'academico', 'Habilitado', 'Total habilitados'];
+    const parsed = await parseStudentsXlsx(await institutionalWorkbook({
+      headers,
+      rows: [
+        ['1316661675', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'SI', { formula: '1+1' }, { formula: 'SUM(A1:A2)' }],
+        ['1316661675', 'APELLIDO', '', 7, 'SI', 'SI'],
+        ['0951676576', 'PEREZ LOPEZ', 'ANA MARIA', 8, 'NO', 'SI'],
+        ['1315226090', 'MORA CEDEÑO', 'LUIS', 6, 'SI', 'SI'],
+        ['Identificación', 'Apellidos', 'Nombres', 'Nivel Estudiante', 'ingles', 'academico'],
+        ['0951676576', 'TABLA INFERIOR', 'NO IMPORTAR', 1, 'SI', 'SI'],
+      ],
+    }));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows.map((row) => [row.cedula, row.nivel, row.habilitado])).toEqual([
+      ['1316661675', 7, true],
+      ['0951676576', 8, false],
+      ['1315226090', 6, true],
+    ]);
+  });
+
   it('acepta SI/NO sin distinguir mayúsculas ni espacios y deriva habilitado', async () => {
     const parsed = await parseStudentsXlsx(await institutionalWorkbook({
       rows: [
@@ -73,7 +95,7 @@ describe('parseStudentsXlsx (formato institucional)', () => {
     const parsed = await parseStudentsXlsx(await institutionalWorkbook({
       rows: [
         [1, 'MANTA', '1316661676', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'SI'],
-        [2, 'MANTA', '0951676576', 'PEREZ LOPEZ', 'ANA MARIA', 0, 'TALVEZ', ''],
+        [2, 'MANTA', '0951676576', 'PEREZ LOPEZ', 'ANA MARIA', 0, 'TALVEZ', 'SI'],
       ],
     }));
     expect(parsed.rows).toEqual([]);
@@ -81,7 +103,6 @@ describe('parseStudentsXlsx (formato institucional)', () => {
       expect.objectContaining({ fila: 7, columna: 'identificacion' }),
       expect.objectContaining({ fila: 8, columna: 'nivel' }),
       expect.objectContaining({ fila: 8, columna: 'academico' }),
-      expect.objectContaining({ fila: 8, columna: 'ingles' }),
     ]));
   });
 
@@ -133,13 +154,13 @@ describe('parseStudentsXlsx (formato institucional)', () => {
     expect(parsed.errors).toEqual([expect.objectContaining({ fila: 7, columna: 'fila' })]);
   });
 
-  it('la plantilla descargable se procesa al completar una fila, sin reemplazar el marcador de carrera', async () => {
+  it('la plantilla descargable usa el encabezado institucional y se procesa al completar una fila', async () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(await buildStudentsTemplate() as unknown as Parameters<typeof workbook.xlsx.load>[0]);
     const sheet = workbook.worksheets[0];
-    expect(sheet.getCell('C7').numFmt).toBe('@');
-    expect(sheet.getCell('G7').dataValidation).toMatchObject({ type: 'list', formulae: ['"SI,NO"'] });
-    fillRow(sheet, 7, [1, 'MANTA', '1316661675', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'NO']);
+    expect(sheet.getCell('B7').numFmt).toBe('@');
+    expect(sheet.getCell('F7').dataValidation).toMatchObject({ type: 'list', formulae: ['"SI,NO"'] });
+    fillRow(sheet, 7, [1, '1316661675', 'ZAMBRANO VERA', 'ORLEY ANTONIO', 7, 'SI', 'NO']);
     const parsed = await parseStudentsXlsx(Buffer.from(await workbook.xlsx.writeBuffer() as ArrayBuffer));
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toMatchObject([{ cedula: '1316661675', habilitado: false }]);

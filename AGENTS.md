@@ -100,8 +100,11 @@ de Sonar al workflow sin cambiar primero esa configuración.
 4. **Importación Excel institucional (implementada).** Se usa la primera hoja
    del libro; la fila de encabezados se detecta en las primeras 20 filas por la
    celda `Identificación` y se exigen `Identificación`, `Apellidos`, `Nombres`,
-   `nivel`, `ACADEMICO` e `INGLES` (sin importar mayúsculas ni tildes); las
-   demás columnas se ignoran. La carrera se elige en el formulario (campo multipart
+   `Nivel Estudiante` (se conserva `nivel` como alias), `ingles` y `academico`
+   (sin importar mayúsculas ni tildes); las demás columnas se ignoran. Una segunda
+   fila con los encabezados obligatorios detiene la lectura antes de la tabla
+   inferior. Las filas con algún dato obligatorio vacío se omiten y no cuentan en
+   el lote. La carrera se elige en el formulario (campo multipart
    `carrera_id`, debe pertenecer a la facultad del período) y es la única fuente: la celda
    `CARRERA <NOMBRE>` del título se ignora (puede faltar o no coincidir). Un estudiante
    existente de otra carrera es error por fila. El correo es `e{cedula}@live.uleam.edu.ec`, la matrícula es la
