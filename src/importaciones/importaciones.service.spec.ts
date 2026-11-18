@@ -126,4 +126,23 @@ describe('ImportacionesService carrera de la importación', () => {
     expect(summary.estado).toBe(Estado.INVALIDA);
     expect(summary.errores).toEqual([expect.objectContaining({ fila: 7 })]);
   });
+
+  it('actualiza el nivel vigente desde el Excel y conserva la matrícula almacenada', async () => {
+    const buffer = await studentWorkbook(null);
+    const context = setup(buffer);
+    const user = await context.repos.get(Usuario)!.save({ email: 'e1316661675@live.uleam.edu.ec', nombres: 'ORLEY ANTONIO', apellidos: 'ZAMBRANO VERA', rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO });
+    await context.repos.get(Estudiante)!.save({ usuario: user, cedula: '1316661675', matricula: 'MATRICULA-REAL', carrera_id: 'car-software', nivel: 6 });
+
+    const { id } = await context.service.submit('periodo-1', context.admin, 'estudiantes.xlsx', buffer, null, 'car-software');
+    await context.service.validateFile(id);
+    const summary = await context.service.get('periodo-1', id);
+    expect(summary.estado).toBe(Estado.LISTA);
+    expect(summary.errores).toEqual([]);
+
+    await context.service.confirm('periodo-1', id, context.admin, null);
+    await context.service.importConfirmed(id);
+
+    expect(context.repos.get(Estudiante)!.rows).toContainEqual(expect.objectContaining({ cedula: '1316661675', matricula: 'MATRICULA-REAL', carrera_id: 'car-software', nivel: 7 }));
+    expect(context.auditoria.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'ACTUALIZAR_NIVEL_ESTUDIANTE_IMPORTACION', valores_anteriores: { nivel: 6 }, valores_nuevos: expect.objectContaining({ nivel: 7 }) }));
+  });
 });

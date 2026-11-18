@@ -247,6 +247,20 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           if (!user) user = await users.save(users.create({ email: row.email, nombres: row.nombres, apellidos: row.apellidos, rol: UsuarioRol.ESTUDIANTE, estado: UsuarioEstado.ACTIVO, id_externo_sso: null, ultimo_acceso: null }));
           let profile = await students.findOne({ where: { usuario: { id: user.id } }, lock: { mode: 'pessimistic_write' } });
           if (!profile) profile = await students.save(students.create({ usuario: user, cedula: row.cedula, matricula: row.matricula, carrera_id: carreraId, nivel: row.nivel }));
+          else if (profile.nivel !== row.nivel) {
+            const oldLevel = profile.nivel;
+            profile.nivel = row.nivel;
+            await students.save(profile);
+            await this.auditoria.registrar(manager, {
+              actor: record.solicitada_por,
+              accion: 'ACTUALIZAR_NIVEL_ESTUDIANTE_IMPORTACION',
+              entidad_tipo: 'estudiante',
+              entidad_id: profile.id,
+              valores_anteriores: { nivel: oldLevel },
+              valores_nuevos: { nivel: row.nivel, lote_importacion_id: lot.id },
+              ip_origen: record.ip_origen,
+            });
+          }
           let habilitation = await enabledRepo.findOne({ where: { periodo: { id: period.id }, estudiante: { id: profile.id } }, lock: { mode: 'pessimistic_write' } });
           if (!habilitation) {
             const resolution = habilitacionImportada(row);
@@ -334,8 +348,12 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
       }
       if (account) {
         const profile = await studentRepo.findOne({ where: { usuario: { id: account.id } }, relations: { usuario: true } });
-        if (profile && (profile.cedula !== row.cedula || profile.matricula !== row.matricula || profile.carrera_id !== carreraId || profile.nivel !== row.nivel)) {
-          errors.push({ fila: row.fila, columna: 'matricula', mensaje: 'El perfil existente contiene datos distintos; corrígelos mediante el proceso administrativo.' });
+        if (profile && profile.cedula !== row.cedula) {
+          errors.push({ fila: row.fila, columna: 'identificacion', mensaje: 'La cédula del perfil existente no coincide con la del archivo; requiere revisión administrativa.' });
+          continue;
+        }
+        if (profile && profile.carrera_id !== carreraId) {
+          errors.push({ fila: row.fila, columna: 'carrera_id', mensaje: 'El perfil existente pertenece a otra carrera; requiere revisión administrativa.' });
           continue;
         }
         if (profile) {

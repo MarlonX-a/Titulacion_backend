@@ -347,7 +347,9 @@ perfiles (matrícula igual a la cédula) y habilitaciones; la clave temporal
 inicial es la cédula, exige cambio en el primer acceso y se pone en cola para
 correo. SI/SI queda `HABILITADO` y `ADMITIDO`; cualquier otra combinación queda
 `SUSPENDIDO` y `NO_ADMITIDO`. Las reimportaciones no cambian claves, estados ni
-decisiones previas.
+decisiones previas. Si la cuenta, cédula y carrera coinciden, el nivel del perfil
+se actualiza al valor del archivo y queda auditado; se conserva la matrícula ya
+registrada. Una cédula o carrera incompatible requiere revisión administrativa.
 
 Los mensajes de desarrollo se pueden leer en Mailpit en
 [http://localhost:8025](http://localhost:8025). Las claves temporales vencen
@@ -788,8 +790,16 @@ debe estar en `POSTULACION_CERRADA` o `EN_CURSO`.
 
 `POST /periodos/{periodoId}/asignaciones-tema/{asignacionId}/pat/me/generaciones`
 solicita, con respuesta `202`, un PDF sin firma construido solo con los datos
-guardados. Si falta el tutor vigente, el estudiante debe seleccionar una
-propuesta perteneciente a esa postulación; no se aceptan nombres libres. La
+guardados. Antes de solicitarla, la pantalla puede consultar
+`GET .../pat/me/tutores-propuestos`: devuelve el tutor vigente o las propuestas
+de esa postulación visibles para el estudiante. Si falta tutor vigente, se debe
+enviar el `id` de la propuesta seleccionada como `tutor_propuesto_id`; no se
+aceptan nombres libres. Una respuesta `400` al solicitar la generación incluye
+`pendientes` con los datos personales, contenido o configuración que falten.
+La consulta `GET .../documentos-pat/ultima` devuelve `404` hasta que el
+estudiante cargue su primer PDF firmado; la interfaz debe mostrar el estado
+“sin entrega” y continuar con la generación, en lugar de tratarlo como un fallo
+inesperado. La
 generación usa una instantánea inmutable, se procesa en segundo plano y puede
 consultarse en `GET .../generaciones/{id}`. Una vez lista, `GET
 .../generaciones/{id}/descarga` entrega una URL privada temporal de cinco
