@@ -77,6 +77,39 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     return { asignacion_tema_id: assignmentId, estudiante_id: student.id, contenido, problematica_sugerida: suggestion[0]?.descripcion ?? null, pendientes: this.pendingContent(contenido) };
   }
 
+  async tutoresPropuestos(periodoId: string, assignmentId: string, actor: Usuario) {
+    await this.authorizeParticipant(periodoId, assignmentId, actor);
+    const s = this.schema();
+    const assigned = await this.db.query(
+      `SELECT d."id" AS docente_id,u."nombres",u."apellidos"
+       FROM ${s}."asignacion_tutor" at
+       JOIN ${s}."docente" d ON d."id"=at."docente_id"
+       JOIN ${s}."usuario" u ON u."id"=d."usuario_id"
+       WHERE at."asignacion_tema_id"=$1 AND at."estado"='VIGENTE'`,
+      [assignmentId],
+    ) as Array<{ docente_id: string; nombres: string; apellidos: string }>;
+
+    if (assigned[0]) {
+      return { tutor_vigente: assigned[0], data: [] };
+    }
+
+    const proposals = await this.db.query(
+      `SELECT tp."id",tp."orden_prioridad",d."id" AS docente_id,u."nombres",u."apellidos",
+              (d."habilitado_tutoria"=true AND u."estado"='ACTIVO' AND u."rol"='DOCENTE') AS elegible_actualmente,
+              (d."id"=t."docente_proponente_id") AS es_proponente_tema
+       FROM ${s}."asignacion_tema" a
+       JOIN ${s}."tema" t ON t."id"=a."tema_id"
+       JOIN ${s}."tutor_propuesto" tp ON tp."postulacion_id"=a."postulacion_id"
+       JOIN ${s}."docente" d ON d."id"=tp."docente_id"
+       JOIN ${s}."usuario" u ON u."id"=d."usuario_id"
+       WHERE a."id"=$1 AND a."periodo_id"=$2
+       ORDER BY (d."id"=t."docente_proponente_id") DESC,tp."orden_prioridad" ASC,tp."id" ASC`,
+      [assignmentId, periodoId],
+    ) as Array<{ id: string; orden_prioridad: number; docente_id: string; nombres: string; apellidos: string; elegible_actualmente: boolean; es_proponente_tema: boolean }>;
+
+    return { tutor_vigente: null, data: proposals };
+  }
+
   async actualizarContenido(periodoId: string, assignmentId: string, dto: ActualizarContenidoPatDto, actor: Usuario, ip: string | null) {
     const student = await this.authorizeParticipant(periodoId, assignmentId, actor);
     const row = await this.db.transaction(async (manager) => {
@@ -98,6 +131,7 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
 
   async solicitar(periodoId: string, assignmentId: string, dto: GenerarPatDto, actor: Usuario, ip: string | null) {
     await this.authorizeParticipant(periodoId, assignmentId, actor);
+    const requestedProposalId = dto?.tutor_propuesto_id ?? null;
     const generation = await this.db.transaction(async (manager) => {
       const s = this.schema();
       const p = await manager.query(`SELECT "estado"::text AS estado,"extension_pat" AS extension FROM ${s}."periodo_titulacion" WHERE "id"=$1 FOR UPDATE`, [periodoId]) as Array<{estado:string;extension:string|null}>;
@@ -115,11 +149,11 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
       let tutor = await manager.query(`SELECT d."id",u."nombres",u."apellidos" FROM ${s}."asignacion_tutor" at JOIN ${s}."docente" d ON d."id"=at."docente_id" JOIN ${s}."usuario" u ON u."id"=d."usuario_id" WHERE at."asignacion_tema_id"=$1 AND at."estado"='VIGENTE'`, [assignmentId]) as Array<{id:string;nombres:string;apellidos:string}>;
       let tutorPropuestoId: string | null = null;
       if (!tutor[0]) {
-        if (!dto.tutor_propuesto_id) throw new BadRequestException('Selecciona un tutor propuesto; el trabajo todavía no tiene tutor asignado.');
-        const proposed = await manager.query(`SELECT tp."id",u."nombres",u."apellidos" FROM ${s}."asignacion_tema" a JOIN ${s}."tutor_propuesto" tp ON tp."postulacion_id"=a."postulacion_id" JOIN ${s}."docente" d ON d."id"=tp."docente_id" JOIN ${s}."usuario" u ON u."id"=d."usuario_id" WHERE a."id"=$1 AND tp."id"=$2`, [assignmentId,dto.tutor_propuesto_id]) as Array<{id:string;nombres:string;apellidos:string}>;
+        if (!requestedProposalId) throw new BadRequestException({ message: 'Selecciona un tutor propuesto; el trabajo todavía no tiene tutor asignado.', pendientes: ['tutor_propuesto_id'] });
+        const proposed = await manager.query(`SELECT tp."id",u."nombres",u."apellidos" FROM ${s}."asignacion_tema" a JOIN ${s}."tutor_propuesto" tp ON tp."postulacion_id"=a."postulacion_id" JOIN ${s}."docente" d ON d."id"=tp."docente_id" JOIN ${s}."usuario" u ON u."id"=d."usuario_id" WHERE a."id"=$1 AND tp."id"=$2`, [assignmentId,requestedProposalId]) as Array<{id:string;nombres:string;apellidos:string}>;
         if (!proposed[0]) throw new BadRequestException('El tutor elegido no pertenece a las propuestas de esta postulación.');
         tutorPropuestoId = proposed[0].id; tutor = [{ id: proposed[0].id, nombres: proposed[0].nombres, apellidos: proposed[0].apellidos }];
-      } else if (dto.tutor_propuesto_id) {
+      } else if (requestedProposalId) {
         throw new BadRequestException('El trabajo ya tiene un tutor vigente; no selecciones una propuesta.');
       }
       const rows = await manager.query(`SELECT a."id" AS asignacion_id,t."titulo",t."descripcion",p."codigo" AS periodo_codigo,p."nombre" AS periodo_nombre,p."extension_pat" AS extension,c."nombre" AS carrera,f."nombre" AS facultad,u."nombres",u."apellidos",u."email",e."cedula",e."matricula",e."nivel",d."datos" AS personal,cp."contenido",$3::jsonb AS participantes,$4::jsonb AS tutor FROM ${s}."asignacion_tema" a JOIN ${s}."tema" t ON t."id"=a."tema_id" JOIN ${s}."periodo_titulacion" p ON p."id"=a."periodo_id" JOIN ${s}."estudiante" e ON e."id"=$2 JOIN ${s}."usuario" u ON u."id"=e."usuario_id" JOIN ${s}."carrera" c ON c."id"=e."carrera_id" JOIN ${s}."facultad" f ON f."id"=c."facultad_id" LEFT JOIN ${s}."estudiante_datos_pat" d ON d."estudiante_id"=e."id" JOIN ${s}."contenido_pat_estudiante" cp ON cp."asignacion_tema_id"=a."id" AND cp."estudiante_id"=e."id" WHERE a."id"=$1`, [assignmentId,freshStudent.id,JSON.stringify(participants),JSON.stringify(tutor[0])]) as Array<Record<string,unknown>>;

@@ -107,8 +107,11 @@ de Sonar al workflow sin cambiar primero esa configuración.
    el lote. La carrera se elige en el formulario (campo multipart
    `carrera_id`, debe pertenecer a la facultad del período) y es la única fuente: la celda
    `CARRERA <NOMBRE>` del título se ignora (puede faltar o no coincidir). Un estudiante
-   existente de otra carrera es error por fila. El correo es `e{cedula}@live.uleam.edu.ec`, la matrícula es la
-   cédula y la clave temporal inicial es la cédula, con cambio obligatorio en
+   existente de otra carrera o con cédula incompatible es error por fila. En una
+   cuenta coincidente se actualiza el nivel desde el Excel y se audita; se conserva
+   la matrícula que ya tenía el perfil. Para cuentas nuevas, matrícula y clave
+   temporal inicial son la cédula. El correo es `e{cedula}@live.uleam.edu.ec`; la clave
+   exige cambio obligatorio en
    el primer acceso. SI/SI en ACADEMICO/INGLES crea la habilitación
    `HABILITADO`/`ADMITIDO`; cualquier otra combinación válida crea
    `SUSPENDIDO`/`NO_ADMITIDO` (ambas REGULAR, resueltas por el ADMIN que
@@ -886,6 +889,7 @@ Rutas principales:
 
 - `GET/PATCH /estudiantes/me/datos-pat`
 - `GET/PATCH /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me`
+- `GET .../pat/me/tutores-propuestos` devuelve tutor vigente o propuestas disponibles para el estudiante
 - `POST .../pat/me/generaciones` y `GET .../generaciones/:id`
 - `GET .../generaciones/:id/descarga`
 - `POST .../documentos-pat` con `generacion_id` y PDF firmado

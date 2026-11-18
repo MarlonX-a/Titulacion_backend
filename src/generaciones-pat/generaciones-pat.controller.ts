@@ -1,11 +1,12 @@
 import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
-import { ApiAcceptedResponse, ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiAcceptedResponse, ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Roles } from '../common/roles.decorator.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { ActualizarContenidoPatDto, ActualizarDatosPatDto, ConfigurarFormatoPatDto, GenerarPatDto } from './dto/actualizar-datos-pat.dto.js';
+import { TutoresPropuestosPatResponseDto } from './dto/tutores-propuestos-pat.dto.js';
 import { GeneracionesPatService } from './generaciones-pat.service.js';
 
 @ApiTags('Generación individual del PAT')
@@ -25,6 +26,11 @@ export class GeneracionesPatController {
   @Get('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me') @Roles(UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Consultar contenido individual del PAT y campos pendientes' })
   contenido(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@CurrentUsuario()actor:Usuario){return this.service.obtenerContenido(p,a,actor);}
+
+  @Get('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/tutores-propuestos') @Roles(UsuarioRol.ESTUDIANTE)
+  @ApiOperation({ summary: 'Consultar tutor vigente o propuestas propias necesarias para generar el PAT' })
+  @ApiOkResponse({ type: TutoresPropuestosPatResponseDto })
+  tutoresPropuestos(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@CurrentUsuario()actor:Usuario){return this.service.tutoresPropuestos(p,a,actor);}
 
   @Patch('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me') @Roles(UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Completar o corregir el contenido individual del PAT' })
