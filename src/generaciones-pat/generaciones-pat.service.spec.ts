@@ -316,22 +316,8 @@ describe('GeneracionesPatService', () => {
     });
   });
 
-  describe('render y validación', () => {
+  describe('validación', () => {
     const plain = Object.create(GeneracionesPatService.prototype) as GeneracionesPatService;
-
-    it('genera un PDF con firma vacía y conserva la identificación del trabajo', async () => {
-      const buffer = await plain['render']({
-        periodo_nombre: 'Período de prueba', periodo_codigo: 'PAT-TEST', extension: 'Extensión Manta', curso: 'Sexto', modalidad: 'GRUPAL', linea_investigacion: { nombre: 'Software' },
-        facultad: 'Facultad de Ciencias', carrera: 'Sistemas', nombres: 'José', apellidos: 'Peña', cedula: '0000000000',
-        email: 'estudiante@live.uleam.edu.ec', titulo: 'Sistema de prueba', descripcion: 'Descripción larga', nivel: 6,
-        personal: { fecha_nacimiento: '2002-05-18', paralelo: 'A', sexo: 'Femenino', nacionalidad: 'Ecuatoriana', estado_civil: 'Soltera', provincia: 'Manabí', canton: 'Manta', parroquia: 'Manta', correo_personal_no_aplica: true, telefono_convencional_no_aplica: true, certificado_votacion_no_aplica: true, celular: '0990000000', tiene_discapacidad: false },
-        contenido: { modalidad_academica: 'TRABAJO_INTEGRACION_CURRICULAR', problematica: 'Descripción de la problemática con acentos: investigación, vinculación y docencia. '.repeat(180), articulaciones: ['INVESTIGACION'] },
-        participantes: [{ nombres: 'José', apellidos: 'Peña', matricula: '0000123' }], tutor: { nombres: 'Ana', apellidos: 'Docente' },
-      });
-      expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
-      expect(buffer.length).toBeGreaterThan(1500);
-      expect((buffer.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length).toBeGreaterThan(1);
-    });
 
     it('rechaza una fecha de nacimiento imposible o futura', () => {
       expect(() => plain['validatePersonal']({ fecha_nacimiento: '2001-02-30' })).toThrow();

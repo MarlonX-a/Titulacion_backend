@@ -3,7 +3,6 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Queue } from 'bullmq';
-import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import { DataSource, QueryFailedError, Repository } from 'typeorm';
 import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions.js';
@@ -18,6 +17,7 @@ import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudianteDatosPat } from './entities/estudiante-datos-pat.entity.js';
 import { ContenidoPatEstudiante } from './entities/contenido-pat.entity.js';
 import { GeneracionPat } from './entities/generacion-pat.entity.js';
+import { renderizarPat, type InstantaneaPat } from './render-pat.js';
 import { ActualizarDatosPatDto, ActualizarContenidoPatDto, GenerarPatDto } from './dto/actualizar-datos-pat.dto.js';
 import {
   CAMPOS_PERSONALES_PAT, DISCAPACIDADES_PAT, calcularPendientesPat, contenidoEfectivo, cursoDesdeNivel, pendientesContenido, pendientesPersonales, resolverTutorPat,
@@ -292,7 +292,7 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     const key = this.storage.createPrivateKey('generaciones-pat', 'pdf');
     await this.cleanup.registrar(null, key);
     try {
-      const buffer = await this.render(row.instantanea);
+      const buffer = await renderizarPat(row.instantanea as InstantaneaPat);
       await this.storage.saveAtPrivateKey(key, buffer, 'application/pdf');
       const stored = await this.db.transaction(async (m) => {
         const repo = m.getRepository(GeneracionPat);
@@ -450,14 +450,6 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
 
   private articulacionesSugeridas(c: { linea_id: string | null }): string[] { return c.linea_id ? ['INVESTIGACION'] : []; }
   private modalidad(c: { titular_id: string | null }): 'INDIVIDUAL' | 'GRUPAL' { return c.titular_id ? 'INDIVIDUAL' : 'GRUPAL'; }
-
-  private async render(x:Record<string,unknown>):Promise<Buffer>{return new Promise((resolve,reject)=>{const doc=new PDFDocument({size:'A4',margin:46,bufferPages:true});const chunks:Buffer[]=[];doc.on('data',(chunk:Buffer)=>chunks.push(chunk));doc.on('end',()=>resolve(Buffer.concat(chunks)));doc.on('error',reject);const p=(x['personal']??{}) as Record<string,unknown>;const c=(x['contenido']??{}) as Record<string,unknown>;const participants=(x['participantes']??[]) as Array<Record<string,unknown>>;const tutor=(x['tutor']??{}) as Record<string,unknown>;const val=(o:Record<string,unknown>,k:string)=>String(o[k]??'');
-    doc.fontSize(10).fillColor('#374151').text('UNIVERSIDAD LAICA ELOY ALFARO DE MANABÍ',{align:'center'}).moveDown(.25);doc.fontSize(15).fillColor('#0f3d68').text('PLAN DE TRABAJO DE TITULACIÓN',{align:'center'});doc.fontSize(9).fillColor('#555').text('Formulario individual · Documento generado sin firma',{align:'center'}).moveDown();
-    const section=(title:string)=>{doc.moveDown(.45).fontSize(11).fillColor('#0f3d68').text(title,{underline:true}).moveDown(.2).fontSize(9).fillColor('#111');};
-    section('1. INFORMACIÓN ACADÉMICA');doc.text(`Período: ${val(x,'periodo_nombre')} (${val(x,'periodo_codigo')})`);doc.text(`Facultad: ${val(x,'facultad')}    Carrera: ${val(x,'carrera')}`);doc.text(`Estudiante: ${val(x,'apellidos')} ${val(x,'nombres')}    Cédula: ${val(x,'cedula')}`);doc.text(`Matrícula: ${val(x,'matricula')}    Nivel: ${val(x,'nivel')}    Curso: ${val(x,'curso')||val(p,'curso')}    Paralelo: ${val(p,'paralelo')}`);doc.text(`Correo institucional: ${val(x,'email')}    Correo personal: ${val(p,'correo_personal')||'No aplica'}`);doc.text(`Tema: ${val(x,'titulo')}`);const line=(x['linea_investigacion']??null) as Record<string,unknown>|null;if(line)doc.text(`Línea de investigación: ${val(line,'nombre')}`);if(x['modalidad'])doc.text(`Modalidad: ${x['modalidad']==='GRUPAL'?'Grupal':'Individual'}`);doc.text(`Tutor: ${val(tutor,'nombres')} ${val(tutor,'apellidos')}`);doc.text(`Integrantes del trabajo: ${participants.map(a=>`${val(a,'nombres')} ${val(a,'apellidos')}`).join('; ')}`);
-    section('2. DATOS PERSONALES');const birth=val(p,'fecha_nacimiento');let age='';if(birth){const b=new Date(`${birth}T00:00:00`),now=new Date(String(x['capturado_en']??Date.now()));let years=now.getFullYear()-b.getFullYear();if(now.getMonth()<b.getMonth()||(now.getMonth()===b.getMonth()&&now.getDate()<b.getDate()))years--;age=`${years} años`;}doc.text(`Fecha de nacimiento: ${birth}    Edad: ${age}    Sexo: ${val(p,'sexo')}`);doc.text(`Nacionalidad: ${val(p,'nacionalidad')}    Estado civil: ${val(p,'estado_civil')}`);doc.text(`Residencia: ${val(p,'provincia')} / ${val(p,'canton')} / ${val(p,'parroquia')}`);doc.text(`Certificado de votación: ${val(p,'certificado_votacion')||'No aplica'}    Celular: ${val(p,'celular')}    Convencional: ${val(p,'telefono_convencional')||'No aplica'}`);const disabilities=Array.isArray(p['discapacidades'])?p['discapacidades'].join(', '):'No';doc.text(`Discapacidad declarada: ${disabilities}${val(p,'otra_discapacidad')?` (${val(p,'otra_discapacidad')})`:''}    Grado: ${val(p,'grado_discapacidad')}`);
-    section('3. PLAN DE TRABAJO');doc.text(`Modalidad académica: ${val(c,'modalidad_academica')}`);doc.text('Título provisional: '+val(x,'titulo'));doc.text('Problemática:',{continued:true}).text(' '+val(c,'problematica'),{align:'justify'});const links=Array.isArray(c['articulaciones'])?c['articulaciones'].join(', '):'';doc.text(`Articulación: ${links}`);doc.text('Tipo de trabajo: Trabajo de Integración Curricular.');doc.moveDown(1.8).text('__________________________________',{align:'center'}).text(`${val(x,'nombres')} ${val(x,'apellidos')}`,{align:'center'}).text('Firma del estudiante',{align:'center'});doc.moveDown().fontSize(8).fillColor('#777').text('Generado electrónicamente a partir de la información institucional y la registrada por el estudiante.',{align:'center'});
-    const range=doc.bufferedPageRange();for(let i=0;i<range.count;i++){doc.switchToPage(i);if(i>0)doc.fontSize(8).fillColor('#666').text('PLAN DE TRABAJO DE TITULACIÓN · CONTINUACIÓN',46,24,{align:'center',lineBreak:false});doc.fontSize(8).fillColor('#666').text(`Extensión / sede: ${val(x,'extension')}`,46,doc.page.height-38,{align:'left',lineBreak:false});doc.text(`PAT · ${i+1} / ${range.count}`,doc.page.width-115,doc.page.height-38,{align:'right',lineBreak:false});}doc.end();});}
 
   private async generationForStudent(periodoId:string,assignmentId:string,id:string,actor:Usuario){const student=await this.authorizeParticipant(periodoId,assignmentId,actor);const row=await this.generacionesRepo.findOneBy({id,asignacion_tema_id:assignmentId,estudiante_id:student.id});if(!row)throw new NotFoundException('No existe esa generación PAT.');return row;}
   private response(r: GeneracionRow, documentoPatId: string | null) {
