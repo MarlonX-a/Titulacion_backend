@@ -17,6 +17,7 @@ import { DocumentoPatDownloadDto, DocumentoPatResponseDto, PagedDocumentoPatResp
 import { DocumentoPat } from './entities/documento-pat.entity.js';
 import { EstadoUltimaPat, ListUltimasPatQueryDto, PagedUltimasPatResponseDto, UltimaPatParticipanteDto } from './dto/ultimas-pat-periodo.dto.js';
 import { DocumentoPatFormato } from './enums/documento-pat-formato.enum.js';
+import { DocumentoPatOrigen } from './enums/documento-pat-origen.enum.js';
 import { RevisionPat } from '../revisiones-pat/entities/revision-pat.entity.js';
 import { RevisionPatResultado } from '../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { RevisionPatResponseDto } from '../revisiones-pat/dto/revision-pat-response.dto.js';
@@ -96,6 +97,7 @@ export class DocumentosPatService {
           estudiante: { id: participantId } as never,
           generacion_id: generation.id,
           generacion: generation,
+          origen: DocumentoPatOrigen.FIRMADO,
           fecha_carga: new Date(),
         }));
         await this.notificaciones.registrarEventoPat(manager, { tipo: 'PAT_ENTREGADO', entidadTipo: 'documento_pat', entidadId: created.id, documentoId: created.id, asignacionId, actorId: actor.id });
@@ -115,6 +117,75 @@ export class DocumentosPatService {
       await this.cleanup.solicitar(undefined, key);
       this.handleError(error);
     }
+  }
+
+  /**
+   * Entrega directa, sin firma, del PDF de una generación LISTO propia. La nueva versión referencia el
+   * mismo objeto de almacenamiento que la generación (ruta, hash y tamaño; el trigger lo exige): las
+   * generaciones son historial inmutable y la limpieza solo borra claves sin referencias, así que no
+   * se copia el archivo. Mismas reglas de versión, notificación y auditoría que la carga firmada.
+   */
+  async entregarGenerada(periodoId: string, asignacionId: string, generacionId: string, actor: Usuario, ip: string | null): Promise<DocumentoPatResponseDto> {
+    if (actor.rol !== UsuarioRol.ESTUDIANTE) throw new ForbiddenException('Solo el estudiante titular o integrante puede entregar su PAT individual.');
+    const initial = await this.context(this.dataSource, periodoId, asignacionId);
+    await this.authorizeUpload(this.dataSource, initial, actor);
+    const studentId = await this.studentId(this.dataSource, actor.id);
+    if (!studentId) throw new ForbiddenException('Se requiere un perfil de estudiante.');
+    let id: string;
+    try {
+      id = await this.dataSource.transaction(async (manager) => {
+        const period = await manager.query(
+          `SELECT "estado"::text AS estado FROM ${this.schema()}."periodo_titulacion" WHERE "id"=$1 FOR UPDATE`, [periodoId],
+        ) as Array<{ estado: string }>;
+        if (!period[0]) throw new NotFoundException('No existe el período indicado.');
+        if (!['POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('La entrega PAT solo se permite con postulaciones cerradas o durante titulación.');
+        const context = await this.context(manager, periodoId, asignacionId, true);
+        if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');
+        await this.authorizeUpload(manager, context, actor);
+        const generation = await manager.getRepository(GeneracionPat).findOne({ where: { id: generacionId, asignacion_tema_id: asignacionId, estudiante_id: studentId }, lock: { mode: 'pessimistic_write' } });
+        if (!generation) throw new NotFoundException('No existe esa generación PAT.');
+        if (generation.estado !== 'LISTO' || !generation.ruta_almacenamiento || !generation.hash_sha256 || !generation.tamano_bytes) throw new ConflictException('La generación todavía no está disponible.');
+        const delivered = await manager.query(`SELECT 1 FROM ${this.schema()}."documento_pat" WHERE "generacion_id"=$1 AND "origen"='GENERADO' LIMIT 1`, [generation.id]) as unknown[];
+        if (delivered.length) throw new ConflictException('Esta generación ya fue entregada; genera una nueva versión del PAT para volver a entregar.');
+        await this.assertCorrectionAllowed(manager, asignacionId, studentId);
+        const latest = await manager.query(
+          `SELECT COALESCE(MAX("version"),0)::int AS version FROM ${this.schema()}."documento_pat" WHERE "asignacion_tema_id"=$1 AND "estudiante_id"=$2`, [asignacionId, studentId],
+        ) as Array<{ version: number }>;
+        const version = Number(latest[0]?.version ?? 0) + 1;
+        if (version > 32767) throw new ConflictException('El trabajo alcanzó el máximo de versiones PAT permitido.');
+        const repo = manager.getRepository(DocumentoPat);
+        const created = await repo.save(repo.create({
+          asignacion_tema_id: asignacionId,
+          asignacion_tema: { id: asignacionId } as never,
+          plantilla_id: null,
+          version,
+          nombre_archivo: 'PAT-generado.pdf',
+          ruta_almacenamiento: generation.ruta_almacenamiento,
+          formato: DocumentoPatFormato.PDF,
+          tamano_bytes: generation.tamano_bytes,
+          hash_sha256: generation.hash_sha256,
+          cargado_por_id: actor.id,
+          cargado_por: actor,
+          estudiante_id: studentId,
+          estudiante: { id: studentId } as never,
+          generacion_id: generation.id,
+          generacion: generation,
+          origen: DocumentoPatOrigen.GENERADO,
+          fecha_carga: new Date(),
+        }));
+        await this.notificaciones.registrarEventoPat(manager, { tipo: 'PAT_ENTREGADO', entidadTipo: 'documento_pat', entidadId: created.id, documentoId: created.id, asignacionId, actorId: actor.id });
+        await this.audit.registrar(manager, {
+          actor, accion: 'ENTREGAR_PAT_GENERADO', entidad_tipo: 'documento_pat', entidad_id: created.id,
+          valores_anteriores: null,
+          valores_nuevos: { id: created.id, asignacion_tema_id: asignacionId, estudiante_id: studentId, generacion_id: generation.id, version, origen: DocumentoPatOrigen.GENERADO, firmado: false, tamano_bytes: Number(generation.tamano_bytes), hash_sha256: generation.hash_sha256 },
+          ip_origen: ip,
+        });
+        return created.id;
+      });
+    } catch (error: unknown) { this.handleError(error); }
+    const saved = await this.repository.findOne({ where: { id }, relations });
+    if (!saved) throw new ServiceUnavailableException('No se pudo recuperar el documento PAT entregado.');
+    return this.toResponse(saved);
   }
 
   async listar(periodoId: string, asignacionId: string, actor: Usuario, page: number, limit: number): Promise<PagedDocumentoPatResponseDto> {
@@ -360,6 +431,7 @@ export class DocumentosPatService {
   private toResponse(item: DocumentoPat): DocumentoPatResponseDto {
     return {
       id: item.id, asignacion_tema_id: item.asignacion_tema_id, plantilla_id: item.plantilla_id, estudiante_id: item.estudiante_id, generacion_id: item.generacion_id,
+      origen: item.origen ?? DocumentoPatOrigen.FIRMADO, firmado: (item.origen ?? DocumentoPatOrigen.FIRMADO) === DocumentoPatOrigen.FIRMADO,
       version: item.version, nombre_archivo: item.nombre_archivo, formato: item.formato,
       tamano_bytes: Number(item.tamano_bytes), hash_sha256: item.hash_sha256, fecha_carga: item.fecha_carga,
       revision: item.revision?.resultado ?? 'PENDIENTE',

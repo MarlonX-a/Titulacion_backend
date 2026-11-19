@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { DocumentoPatFormato } from '../enums/documento-pat-formato.enum.js';
+import { DocumentoPatOrigen } from '../enums/documento-pat-origen.enum.js';
 import { RevisionPatResultado } from '../../revisiones-pat/enums/revision-pat-resultado.enum.js';
 import { RevisionPatResponseDto } from '../../revisiones-pat/dto/revision-pat-response.dto.js';
 
@@ -9,6 +10,8 @@ export class DocumentoPatResponseDto {
   @ApiProperty({ format: 'uuid', nullable: true }) plantilla_id: string | null;
   @ApiProperty({ format: 'uuid', nullable: true }) estudiante_id: string | null;
   @ApiProperty({ format: 'uuid', nullable: true }) generacion_id: string | null;
+  @ApiProperty({ enum: DocumentoPatOrigen, description: 'GENERADO: entrega directa de la generación sin firma; FIRMADO: PDF firmado cargado (incluye versiones anteriores).' }) origen: DocumentoPatOrigen;
+  @ApiProperty({ description: 'Derivado: origen === FIRMADO.' }) firmado: boolean;
   @ApiProperty({ example: 1 }) version: number;
   @ApiProperty() nombre_archivo: string;
   @ApiProperty({ enum: DocumentoPatFormato }) formato: DocumentoPatFormato;

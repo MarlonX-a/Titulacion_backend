@@ -137,7 +137,7 @@ export class AlmacenamientoService implements OnModuleDestroy {
   }
 
   async removePrivate(key: string): Promise<void> {
-    if (!this.bucket || !['importaciones/', 'plantillas-pat/', 'documentos-pat/', 'exportaciones/'].some((prefix) => key.startsWith(prefix))) return;
+    if (!this.bucket || !['importaciones/', 'plantillas-pat/', 'documentos-pat/', 'exportaciones/', 'generaciones-pat/'].some((prefix) => key.startsWith(prefix))) return;
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
     );

@@ -14,7 +14,7 @@ import { NotificacionesPersistenciaService } from '../notificaciones/notificacio
 import { GeneracionPat } from '../generaciones-pat/entities/generacion-pat.entity.js';
 
 describe('DocumentosPatService', () => {
-  function setup(options: { owner?: string; activeTemplate?: boolean; group?: boolean; currentTutor?: boolean; latestReview?: RevisionPatResultado | null } = {}) {
+  function setup(options: { owner?: string; activeTemplate?: boolean; group?: boolean; currentTutor?: boolean; latestReview?: RevisionPatResultado | null; generation?: Partial<GeneracionPat> | null; delivered?: boolean; periodState?: string } = {}) {
     const template = { id: 'template-id', periodo_id: 'period-id', activa: options.activeTemplate ?? true, version: 'v1', nombre_archivo: 'pat.pdf' } as PlantillaPat;
     const context = { periodo_id: 'period-id', periodo_estado: 'POSTULACION_CERRADA', asignacion_estado: 'VIGENTE', estudiante_id: options.group ? null : options.owner ?? 'student-id', grupo_id: options.group ? 'group-id' : null, tema_id: 'topic-id' };
     const saved: Partial<DocumentoPat> = {};
@@ -28,14 +28,15 @@ describe('DocumentosPatService', () => {
     };
     const externalTemplateRepo = { findOneBy: vi.fn().mockResolvedValue(template) };
     const pendingRepo = { delete: vi.fn().mockResolvedValue({ affected: 1 }) };
-    const generation = { id: 'generation-id', asignacion_tema_id: 'assignment-id', estudiante_id: 'student-id', estado: 'LISTO', ruta_almacenamiento: 'generaciones-pat/pat.pdf' };
-    const generationRepo = { findOne: vi.fn().mockResolvedValue(generation) };
+    const generation = options.generation === null ? null : { id: 'generation-id', asignacion_tema_id: 'assignment-id', estudiante_id: 'student-id', estado: 'LISTO', ruta_almacenamiento: 'generaciones-pat/pat.pdf', hash_sha256: 'c'.repeat(64), tamano_bytes: '4096', ...options.generation };
+    const generationRepo = { findOne: vi.fn(async ({ where }: { where: Record<string, unknown> }) => (generation && where['id'] === generation.id && where['estudiante_id'] === generation.estudiante_id ? generation : null)) };
     const manager = {
       query: vi.fn(async (sql: string) => {
+        if (sql.includes('"generacion_id"=$1 AND "origen"=\'GENERADO\'')) return options.delivered ? [{}] : [];
         if (sql.includes('MAX("version")')) return [{ version: maxVersion }];
         if (sql.includes('revision_pat')) return maxVersion ? [{ revision: latestReview }] : [];
         if (sql.includes('asignacion_tema')) return [context];
-        if (sql.includes('SELECT "estado"::text AS estado')) return [{ estado: 'POSTULACION_CERRADA' }];
+        if (sql.includes('SELECT "estado"::text AS estado')) return [{ estado: options.periodState ?? 'POSTULACION_CERRADA' }];
         if (sql.includes('grupo_integrante')) return [{}];
         if (sql.includes('estudiante')) return [{ id: 'student-id' }];
         if (sql.includes('plantilla_pat')) return [{ id: 'template-id' }];
@@ -116,5 +117,65 @@ describe('DocumentosPatService', () => {
     await expect(current.service.listar('period-id', 'assignment-id', tutor, 1, 20)).resolves.toMatchObject({ total: 0 });
     const former = setup();
     await expect(former.service.listar('period-id', 'assignment-id', tutor, 1, 20)).rejects.toMatchObject({ status: 404 });
+  });
+
+  describe('entrega directa de la generación (sin firma)', () => {
+    it('crea una versión GENERADO que referencia el archivo, hash y tamaño de la generación', async () => {
+      const { service, actor, storage, cleanup, audit, docRepository, notifications } = setup();
+      const result = await service.entregarGenerada('period-id', 'assignment-id', 'generation-id', actor, '127.0.0.1');
+      expect(docRepository.save).toHaveBeenCalledWith(expect.objectContaining({
+        version: 1, origen: 'GENERADO', ruta_almacenamiento: 'generaciones-pat/pat.pdf', hash_sha256: 'c'.repeat(64), tamano_bytes: '4096',
+        formato: DocumentoPatFormato.PDF, generacion_id: 'generation-id', estudiante_id: 'student-id', plantilla_id: null, nombre_archivo: 'PAT-generado.pdf',
+      }));
+      expect(result).toMatchObject({ origen: 'GENERADO', firmado: false, version: 1, revision: 'PENDIENTE' });
+      expect(storage.saveAtPrivateKey).not.toHaveBeenCalled();
+      expect(cleanup.registrar).not.toHaveBeenCalled();
+      expect(notifications.registrarEventoPat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ tipo: 'PAT_ENTREGADO', entidadTipo: 'documento_pat' }));
+      expect(audit.registrar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accion: 'ENTREGAR_PAT_GENERADO', valores_nuevos: expect.objectContaining({ origen: 'GENERADO', firmado: false }) }));
+    });
+
+    it('la carga firmada sigue disponible y se marca FIRMADO', async () => {
+      const { service, actor, docRepository } = setup();
+      const result = await service.cargar('period-id', 'assignment-id', { generacion_id: 'generation-id' }, pdf, actor, null);
+      expect(docRepository.save).toHaveBeenCalledWith(expect.objectContaining({ origen: 'FIRMADO' }));
+      expect(result).toMatchObject({ origen: 'FIRMADO', firmado: true });
+    });
+
+    it('numera una nueva versión solo tras OBSERVADO o RECHAZADO', async () => {
+      const { service, actor } = setup({ latestReview: RevisionPatResultado.OBSERVADO });
+      await expect(service.entregarGenerada('period-id', 'assignment-id', 'generation-id', actor, null)).resolves.toMatchObject({ version: 2 });
+    });
+
+    it.each([null, RevisionPatResultado.APROBADO])('bloquea la entrega si la última versión está pendiente o aprobada (%s)', async (latestReview) => {
+      const { service, actor, docRepository } = setup({ latestReview });
+      await expect(service.entregarGenerada('period-id', 'assignment-id', 'generation-id', actor, null)).rejects.toMatchObject({ status: 409 });
+      expect(docRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('responde 404 si la generación no existe o es de otro estudiante y 409 si no está lista o ya se entregó', async () => {
+      const missing = setup({ generation: null });
+      await expect(missing.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', missing.actor, null)).rejects.toMatchObject({ status: 404 });
+      const otherStudent = setup({ generation: { estudiante_id: 'other-student' } });
+      await expect(otherStudent.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', otherStudent.actor, null)).rejects.toMatchObject({ status: 404 });
+      const pending = setup({ generation: { estado: 'PROCESANDO', ruta_almacenamiento: null } });
+      await expect(pending.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', pending.actor, null)).rejects.toThrow('todavía no está disponible');
+      const delivered = setup({ delivered: true });
+      await expect(delivered.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', delivered.actor, null)).rejects.toThrow('ya fue entregada');
+      expect(delivered.docRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('rechaza a quien no es titular, a otros roles y fuera del período habilitado', async () => {
+      const other = setup({ owner: 'different-student' });
+      await expect(other.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', other.actor, null)).rejects.toMatchObject({ status: 403 });
+      const admin = setup();
+      await expect(admin.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', { id: 'admin', rol: UsuarioRol.ADMIN } as Usuario, null)).rejects.toMatchObject({ status: 403 });
+      const closed = setup({ periodState: 'ARCHIVADO' });
+      await expect(closed.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', closed.actor, null)).rejects.toThrow('postulaciones cerradas');
+    });
+
+    it('un integrante activo del grupo entrega su propia generación', async () => {
+      const { service, actor } = setup({ group: true });
+      await expect(service.entregarGenerada('period-id', 'assignment-id', 'generation-id', actor, null)).resolves.toMatchObject({ origen: 'GENERADO', estudiante_id: 'student-id' });
+    });
   });
 });

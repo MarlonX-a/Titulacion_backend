@@ -10,12 +10,13 @@ import { DocumentoPatCargaGuard } from './documento-pat-carga.guard.js';
 import { DocumentoPatUploadInterceptor } from './documento-pat-upload.interceptor.js';
 import { DocumentosPatController } from './documentos-pat.controller.js';
 import { DocumentosPatPeriodoController } from './documentos-pat-periodo.controller.js';
+import { EntregaPatGeneradaController } from './entrega-pat-generada.controller.js';
 import { DocumentosPatService } from './documentos-pat.service.js';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 
 @Module({
   imports: [TypeOrmModule.forFeature([DocumentoPat, PlantillaPat, RevisionPat]), AlmacenamientoModule, ArchivoLimpiezaModule, AuditoriaModule, NotificacionesModule],
-  controllers: [DocumentosPatController, DocumentosPatPeriodoController],
+  controllers: [DocumentosPatController, DocumentosPatPeriodoController, EntregaPatGeneradaController],
   providers: [DocumentosPatService, DocumentoPatUploadInterceptor, DocumentoPatCargaGuard],
   exports: [DocumentosPatService],
 })
