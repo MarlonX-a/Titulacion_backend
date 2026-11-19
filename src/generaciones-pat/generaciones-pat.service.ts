@@ -35,7 +35,12 @@ export const GENERACIONES_PAT_LISTADO_MAX = 50;
 type FuenteAutomatico = 'USUARIO' | 'ESTUDIANTE' | 'ESTUDIANTE_NIVEL' | 'CARRERA' | 'FACULTAD' | 'PERIODO' | 'TEMA' | 'LINEA_INVESTIGACION' | 'ASIGNACION_TEMA' | 'PREDETERMINADO' | 'CONTENIDO_PAT';
 const auto = <T>(valor: T, fuente: FuenteAutomatico) => ({ valor, fuente });
 
-export interface ParticipantePat { id: string; nombres: string; apellidos: string; matricula: string }
+/**
+ * Integrante del trabajo tal como lo ven sus compañeros: la matrícula de un estudiante importado es su
+ * cédula y su clave temporal inicial, así que solo se exponen identificador, nombres y apellidos
+ * (`src/common/privacidad/visor-datos.ts`). La matrícula propia sigue en `automaticos.matricula`.
+ */
+export interface ParticipantePat { id: string; nombres: string; apellidos: string }
 
 /** Datos de la asignación, el estudiante y sus registros PAT que alimentan el resumen y la generación. */
 interface ContextoPat {
@@ -399,7 +404,8 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
       [assignmentId, periodoId, studentId],
     ) as Array<Omit<ContextoPat, 'participantes' | 'tutor_vigente' | 'propuestas'>>;
     if (!rows[0]) throw new NotFoundException('No fue posible preparar la información del PAT.');
-    const participantes = await source.query(`SELECT e."id",u."nombres",u."apellidos",e."matricula" FROM ${s}."asignacion_tema" a JOIN ${s}."estudiante" e ON (e."id"=a."estudiante_id" OR EXISTS(SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=e."id" AND gi."estado"='ACTIVO')) JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE a."id"=$1 ORDER BY u."apellidos",u."nombres",e."id"`, [assignmentId]) as ParticipantePat[];
+    const filasParticipantes = await source.query(`SELECT e."id",u."nombres",u."apellidos" FROM ${s}."asignacion_tema" a JOIN ${s}."estudiante" e ON (e."id"=a."estudiante_id" OR EXISTS(SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=e."id" AND gi."estado"='ACTIVO')) JOIN ${s}."usuario" u ON u."id"=e."usuario_id" WHERE a."id"=$1 ORDER BY u."apellidos",u."nombres",e."id"`, [assignmentId]) as ParticipantePat[];
+    const participantes = filasParticipantes.map(({ id, nombres, apellidos }): ParticipantePat => ({ id, nombres, apellidos }));
     const tutorVigente = await this.tutorVigente(source, assignmentId);
     const propuestas = tutorVigente ? [] : await this.propuestas(source, periodoId, assignmentId);
     return { ...rows[0], nivel: Number(rows[0].nivel), participantes, tutor_vigente: tutorVigente, propuestas };

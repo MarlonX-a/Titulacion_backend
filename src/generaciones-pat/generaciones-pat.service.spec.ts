@@ -14,6 +14,7 @@ import { GeneracionPat } from './entities/generacion-pat.entity.js';
 import { GENERACION_PAT_ATASCADA_MS, GeneracionesPatService, type GeneracionJob } from './generaciones-pat.service.js';
 
 const PERIODO = 'period-id';
+const MATRICULA_COMPANERO = '1399999999';
 const ASIGNACION = 'assignment-id';
 const personalCompleto = {
   fecha_nacimiento: '2002-05-18', paralelo: 'A', sexo: 'Femenino', nacionalidad: 'Ecuatoriana', estado_civil: 'Soltera', provincia: 'Manabí',
@@ -61,7 +62,11 @@ function setup(options: Opciones = {}) {
     if (sql.includes('AS contenido_guardado')) return [contexto];
     if (sql.includes('"tutor_propuesto" tp')) return options.propuestas ?? propuestas;
     if (sql.includes('"asignacion_tutor" at')) return options.vigente ? [{ docente_id: 'doc-9', nombres: 'Tutor', apellidos: 'Vigente' }] : [];
-    if (sql.includes('ORDER BY u."apellidos",u."nombres",e."id"')) return [{ id: 'student-id', nombres: 'José', apellidos: 'Peña', matricula: '1300000000' }];
+    if (sql.includes('ORDER BY u."apellidos",u."nombres",e."id"')) {
+      // Simula una fila con identificadores de más: el servicio debe descartarlos aunque lleguen.
+      const peer = { id: 'peer-id', nombres: 'María', apellidos: 'Zambrano', matricula: MATRICULA_COMPANERO, cedula: MATRICULA_COMPANERO };
+      return options.grupal ? [{ id: 'student-id', nombres: 'José', apellidos: 'Peña', matricula: '1300000000' }, peer] : [{ id: 'student-id', nombres: 'José', apellidos: 'Peña', matricula: '1300000000' }];
+    }
     if (sql.includes('SELECT t."descripcion",t."linea_id"')) return [{ descripcion: 'Descripción del tema', linea_id: 'line-id' }];
     if (sql.includes('"periodo_titulacion" WHERE "id"=$1 FOR UPDATE')) return [{ estado: options.periodo ?? 'POSTULACION_CERRADA' }];
     if (sql.includes('SELECT "id","periodo_id","estado"::text AS estado FROM')) return [{ id: ASIGNACION, periodo_id: PERIODO, estado: 'VIGENTE' }];
@@ -156,6 +161,20 @@ describe('GeneracionesPatService', () => {
       expect(resumen.pendientes).toEqual(['tutor_propuesto_id', 'extension_pat']);
     });
 
+    it('expone de los integrantes solo id, nombres y apellidos, sin matrícula ni cédula de compañeros', async () => {
+      const { service, actor, query } = setup({ grupal: true, personal: personalCompleto });
+      const resumen = await service.resumen(PERIODO, ASIGNACION, actor);
+      expect(resumen.automaticos.integrantes.valor).toEqual([
+        { id: 'student-id', nombres: 'José', apellidos: 'Peña' },
+        { id: 'peer-id', nombres: 'María', apellidos: 'Zambrano' },
+      ]);
+      expect(JSON.stringify(resumen)).not.toContain(MATRICULA_COMPANERO);
+      expect(resumen.automaticos.matricula).toEqual({ valor: '1300000000', fuente: 'ESTUDIANTE' });
+      const [sql] = query.mock.calls.find(([text]) => String(text).includes('ORDER BY u."apellidos",u."nombres",e."id"'))!;
+      expect(sql).not.toContain('matricula');
+      expect(sql).not.toContain('cedula');
+    });
+
     it('rechaza a quien no participa en la asignación', async () => {
       const { service, actor } = setup({ owner: false });
       await expect(service.resumen(PERIODO, ASIGNACION, actor)).rejects.toBeInstanceOf(NotFoundException);
@@ -178,6 +197,18 @@ describe('GeneracionesPatService', () => {
       const instantanea = (generacionRepo.create.mock.calls[0]![0] as GeneracionPat).instantanea;
       expect(instantanea).toMatchObject({ curso: 'Octavo', modalidad: 'INDIVIDUAL', tutor_propuesto_id: 'tp-1', tutor_fuente: 'TUTOR_PROPUESTO_PREDETERMINADO', contenido: { problematica: 'Descripción del tema', articulaciones: ['INVESTIGACION'] } });
       expect(queue.add).toHaveBeenCalledWith('generar-pat', { id: 'new-gen', ciclo: 1 }, expect.objectContaining({ jobId: 'pat-new-gen-1', removeOnFail: false }));
+    });
+
+    it('no guarda en la instantánea la matrícula ni la cédula de los compañeros', async () => {
+      const { service, actor, generacionRepo } = setup({ grupal: true, personal: personalCompleto, contenido: { confirma_problematica: true } });
+      await service.solicitar(PERIODO, ASIGNACION, {}, actor, null);
+      const instantanea = (generacionRepo.create.mock.calls[0]![0] as GeneracionPat).instantanea;
+      expect(instantanea['participantes']).toEqual([
+        { id: 'student-id', nombres: 'José', apellidos: 'Peña' },
+        { id: 'peer-id', nombres: 'María', apellidos: 'Zambrano' },
+      ]);
+      expect(JSON.stringify(instantanea)).not.toContain(MATRICULA_COMPANERO);
+      expect(instantanea).toMatchObject({ cedula: '1300000000', matricula: '1300000000' });
     });
 
     it('acepta otra propuesta de la misma postulación y rechaza una ajena o con tutor vigente', async () => {
