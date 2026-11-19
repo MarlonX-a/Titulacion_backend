@@ -356,18 +356,18 @@ describe.skipIf(!IMAGE)('Campaña viva cliente -> nginx -> backend (ataque)', ()
     const url = `${API}/periodos/${periodo}/asignaciones-tema/${trabajos[0]!.asignacionId}/documentos-pat`;
     const ajeno = await crearCuenta(attack, { rol: 'ESTUDIANTE' });
     const ajenoHeaders = await bearer(attack, ajeno);
-    const plantilla = (await attack.db.query(`SELECT "id" FROM ${attack.s}."plantilla_pat" WHERE "periodo_id"=$1`, [periodo]) as Array<{ id: string }>)[0]!.id;
+    const generacion = trabajos[0]!.generacionId;
     const pdfWith = (mib: number) => Buffer.concat([pdfBenigno(), Buffer.alloc(Math.floor(mib * 1024 * 1024), 0x41)]);
-    const big = multipart({ plantilla_id: plantilla }, { name: 'pat.pdf', mime: PDF_MIME, content: pdfWith(13) });
+    const big = multipart({ generacion_id: generacion }, { name: 'pat.pdf', mime: PDF_MIME, content: pdfWith(13) });
     const tooBig = await nginx('POST', url, { headers: { ...ajenoHeaders, 'Content-Type': big.contentType }, body: big.body });
-    const nine = multipart({ plantilla_id: plantilla }, { name: 'pat.pdf', mime: PDF_MIME, content: pdfWith(9) });
+    const nine = multipart({ generacion_id: generacion }, { name: 'pat.pdf', mime: PDF_MIME, content: pdfWith(9) });
     const viaNginx = await nginx('POST', url, { headers: { ...ajenoHeaders, 'Content-Type': nine.contentType }, body: nine.body });
     const direct = await call(attack.port, 'POST', url.replace(API, ''), { headers: { ...ajenoHeaders, 'Content-Type': nine.contentType }, body: nine.body });
     // Variante "cuerpo detenido": 9 MiB declarados y solo 64 KiB enviados (como A6 directo). Informativa.
     const stalled = await new Promise<{ status: number | 'sin respuesta'; ms: number }>((resolve) => {
       const started = performance.now();
       const boundary = '----ataque-preautorizacion';
-      const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="plantilla_id"\r\n\r\n${plantilla}\r\n--${boundary}\r\nContent-Disposition: form-data; name="archivo"; filename="pat.pdf"\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.4\n`);
+      const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="generacion_id"\r\n\r\n${generacion}\r\n--${boundary}\r\nContent-Disposition: form-data; name="archivo"; filename="pat.pdf"\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.4\n`);
       const req = httpRequest({ host: '127.0.0.1', port: PORT, method: 'POST', path: url, headers: { ...ajenoHeaders, 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': String(9 * 1024 * 1024) } });
       const timer = setTimeout(() => { req.destroy(); resolve({ status: 'sin respuesta', ms: Math.round(performance.now() - started) }); }, 5_000);
       req.on('response', (response) => { clearTimeout(timer); response.resume(); req.destroy(); resolve({ status: response.statusCode ?? 0, ms: Math.round(performance.now() - started) }); });
@@ -416,9 +416,8 @@ describe.skipIf(!IMAGE)('Campaña viva cliente -> nginx -> backend (ataque)', ()
   });
 
   it('[P11] archivos maliciosos rechazados con 400 a través de nginx y PDF benigno aceptado', async () => {
-    const plantilla = (await attack.db.query(`SELECT "id" FROM ${attack.s}."plantilla_pat" WHERE "periodo_id"=$1`, [periodo]) as Array<{ id: string }>)[0]!.id;
     const subir = async (trabajo: TrabajoIndividual, name: string, mime: string, content: Buffer) => {
-      const m = multipart({ plantilla_id: plantilla }, { name, mime, content });
+      const m = multipart({ generacion_id: trabajo.generacionId }, { name, mime, content });
       return nginx('POST', `${API}/periodos/${periodo}/asignaciones-tema/${trabajo.asignacionId}/documentos-pat`, { headers: { ...(await bearer(attack, trabajo.titular)), 'Content-Type': m.contentType }, body: m.body });
     };
     const docx = await subir(trabajos[1]!, 'externo.docx', DOCX_MIME, docxRelacionExterna());

@@ -16,20 +16,21 @@ describe('Subidas PAT (ataque)', () => {
   let attack: AttackApp;
   let e: EscenarioBase;
   let periodo: string;
-  let plantilla: string;
   let trabajos: TrabajoIndividual[];
 
   const subir = async (cuenta: Cuenta, asignacionId: string, nombre: string, mime: string, contenido: Buffer) =>
     request(attack.baseUrl).post(`/periodos/${periodo}/asignaciones-tema/${asignacionId}/documentos-pat`)
       .set('Authorization', `Bearer ${await tokenDe(attack, cuenta)}`)
-      .field('plantilla_id', plantilla)
+      .field('generacion_id', generacionDe(asignacionId))
       .attach('archivo', contenido, { filename: nombre, contentType: mime });
+  /** Generación LISTO del titular de la asignación (la carga firmada la exige). */
+  const generacionDe = (asignacionId: string) => trabajos.find((trabajo) => trabajo.asignacionId === asignacionId)!.generacionId;
   const versiones = async (asignacionId: string) => (await attack.db.query(`SELECT count(*)::int AS total FROM ${attack.s}."documento_pat" WHERE "asignacion_tema_id"=$1`, [asignacionId]) as Array<{ total: number }>)[0]!.total;
 
   beforeAll(async () => {
     attack = await bootAttackApp();
     e = await sembrarEscenario(attack);
-    ({ periodoId: periodo, plantillaId: plantilla, trabajos } = await sembrarTrabajosIndividuales(attack, e.admin, e.docente, ARCHIVOS_MALICIOSOS.length + 4));
+    ({ periodoId: periodo, trabajos } = await sembrarTrabajosIndividuales(attack, e.admin, e.docente, ARCHIVOS_MALICIOSOS.length + 4));
   });
   afterAll(async () => { await attack?.close(); });
   beforeEach(async () => { await attack.flushLimiter(); });
@@ -61,7 +62,9 @@ describe('Subidas PAT (ataque)', () => {
       it(`[M5] la API rechaza la entrega de ${fixture.nombre}`, async () => {
         const trabajo = trabajos[index]!;
         const response = await subir(trabajo.titular, trabajo.asignacionId, fixture.archivo, fixture.mime, fixture.contenido());
-        if (fixture.estado === undefined) expect([400, 415, 422]).toContain(response.status);
+        // La entrega PAT solo admite PDF: un DOCX se rechaza con 415 antes de analizar su contenido.
+        if (fixture.mime !== PDF_MIME) expect(response.status).toBe(415);
+        else if (fixture.estado === undefined) expect([400, 415, 422]).toContain(response.status);
         else expect(response.status).toBe(fixture.estado);
         expect(await versiones(trabajo.asignacionId)).toBe(0);
       });
@@ -82,7 +85,7 @@ describe('Subidas PAT (ataque)', () => {
       const trabajo = trabajos[ARCHIVOS_MALICIOSOS.length]!;
       const token = await tokenDe(attack, ajeno);
       const boundary = '----ataque-preautorizacion';
-      const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="plantilla_id"\r\n\r\n${plantilla}\r\n--${boundary}\r\nContent-Disposition: form-data; name="archivo"; filename="pat.pdf"\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.4\n`);
+      const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="generacion_id"\r\n\r\n${trabajo.generacionId}\r\n--${boundary}\r\nContent-Disposition: form-data; name="archivo"; filename="pat.pdf"\r\nContent-Type: application/pdf\r\n\r\n%PDF-1.4\n`);
       const declared = 9 * 1024 * 1024;
       const status = await new Promise<number | 'sin respuesta'>((resolve) => {
         const req = httpRequest(`${attack.baseUrl}/periodos/${periodo}/asignaciones-tema/${trabajo.asignacionId}/documentos-pat`, {
@@ -123,7 +126,7 @@ describe('Subidas PAT (ataque)', () => {
      */
     const subidaRetenida = async (cuenta: Cuenta, asignacionId: string) => {
       const boundary = '----ataque-concurrencia';
-      const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="plantilla_id"\r\n\r\n${plantilla}\r\n--${boundary}\r\nContent-Disposition: form-data; name="archivo"; filename="pat.pdf"\r\nContent-Type: ${PDF_MIME}\r\n\r\n`);
+      const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="generacion_id"\r\n\r\n${generacionDe(asignacionId)}\r\n--${boundary}\r\nContent-Disposition: form-data; name="archivo"; filename="pat.pdf"\r\nContent-Type: ${PDF_MIME}\r\n\r\n`);
       const contenido = pdfBenigno();
       const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
       const token = await tokenDe(attack, cuenta);
@@ -162,7 +165,7 @@ describe('Subidas PAT (ataque)', () => {
         // Una conexión retenida impediría cerrar el servidor si la prueba falla a medias.
         retenida.abortar();
       }
-      expect(primera.status).toBe(201);
+      expect(primera.status, primera.body).toBe(201);
       expect(await versiones(trabajo.asignacionId)).toBe(1);
 
       // Cupo devuelto al terminar: tras la revisión OBSERVADO, una entrega secuencial vuelve a procesarse.

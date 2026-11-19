@@ -222,11 +222,11 @@ describe('Matriz BOLA/BFLA generada desde las rutas (ataque)', () => {
       const path = resolver(ruta);
       const call = (ruta.method === 'GET' ? agent.get(path) : ruta.method === 'PATCH' ? agent.patch(path) : agent.post(path)).set('Authorization', `Bearer ${await tokenObjeto(cuenta)}`);
       const body = caso.body?.(e);
-      if (body === 'pdf') return call.field('plantilla_id', e.plantilla).attach('archivo', pdfBenigno(), { filename: 'pat.pdf', contentType: PDF_MIME });
+      if (body === 'pdf') return call.field('generacion_id', e.generacionGrupal).attach('archivo', pdfBenigno(), { filename: 'pat.pdf', contentType: PDF_MIME });
       return ruta.method === 'GET' ? call : call.send(body ?? {});
     };
     /** Identificadores del dueño que nunca deben aparecer en respuestas de otros actores. */
-    const idsDelDueno = () => [e.asignacionGrupal, e.asignacionTutor, e.documentoGrupal, e.grupoAsignado, e.grupoPropioAbierto, e.invitacionPropia, e.notificacionPropia, e.postulacionGrupalCerrada, e.postulacionSinTutores];
+    const idsDelDueno = () => [e.asignacionGrupal, e.asignacionTutor, e.documentoGrupal, e.generacionGrupal, e.grupoAsignado, e.grupoPropioAbierto, e.invitacionPropia, e.notificacionPropia, e.postulacionGrupalCerrada, e.postulacionSinTutores];
     const extracto = (response: request.Response) => JSON.stringify(response.body ?? response.text).slice(0, 200);
 
     beforeAll(async () => {
@@ -359,6 +359,16 @@ const RUTAS_OBJETO: Record<string, CasoObjeto> = {
   'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/documentos-pat/ultima': { params: patGrupal, lectura: true },
   'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/documentos-pat/ultima/descarga': { params: patGrupal, lectura: true },
   'GET /periodos/:periodoId/asignaciones-tema/:id': { params: { ...enCerrado, id: (e) => e.asignacionGrupal }, lectura: true },
+  'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me': { params: patGrupal, lectura: true },
+  'PATCH /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me': { params: patGrupal, body: () => ({ confirma_problematica: true }), lectura: false },
+  'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/resumen': { params: patGrupal, lectura: true },
+  'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/tutores-propuestos': { params: patGrupal, lectura: true },
+  'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones': { params: patGrupal, lectura: true },
+  'POST /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones': { params: patGrupal, body: () => ({}), lectura: false },
+  'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id': { params: { ...patGrupal, id: (e) => e.generacionGrupal }, lectura: true },
+  'GET /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/descarga': { params: { ...patGrupal, id: (e) => e.generacionGrupal }, lectura: true },
+  'POST /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/reintentar': { params: { ...patGrupal, id: (e) => e.generacionGrupal }, lectura: false },
+  'POST /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/entregar': { params: { ...patGrupal, id: (e) => e.generacionGrupal }, lectura: false },
   'GET /periodos/:periodoId/asignaciones-tema/me': { params: enCerrado, lectura: true, permitida: propio },
   'GET /periodos/:periodoId/asignaciones-tutor/:id': { params: { ...enCerrado, id: (e) => e.asignacionTutor }, lectura: true },
   'GET /periodos/:periodoId/asignaciones-tutor/me': { params: enCerrado, lectura: true, permitida: propio },

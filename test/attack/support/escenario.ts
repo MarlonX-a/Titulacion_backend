@@ -109,24 +109,37 @@ export async function crearPlantilla(attack: AttackApp, periodoId: string, admin
   return row!.id;
 }
 
-/** Documento PAT ya registrado (sin objeto en S3: basta para lectura de metadatos). */
-export async function crearDocumentoPat(attack: AttackApp, asignacionId: string, plantillaId: string, cargadoPor: Cuenta): Promise<string> {
+/**
+ * Generación PAT LISTO del estudiante (sin objeto en S3: basta para metadatos, URL firmada y entregas).
+ * El trigger de inserción exige asignación vigente, período habilitado y que la solicite el propio estudiante.
+ */
+export async function crearGeneracionPat(attack: AttackApp, asignacionId: string, estudiante: Cuenta): Promise<string> {
+  const [row] = await attack.db.query(
+    `INSERT INTO ${attack.s}."generacion_pat" ("asignacion_tema_id","estudiante_id","solicitada_por_id","instantanea","estado","ruta_almacenamiento","tamano_bytes","hash_sha256","generada_en")
+     VALUES ($1,$2,$3,'{}'::jsonb,'LISTO',$4,'12',$5,CURRENT_TIMESTAMP) RETURNING "id"`,
+    [asignacionId, estudiante.estudianteId, estudiante.usuarioId, `generaciones-pat/attack-${tag()}.pdf`, 'd'.repeat(64)],
+  ) as Array<{ id: string }>;
+  return row!.id;
+}
+
+/** Documento PAT individual firmado ya registrado para `cargadoPor` y su generación (sin objeto en S3). */
+export async function crearDocumentoPat(attack: AttackApp, asignacionId: string, generacionId: string, cargadoPor: Cuenta): Promise<string> {
   const key = `documentos-pat/attack-${tag()}.pdf`;
   return attack.db.transaction(async (manager) => {
     await manager.query(`INSERT INTO ${attack.s}."archivo_limpieza_pendiente" ("ruta_almacenamiento") VALUES ($1)`, [key]);
     const [row] = await manager.query(
-      `INSERT INTO ${attack.s}."documento_pat" ("asignacion_tema_id","plantilla_id","version","nombre_archivo","ruta_almacenamiento","formato","tamano_bytes","hash_sha256","cargado_por_id")
-       VALUES ($1,$2,(SELECT COALESCE(MAX("version"),0)+1 FROM ${attack.s}."documento_pat" WHERE "asignacion_tema_id"=$1),'entrega.pdf',$3,'PDF','12',$4,$5) RETURNING "id"`,
-      [asignacionId, plantillaId, key, 'b'.repeat(64), cargadoPor.usuarioId],
+      `INSERT INTO ${attack.s}."documento_pat" ("asignacion_tema_id","plantilla_id","estudiante_id","generacion_id","origen","version","nombre_archivo","ruta_almacenamiento","formato","tamano_bytes","hash_sha256","cargado_por_id")
+       VALUES ($1,NULL,$2,$3,'FIRMADO',(SELECT COALESCE(MAX("version"),0)+1 FROM ${attack.s}."documento_pat" WHERE "asignacion_tema_id"=$1 AND "estudiante_id"=$2),'entrega.pdf',$4,'PDF','12',$5,$6) RETURNING "id"`,
+      [asignacionId, cargadoPor.estudianteId, generacionId, key, 'b'.repeat(64), cargadoPor.usuarioId],
     ) as Array<{ id: string }>;
     await manager.query(`DELETE FROM ${attack.s}."archivo_limpieza_pendiente" WHERE "ruta_almacenamiento"=$1`, [key]);
     return row!.id;
   });
 }
 
-export interface TrabajoIndividual { titular: Cuenta; asignacionId: string }
+export interface TrabajoIndividual { titular: Cuenta; asignacionId: string; /** Generación LISTO del titular, exigida por la carga firmada. */ generacionId: string }
 
-/** Período cerrado con `n` asignaciones individuales vigentes y una plantilla PAT activa. */
+/** Período cerrado con `n` asignaciones individuales vigentes, cada una con una generación LISTO del titular. */
 export async function sembrarTrabajosIndividuales(attack: AttackApp, admin: Cuenta, docente: Cuenta, n: number): Promise<{ periodoId: string; plantillaId: string; trabajos: TrabajoIndividual[] }> {
   const periodoId = await crearPeriodo(attack);
   const titulares = await Promise.all(Array.from({ length: n }, () => crearCuenta(attack, { rol: 'ESTUDIANTE' })));
@@ -135,7 +148,10 @@ export async function sembrarTrabajosIndividuales(attack: AttackApp, admin: Cuen
   for (const titular of titulares) postulaciones.push(await crearPostulacion(attack, periodoId, await crearTema(attack, docente, 'INDIVIDUAL'), titular, [docente]));
   await cerrarPostulacion(attack, periodoId);
   const trabajos: TrabajoIndividual[] = [];
-  for (const [index, postulacion] of postulaciones.entries()) trabajos.push({ titular: titulares[index]!, asignacionId: await asignarTema(attack, admin, periodoId, postulacion) });
+  for (const [index, postulacion] of postulaciones.entries()) {
+    const asignacionId = await asignarTema(attack, admin, periodoId, postulacion);
+    trabajos.push({ titular: titulares[index]!, asignacionId, generacionId: await crearGeneracionPat(attack, asignacionId, titulares[index]!) });
+  }
   return { periodoId, plantillaId: await crearPlantilla(attack, periodoId, admin), trabajos };
 }
 
@@ -163,6 +179,8 @@ export interface EscenarioBase {
   asignacionIndividual: string;
   asignacionTutor: string;
   plantilla: string;
+  /** Generación LISTO de estA en W1, a la que corresponde documentoGrupal. */
+  generacionGrupal: string;
   documentoGrupal: string;
   postulacionGrupalCerrada: string;
   /** Grupo del período abierto con postulación grupal pendiente. */
@@ -194,7 +212,8 @@ export async function sembrarEscenario(attack: AttackApp): Promise<EscenarioBase
   const asignacionIndividual = await asignarTema(attack, admin, periodoCerrado, postulacionIndividual);
   const asignacionTutor = await asignarTutor(attack, admin, periodoCerrado, asignacionGrupal, docente);
   const plantilla = await crearPlantilla(attack, periodoCerrado, admin);
-  const documentoGrupal = await crearDocumentoPat(attack, asignacionGrupal, plantilla, estA!);
+  const generacionGrupal = await crearGeneracionPat(attack, asignacionGrupal, estA!);
+  const documentoGrupal = await crearDocumentoPat(attack, asignacionGrupal, generacionGrupal, estA!);
 
   const periodoAbierto = await crearPeriodo(attack);
   await habilitar(attack, periodoAbierto, estK!, estL!);
@@ -204,7 +223,7 @@ export async function sembrarEscenario(attack: AttackApp): Promise<EscenarioBase
 
   return {
     admin, docente, docenteAjeno, periodoCerrado, periodoAbierto, estA: estA!, estB: estB!, exIntegrante: exIntegrante!, estE: estE!, estC, sinPerfil,
-    grupoAsignado, asignacionGrupal, asignacionIndividual, asignacionTutor, plantilla, documentoGrupal, postulacionGrupalCerrada,
+    grupoAsignado, asignacionGrupal, asignacionIndividual, asignacionTutor, plantilla, generacionGrupal, documentoGrupal, postulacionGrupalCerrada,
     estK: estK!, estL: estL!, grupoAbierto, postulacionGrupalAbierta,
   };
 }
