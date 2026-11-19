@@ -1,9 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ARTICULACIONES_PAT } from '../pat-pendientes.js';
 
 export class ActualizarDatosPatDto {
   @ApiPropertyOptional({ example: '2002-05-18' }) @IsOptional() @IsString() fecha_nacimiento?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) curso?: string;
+  /** @deprecated El curso se deriva del nivel del estudiante; se acepta por compatibilidad y no se exige. */
+  @ApiPropertyOptional({ deprecated: true, description: 'Se deriva del nivel del estudiante; ya no es obligatorio.' }) @IsOptional() @IsString() @MaxLength(40) curso?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(20) paralelo?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) sexo?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) nacionalidad?: string;
@@ -27,12 +29,14 @@ export class ActualizarDatosPatDto {
 export class ActualizarContenidoPatDto {
   @ApiPropertyOptional({ example: 'TRABAJO_INTEGRACION_CURRICULAR' }) @IsOptional() @IsString() @MaxLength(120) modalidad_academica?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(5000) problematica?: string;
-  @ApiPropertyOptional({ type: [String], enum: ['INVESTIGACION', 'VINCULACION', 'DOCENCIA', 'NINGUNA'] }) @IsOptional() @IsArray() @IsString({ each: true }) articulaciones?: string[];
+  @ApiPropertyOptional({ type: [String], enum: ARTICULACIONES_PAT }) @IsOptional() @IsArray() @IsIn(ARTICULACIONES_PAT, { each: true }) articulaciones?: string[];
   @ApiPropertyOptional() @IsOptional() @IsBoolean() confirma_problematica?: boolean;
+  @ApiPropertyOptional({ format: 'uuid', nullable: true, description: 'Propuesta de tutor elegida cuando no hay tutor vigente; null borra la elección.' })
+  @IsOptional() @IsUUID() tutor_propuesto_id?: string | null;
 }
 
 export class GenerarPatDto {
-  @ApiPropertyOptional({ description: 'Obligatorio si aún no hay tutor vigente; debe pertenecer a la postulación.' })
+  @ApiPropertyOptional({ description: 'Opcional: sin tutor vigente se usa la elección guardada o la primera propuesta; debe pertenecer a la postulación.' })
   @IsOptional() @IsUUID() tutor_propuesto_id?: string;
 }
 
