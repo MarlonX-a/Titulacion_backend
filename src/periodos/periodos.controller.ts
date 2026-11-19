@@ -33,7 +33,7 @@ import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
-import { AbrirPostulacionDto } from './dto/abrir-postulacion.dto.js';
+import { TransicionPeriodoDto } from './dto/transicion-periodo.dto.js';
 import { ArchivarPeriodoDto } from './dto/archivar-periodo.dto.js';
 import { CreatePeriodoDto } from './dto/create-periodo.dto.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
@@ -141,14 +141,14 @@ export class PeriodosController {
 
   @Post(':id/abrir-postulacion')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Abrir (desde BORRADOR) o reabrir (desde POSTULACION_CERRADA) la postulación dentro de su plazo' })
+  @ApiOperation({ summary: 'Abrir (desde BORRADOR) o reabrir (desde POSTULACION_CERRADA) la postulación dentro de su plazo', description: 'Con { forzar: true, motivo } y antes de la fecha de inicio, la fecha de inicio de postulación pasa a la hora actual y se audita como ABRIR_POSTULACION_FORZADA / REABRIR_POSTULACION_FORZADA.' })
   @ApiOkResponse({ type: PeriodoResponseDto })
-  @ApiBadRequestResponse({ description: 'No se admiten propiedades en el cuerpo.' })
+  @ApiBadRequestResponse({ description: 'Cuerpo inválido o motivo ausente/fuera de 10–500 caracteres al forzar.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
-  @ApiConflictResponse({ description: 'El estado no es BORRADOR ni POSTULACION_CERRADA, o la fecha actual está fuera del plazo de postulación.' })
+  @ApiConflictResponse({ description: 'El estado no es BORRADOR ni POSTULACION_CERRADA, la fecha actual está fuera del plazo (sin forzar) o la fecha fin de postulación ya pasó (al forzar).' })
   abrirPostulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: AbrirPostulacionDto,
+    @Body() dto: TransicionPeriodoDto,
     @CurrentUsuario() actor: Usuario,
     @Req() request: Request,
   ): Promise<PeriodoResponseDto> {
@@ -157,14 +157,14 @@ export class PeriodosController {
 
   @Post(':id/cerrar-postulacion')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cerrar el período cuando venza el plazo de postulación' })
+  @ApiOperation({ summary: 'Cerrar el período cuando venza el plazo de postulación', description: 'Con { forzar: true, motivo } antes del vencimiento, la fecha fin de postulación pasa a la hora actual (CERRAR_POSTULACION_FORZADA).' })
   @ApiOkResponse({ type: PeriodoResponseDto })
-  @ApiBadRequestResponse({ description: 'No se admiten propiedades en el cuerpo.' })
+  @ApiBadRequestResponse({ description: 'Cuerpo inválido o motivo ausente/fuera de 10–500 caracteres al forzar.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
   @ApiConflictResponse({ description: 'El período sigue abierto o no está en POSTULACION_ABIERTA.' })
   cerrarPostulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: AbrirPostulacionDto,
+    @Body() dto: TransicionPeriodoDto,
     @CurrentUsuario() actor: Usuario,
     @Req() request: Request,
   ): Promise<PeriodoResponseDto> {
@@ -175,20 +175,19 @@ export class PeriodosController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Iniciar formalmente la titulación',
-    description: 'Los condicionados que sigan pendientes quedan SUSPENDIDO y NO_ADMITIDO en la misma transacción, con auditoría individual.',
+    description: 'Los condicionados que sigan pendientes quedan SUSPENDIDO y NO_ADMITIDO en la misma transacción, con auditoría individual. Con { forzar: true, motivo } antes de la fecha configurada, fecha_inicio_titulacion pasa a la hora actual (INICIAR_TITULACION_FORZADA).',
   })
   @ApiOkResponse({ type: PeriodoResponseDto })
-  @ApiBadRequestResponse({ description: 'El identificador es inválido o el cuerpo tiene propiedades no permitidas.' })
+  @ApiBadRequestResponse({ description: 'El identificador es inválido, el cuerpo tiene propiedades no permitidas o falta el motivo al forzar.' })
   @ApiNotFoundResponse({ description: 'No existe el período solicitado.' })
   @ApiConflictResponse({ description: 'El período no está en POSTULACION_CERRADA, la fecha de inicio no ha llegado o hubo una actualización concurrente.' })
   iniciarTitulacion(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() dto: AbrirPostulacionDto,
+    @Body() dto: TransicionPeriodoDto,
     @CurrentUsuario() actor: Usuario,
     @Req() request: Request,
   ): Promise<PeriodoResponseDto> {
-    void dto;
-    return this.inicioTitulacion.iniciar(id, actor, request.ip || null);
+    return this.inicioTitulacion.iniciar(id, actor, request.ip || null, dto);
   }
 
   @Post(':id/archivar')

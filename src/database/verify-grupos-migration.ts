@@ -48,6 +48,7 @@ import { GroupIntegrityLifecycle20261002070000 } from './migrations/202610020700
 import { CreatePostulaciones20261002080000 } from './migrations/20261002080000-CreatePostulaciones.js';
 import { Postulacion } from '../postulaciones/entities/postulacion.entity.js';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
 import { LineaInvestigacion } from '../lineas-investigacion/entities/linea-investigacion.entity.js';
 import { Tema } from '../temas/entities/tema.entity.js';
@@ -100,7 +101,7 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const students = isolated.getRepository(Estudiante);
-  const postulacionPersistence = new PostulacionPersistenciaService(audit, notifications);
+  const postulacionPersistence = new PostulacionPersistenciaService(audit, notifications, new ReservaTemaService(isolated, audit, notifications));
   const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
   const habilitadoService = new HabilitadosService(habilitados, isolated, new EstudiantesService(students, isolated), audit, new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications), notifications, postulacionPersistence, groupMembership);
   const groupService = new GruposService(isolated.getRepository(Grupo), isolated.getRepository(GrupoIntegrante), students, isolated, habilitadoService, audit, postulacionPersistence);

@@ -23,10 +23,14 @@ function tema(id: string, carreraId: string, estado = EstadoTema.PUBLICADO) {
 }
 
 function setup(postulaciones: Postulacion[] = []) {
-  const temas = [tema('t-software', 'car-software'), tema('t-sistemas', 'car-sistemas'), tema('t-borrador', 'car-software', EstadoTema.BORRADOR)];
+  const temas = [tema('t-software', 'car-software'), tema('t-sistemas', 'car-sistemas'), tema('t-borrador', 'car-software', EstadoTema.BORRADOR), tema('t-derecho', 'car-derecho')];
+  // Emulates the JOIN tema → carrera used by the facultad filter.
+  const facultadDe: Record<string, string> = { 'car-software': 'fac-vida', 'car-sistemas': 'fac-vida', 'car-derecho': 'fac-sociales' };
   const repository = {
-    findAndCount: vi.fn(async ({ where }: { where: { carrera_id?: string; estado?: unknown } }) => {
-      const rows = temas.filter((item) => (!where.carrera_id || item.carrera_id === where.carrera_id) && (typeof where.estado !== 'string' || item.estado === where.estado));
+    findAndCount: vi.fn(async ({ where }: { where: { carrera_id?: string; carrera?: { facultad_id: string }; estado?: unknown } }) => {
+      const rows = temas.filter((item) => (!where.carrera_id || item.carrera_id === where.carrera_id)
+        && (!where.carrera || facultadDe[item.carrera_id] === where.carrera.facultad_id)
+        && (typeof where.estado !== 'string' || item.estado === where.estado));
       return [rows, rows.length];
     }),
     findOne: vi.fn(async ({ where }: { where: { id: string } }) => temas.find((item) => item.id === where.id) ?? null),
@@ -46,10 +50,11 @@ function setup(postulaciones: Postulacion[] = []) {
   const dataSource = { options: { schema: 'titulacion_dev' }, query };
   const academico = new AcademicoService();
   vi.spyOn(academico, 'catalogo').mockResolvedValue(construirCatalogo(
-    [{ id: 'fac-vida', codigo: 'VIDA', nombre: 'Facultad Ciencias de la Vida y Tecnologías' }],
+    [{ id: 'fac-vida', codigo: 'VIDA', nombre: 'Facultad Ciencias de la Vida y Tecnologías' }, { id: 'fac-sociales', codigo: 'SOCIALES', nombre: 'Facultad de Ciencias Sociales' }],
     [
       { id: 'car-software', codigo: 'INGENIERIA_EN_SOFTWARE', nombre: 'Ingeniería en Software', facultad_id: 'fac-vida' },
       { id: 'car-sistemas', codigo: 'INGENIERIA_EN_SISTEMAS', nombre: 'Ingeniería en Sistemas', facultad_id: 'fac-vida' },
+      { id: 'car-derecho', codigo: 'DERECHO', nombre: 'Derecho', facultad_id: 'fac-sociales' },
     ],
   ));
   const service = new TemasService(
@@ -69,6 +74,32 @@ describe('TemasService: student catalog scoped to the student career', () => {
     const result = await state.service.list({ ...page, periodo_id: 'periodo-id', carrera_id: 'car-sistemas' } as never, student as never);
     expect(state.repository.findAndCount).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ carrera_id: 'car-software', estado: EstadoTema.PUBLICADO }) }));
     expect(result.data.map((item) => item.id)).toEqual(['t-software']);
+  });
+
+  it('filters by facultad combined with carrera_id (AND) for an admin', async () => {
+    const state = setup();
+    await state.service.list({ ...page, carrera_id: 'car-sistemas', facultad_id: 'fac-vida' } as never, admin as never);
+    expect(state.repository.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ carrera_id: 'car-sistemas', carrera: { facultad_id: 'fac-vida' } }) }));
+  });
+
+  it('filters by facultad alone (no carrera_id): only topics of that facultad careers', async () => {
+    const state = setup();
+    const result = await state.service.list({ ...page, facultad_id: 'fac-sociales' } as never, admin as never);
+    const where = state.repository.findAndCount.mock.lastCall![0].where;
+    expect(where).toEqual({ carrera: { facultad_id: 'fac-sociales' } });
+    expect(result.data.map((item) => item.id)).toEqual(['t-derecho']);
+  });
+
+  it('returns an empty page when carrera_id belongs to another facultad', async () => {
+    const state = setup();
+    const result = await state.service.list({ ...page, carrera_id: 'car-software', facultad_id: 'fac-sociales' } as never, admin as never);
+    expect(result).toMatchObject({ data: [], total: 0 });
+  });
+
+  it('keeps the student career forced when facultad_id is also sent', async () => {
+    const state = setup();
+    await state.service.list({ ...page, periodo_id: 'periodo-id', carrera_id: 'car-sistemas', facultad_id: 'fac-otra' } as never, student as never);
+    expect(state.repository.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ carrera_id: 'car-software', carrera: { facultad_id: 'fac-otra' }, estado: EstadoTema.PUBLICADO }) }));
   });
 
   it('cannot fetch a topic of another career by id', async () => {

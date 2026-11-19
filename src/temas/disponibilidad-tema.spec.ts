@@ -43,7 +43,7 @@ describe('filtroEstados', () => {
   });
 
   it('disponible=false excluye PUBLICADO', () => {
-    expect(filtroEstados(undefined, false)).toEqual([EstadoTema.BORRADOR, EstadoTema.CERRADO, EstadoTema.ASIGNADO, EstadoTema.RETIRADO]);
+    expect(filtroEstados(undefined, false)).toEqual([EstadoTema.BORRADOR, EstadoTema.CERRADO, EstadoTema.ASIGNADO, EstadoTema.RETIRADO, EstadoTema.RESERVADO]);
     expect(filtroEstados(EstadoTema.ASIGNADO, false)).toEqual([EstadoTema.ASIGNADO]);
     expect(filtroEstados(EstadoTema.PUBLICADO, false)).toEqual([]);
   });

@@ -88,11 +88,13 @@ async function verifyBancoTemasSql({ db, schemaSql: s, step }: TemporarySchemaCo
       return { id, usuarioId };
     };
     // Applications are seeded directly (the registration window and enablement rules are covered elsewhere).
+    // They model data created before the reservation migration (20261115100000): several PENDIENTE per
+    // topic, outside the UQ_postulacion_reserva_tema index, which only covers later postulaciones.
     const postulacion = async (temaId: string, periodoId: string): Promise<string> => {
       const est = await estudiante();
       await db.query(`ALTER TABLE ${s}."postulacion" DISABLE TRIGGER USER`);
       try {
-        return await insertOne(`INSERT INTO ${s}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id","estado") VALUES ($1,$2,$3,1,$4,'PENDIENTE') RETURNING "id"`, [temaId, periodoId, est.id, est.usuarioId]);
+        return await insertOne(`INSERT INTO ${s}."postulacion" ("tema_id","periodo_id","estudiante_id","num_integrantes","registrada_por_id","estado","fecha_postulacion") VALUES ($1,$2,$3,1,$4,'PENDIENTE',now() - interval '30 days') RETURNING "id"`, [temaId, periodoId, est.id, est.usuarioId]);
       } finally { await db.query(`ALTER TABLE ${s}."postulacion" ENABLE TRIGGER USER`); }
     };
     const postA = await postulacion(temaConPostulaciones, periodoA);

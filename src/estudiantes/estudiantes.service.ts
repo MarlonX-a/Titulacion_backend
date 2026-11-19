@@ -145,7 +145,10 @@ export class EstudiantesService {
   async list(query: ListEstudiantesQueryDto): Promise<PagedEstudiantes> {
     try {
       const [estudiantes, total] = await this.repository.findAndCount({
-        where: query.carrera_id ? { carrera_id: query.carrera_id } : {},
+        where: {
+          ...(query.carrera_id ? { carrera_id: query.carrera_id } : {}),
+          ...(query.facultad_id ? { carrera: { facultad_id: query.facultad_id } } : {}),
+        },
         relations: { usuario: true },
         order: { id: 'ASC' },
         skip: (query.page - 1) * query.limit,

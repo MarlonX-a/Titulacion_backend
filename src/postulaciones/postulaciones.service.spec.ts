@@ -10,6 +10,7 @@ import { Tema } from '../temas/entities/tema.entity.js';
 import { EstadoTema } from '../temas/enums/estado-tema.enum.js';
 import { TipoTema } from '../temas/enums/tipo-tema.enum.js';
 import { Postulacion } from './entities/postulacion.entity.js';
+import { PostulacionConfirmacion } from './entities/postulacion-confirmacion.entity.js';
 import { ModalidadPostulacion } from './enums/modalidad-postulacion.enum.js';
 import { PostulacionesService } from './postulaciones.service.js';
 
@@ -22,6 +23,7 @@ function setup(carreraEstudiante: string, tipo: TipoTema = TipoTema.INDIVIDUAL) 
     [Estudiante, { findOne: vi.fn(async () => ({ id: 'estudiante-id' })) }],
     [GrupoIntegrante, { findOne: vi.fn(async () => null) }],
     [Postulacion, { findOne: vi.fn(async () => null), create: vi.fn((v: object) => v), save: vi.fn(async (v: object) => ({ id: 'postulacion-id', ...v })) }],
+    [PostulacionConfirmacion, { create: vi.fn((v: object) => v), save: vi.fn(async (v: object) => v) }],
   ]);
   const manager = { query: vi.fn(async () => []), getRepository: (entity: unknown) => repos.get(entity) };
   const dataSource = { transaction: vi.fn(async (cb: (m: typeof manager) => Promise<unknown>) => cb(manager)) };
@@ -36,7 +38,8 @@ function setup(carreraEstudiante: string, tipo: TipoTema = TipoTema.INDIVIDUAL) 
   const repository = { findOne: vi.fn(async () => null) };
   const service = new PostulacionesService(
     repository as never, {} as never, {} as never, dataSource as never, habilitados as never, { registrar: vi.fn() } as never,
-    {} as never, tutores as never, asignaciones as never, { postulacion: vi.fn() } as never, {} as never, academico,
+    {} as never, tutores as never, asignaciones as never, { postulacion: vi.fn() } as never, {} as never,
+    { reservar: vi.fn(), liberarReservasVencidasDelTema: vi.fn(async () => false) } as never, academico,
   );
   return { service, asignaciones, tutores };
 }

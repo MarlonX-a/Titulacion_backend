@@ -66,8 +66,8 @@ export class DocentesController {
   }
 
   @Get()
-  @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Listar perfiles de docentes paginados' })
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR)
+  @ApiOperation({ summary: 'Listar perfiles de docentes paginados (COORDINADOR: para elegir el docente proponente de los temas de sus programas)' })
   @ApiQuery({ name: 'page', required: false, type: Number, minimum: 1 })
   @ApiQuery({
     name: 'limit',
@@ -93,8 +93,10 @@ export class DocentesController {
       },
     },
   })
-  list(@Query() query: ListDocentesQueryDto) {
-    return this.docentes.list(query);
+  async list(@Query() query: ListDocentesQueryDto, @CurrentUsuario() actor: Usuario) {
+    const page = await this.docentes.list(query);
+    // Solo ADMIN recibe la cédula; COORDINADOR solo necesita identificar al docente proponente.
+    return actor.rol === UsuarioRol.ADMIN ? page : { ...page, data: page.data.map((docente) => ({ ...docente, cedula: null })) };
   }
 
   @Get('me')

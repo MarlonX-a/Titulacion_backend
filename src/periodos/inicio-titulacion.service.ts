@@ -17,6 +17,8 @@ import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
 import { periodoResponse } from './periodo-response.mapper.js';
+import type { TransicionPeriodoDto } from './dto/transicion-periodo.dto.js';
+import { ahoraBaseDatos, motivoForzado, valoresAnterioresAjuste, valoresNuevosAjuste, type AjusteForzado } from './periodos.service.js';
 
 const OBSERVACION_SUSPENSION_INICIO = 'Requisito no resuelto antes del inicio de titulación.';
 
@@ -46,6 +48,7 @@ export class InicioTitulacionService {
     id: string,
     actor: Usuario,
     ip: string | null,
+    dto: TransicionPeriodoDto = {},
   ): Promise<PeriodoResponseDto> {
     try {
       const periodo = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
@@ -59,8 +62,20 @@ export class InicioTitulacionService {
           throw new ConflictException('Solo se puede iniciar un período en POSTULACION_CERRADA.');
         }
 
-        const now = new Date();
-        if (now < current.fecha_inicio_titulacion) {
+        let now = new Date();
+        let ajuste: AjusteForzado | null = null;
+        if (dto.forzar === true) {
+          const motivo = motivoForzado(dto);
+          // Hora de PostgreSQL: el disparador de inicio compara con clock_timestamp().
+          now = await ahoraBaseDatos(manager);
+          if (now < current.fecha_inicio_titulacion) {
+            if (now < current.fecha_fin_postulacion) {
+              throw new ConflictException('No se puede forzar el inicio: el plazo de postulación aún no vence.');
+            }
+            ajuste = { campo: 'fecha_inicio_titulacion', anterior: current.fecha_inicio_titulacion, nuevo: now, motivo };
+            current.fecha_inicio_titulacion = now;
+          }
+        } else if (now < current.fecha_inicio_titulacion) {
           throw new ConflictException('El período no puede iniciar antes de la fecha configurada.');
         }
 
@@ -127,14 +142,15 @@ export class InicioTitulacionService {
         const updated = await repository.save(current);
         await this.auditoria.registrar(manager, {
           actor,
-          accion: 'INICIAR_TITULACION',
+          accion: ajuste ? 'INICIAR_TITULACION_FORZADA' : 'INICIAR_TITULACION',
           entidad_tipo: 'periodo_titulacion',
           entidad_id: current.id,
-          valores_anteriores: { estado: PeriodoEstado.POSTULACION_CERRADA },
+          valores_anteriores: { estado: PeriodoEstado.POSTULACION_CERRADA, ...valoresAnterioresAjuste(ajuste) },
           valores_nuevos: {
             estado: PeriodoEstado.EN_CURSO,
             fecha_inicio_titulacion: now,
             condicionados_suspendidos: pendingRows.length,
+            ...valoresNuevosAjuste(ajuste),
           },
           ip_origen: ip,
         });

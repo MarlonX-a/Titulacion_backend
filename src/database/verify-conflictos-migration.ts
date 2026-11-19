@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { HttpException } from '@nestjs/common';
@@ -197,7 +198,7 @@ async function verify(): Promise<void> {
   const rejectedInvitationNotices = await isolated.query(`SELECT DISTINCT "usuario_id" FROM ${schemaSql()}."notificacion" WHERE "tipo"='INVITACION_RECHAZADA' AND "entidad_id"=$1`, [invitationForNotices.id]) as Array<{ usuario_id: string }>;
   if (rejectedInvitationNotices.length !== 1 || rejectedInvitationNotices[0]?.usuario_id !== students[3]!.usuario.id) throw new Error('El aviso de rechazo de invitación no llegó únicamente al emisor.');
   const assignmentPersistence = new AsignacionTemaPersistenciaService(assignmentAudit, new AsignacionTutorPersistenciaService(assignmentAudit), notificationPersistence);
-  const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence, notificationPersistence, new PostulacionPersistenciaService(audit, notificationPersistence), new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notificationPersistence)));
+  const habilitadosService = new HabilitadosService(isolated.getRepository(EstudianteHabilitado), isolated, new EstudiantesService(isolated.getRepository(Estudiante), isolated), audit, assignmentPersistence, notificationPersistence, new PostulacionPersistenciaService(audit, notificationPersistence, new ReservaTemaService(isolated, audit, notificationPersistence)), new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notificationPersistence)));
   const assignmentsService = new AsignacionesTemaService(isolated.getRepository(AsignacionTema), isolated.getRepository(Estudiante), isolated, habilitadosService, audit, assignmentPersistence, notificationPersistence);
   const assignDto = { motivo: 'La comisión confirmó la evaluación y seleccionó la candidatura ganadora.' };
   const attempts = await Promise.allSettled([

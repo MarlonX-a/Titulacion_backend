@@ -308,7 +308,7 @@ export class ExportacionesService implements OnModuleInit, OnModuleDestroy {
     const enums: Record<string, string[]> = {
       estado: tipo === ExportacionTipo.ESTUDIANTES ? ['HABILITADO','SUSPENDIDO']
         : tipo === ExportacionTipo.GRUPOS ? ['EN_CONFORMACION','ACTIVO','DISUELTO','ANULADO']
-        : tipo === ExportacionTipo.TEMAS_OFERTADOS ? ['BORRADOR','PUBLICADO','CERRADO','ASIGNADO','RETIRADO']
+        : tipo === ExportacionTipo.TEMAS_OFERTADOS ? ['BORRADOR','PUBLICADO','RESERVADO','CERRADO','ASIGNADO','RETIRADO']
         : tipo === ExportacionTipo.TEMAS_ASIGNADOS ? ['VIGENTE','ANULADA'] : [],
       condicion_ingreso: ['REGULAR','CONDICIONADO'], situacion_ingreso: ['PENDIENTE','ADMITIDO','NO_ADMITIDO'],
       estado_cuenta: ['ACTIVO','INACTIVO'], modalidad: ['INDIVIDUAL','GRUPAL'],

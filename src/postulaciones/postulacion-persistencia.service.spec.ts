@@ -3,7 +3,7 @@ import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enu
 import { EstadoPostulacion } from './enums/estado-postulacion.enum.js';
 import { PostulacionPersistenciaService } from './postulacion-persistencia.service.js';
 
-function setup(groupRows: Array<{ id: string }>, postulacionRows: Array<{ id: string }>, items: Record<string, { id: string; estado: EstadoPostulacion; observacion: string | null }>) {
+function setup(groupRows: Array<{ id: string }>, postulacionRows: Array<{ id: string }>, items: Record<string, { id: string; estado: EstadoPostulacion; observacion: string | null; tema?: { id: string } }>) {
   const calls: string[] = [];
   const query = vi.fn(async (sql: string, _params: unknown[]) => {
     if (sql.includes('FOR UPDATE OF g')) { calls.push('lock-grupo'); return groupRows; }
@@ -11,21 +11,22 @@ function setup(groupRows: Array<{ id: string }>, postulacionRows: Array<{ id: st
     return [];
   });
   const repo = {
-    findOneByOrFail: vi.fn(async ({ id }: { id: string }) => items[id]!),
+    findOneOrFail: vi.fn(async ({ where }: { where: { id: string } }) => ({ tema: { id: `tema-${where.id}` }, ...items[where.id]! })),
     save: vi.fn(async (value: unknown) => { calls.push('save'); return value; }),
   };
   const manager = { connection: { options: { schema: 'titulacion_dev' } }, query, getRepository: () => repo };
   const auditoria = { registrar: vi.fn(async () => undefined) };
   const notificaciones = { postulacion: vi.fn(async () => undefined) };
-  const service = new PostulacionPersistenciaService(auditoria as never, notificaciones as never);
-  return { service, manager, query, repo, auditoria, notificaciones, calls };
+  const reservas = { liberarSiCorresponde: vi.fn(async () => true) };
+  const service = new PostulacionPersistenciaService(auditoria as never, notificaciones as never, reservas as never);
+  return { service, manager, query, repo, auditoria, notificaciones, calls, reservas };
 }
 
 const actor = { id: 'admin-id' };
 
 describe('PostulacionPersistenciaService.cancelar', () => {
   it('pasa la postulación a CANCELADA con el motivo, audita y notifica POSTULACION_CANCELADA', async () => {
-    const item = { id: 'p1', estado: EstadoPostulacion.PENDIENTE, observacion: null };
+    const item = { id: 'p1', estado: EstadoPostulacion.PENDIENTE, observacion: null, tema: { id: 'tema-1' } };
     const state = setup([], [], {});
     await state.service.cancelar(state.manager as never, item as never, actor as never, '  Motivo  ', '10.0.0.1');
     expect(item).toMatchObject({ estado: EstadoPostulacion.CANCELADA, observacion: 'Motivo' });
@@ -36,13 +37,14 @@ describe('PostulacionPersistenciaService.cancelar', () => {
       valores_nuevos: { estado: EstadoPostulacion.CANCELADA, observacion: 'Motivo' }, ip_origen: '10.0.0.1',
     }));
     expect(state.notificaciones.postulacion).toHaveBeenCalledWith(state.manager, 'p1', NotificacionTipo.POSTULACION_CANCELADA, 'admin-id');
+    expect(state.reservas.liberarSiCorresponde).toHaveBeenCalledWith(state.manager, 'tema-1', { actor, ip: '10.0.0.1' }, 'Motivo');
   });
 });
 
 describe('PostulacionPersistenciaService.cancelarPendientesPorNoAdmision', () => {
-  it('bloquea el grupo antes que las postulaciones y cancela solo las PENDIENTE individuales y grupales', async () => {
+  it('bloquea el grupo antes que las postulaciones y cancela las PENDIENTE y PENDIENTE_CONFIRMACION individuales y grupales', async () => {
     const items = {
-      individual: { id: 'individual', estado: EstadoPostulacion.PENDIENTE, observacion: null },
+      individual: { id: 'individual', estado: EstadoPostulacion.PENDIENTE_CONFIRMACION, observacion: null },
       grupal: { id: 'grupal', estado: EstadoPostulacion.PENDIENTE, observacion: null },
       anulada: { id: 'anulada', estado: EstadoPostulacion.ANULADA, observacion: 'Anulada antes' },
     };
@@ -57,13 +59,14 @@ describe('PostulacionPersistenciaService.cancelarPendientesPorNoAdmision', () =>
     expect(groupParams).toEqual(['periodo-id', 'estudiante-id']);
     const [postSql, postParams] = state.query.mock.calls[1] as [string, unknown[]];
     expect(postSql).toContain('"titulacion_dev"."postulacion"');
-    expect(postSql).toContain('"estado"=\'PENDIENTE\'');
+    expect(postSql).toContain(`"estado" IN ('PENDIENTE','PENDIENTE_CONFIRMACION')`);
     expect(postSql).toMatch(/ORDER BY p\."id" FOR UPDATE$/);
     expect(postParams).toEqual(['periodo-id', 'estudiante-id', ['grupo-id']]);
     expect(items.anulada).toMatchObject({ estado: EstadoPostulacion.ANULADA, observacion: 'Anulada antes' });
     expect(state.auditoria.registrar).toHaveBeenCalledTimes(2);
     expect(state.auditoria.registrar).toHaveBeenCalledWith(state.manager, expect.objectContaining({ accion: 'CANCELAR_POSTULACION_NO_ADMISION', entidad_id: 'grupal' }));
     expect(state.notificaciones.postulacion).toHaveBeenCalledTimes(2);
+    expect(state.reservas.liberarSiCorresponde).toHaveBeenCalledWith(state.manager, 'tema-individual', expect.anything(), 'No admitido');
   });
 
   it('no escribe nada cuando el estudiante no tiene postulaciones pendientes', async () => {

@@ -3,6 +3,7 @@ import { Carrera } from '../../academico/entities/carrera.entity.js';
 import { Docente } from '../../docentes/entities/docente.entity.js';
 import { LoteImportacion } from '../../importaciones/entities/lote-importacion.entity.js';
 import { LineaInvestigacion } from '../../lineas-investigacion/entities/linea-investigacion.entity.js';
+import { Programa } from '../../programas/entities/programa.entity.js';
 import { EstadoTema } from '../enums/estado-tema.enum.js';
 import { TipoTema } from '../enums/tipo-tema.enum.js';
 
@@ -13,6 +14,8 @@ import { TipoTema } from '../enums/tipo-tema.enum.js';
 @Index('IDX_tema_linea', ['linea', 'creado_en', 'id'])
 @Index('IDX_tema_carrera', ['carrera_id'])
 @Index('IDX_tema_lote_importacion', ['lote_importacion_id'])
+@Index('IDX_tema_programa', ['programa_id'])
+@Check('CHK_tema_categoria_no_vacia', '"categoria" IS NULL OR length(btrim("categoria")) > 0')
 @Check('CHK_tema_titulo_no_vacio', 'length(btrim("titulo")) > 0')
 @Check('CHK_tema_descripcion_no_vacia', 'length(btrim("descripcion")) > 0')
 export class Tema {
@@ -53,6 +56,17 @@ export class Tema {
   @ManyToOne(() => LoteImportacion, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'lote_importacion_id', foreignKeyConstraintName: 'FK_tema_lote_importacion' })
   lote_importacion?: LoteImportacion | null;
+
+  /** Programa que agrupa el tema (bloque 4); misma carrera y límite `max_temas` (TRG_tema_programa). */
+  @Column({ type: 'uuid', name: 'programa_id', nullable: true })
+  programa_id: string | null;
+
+  @ManyToOne(() => Programa, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'programa_id', foreignKeyConstraintName: 'FK_tema_programa' })
+  programa?: Programa | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  categoria: string | null;
 
   @Column({ type: 'timestamptz', name: 'creado_en', default: () => 'CURRENT_TIMESTAMP' })
   creado_en: Date;

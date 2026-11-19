@@ -13,13 +13,14 @@ import { AcademicoService } from '../academico/academico.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
-import type { AbrirPostulacionDto } from './dto/abrir-postulacion.dto.js';
 import { CreatePeriodoDto } from './dto/create-periodo.dto.js';
 import { PeriodoResponseDto } from './dto/periodo-response.dto.js';
+import type { TransicionPeriodoDto } from './dto/transicion-periodo.dto.js';
 import { UpdatePeriodoDto } from './dto/update-periodo.dto.js';
 import { PeriodoTitulacion } from './entities/periodo-titulacion.entity.js';
 import { PeriodoEstado } from './enums/periodo-estado.enum.js';
 import { periodoResponse } from './periodo-response.mapper.js';
+import { ReservaTemaService } from '../postulaciones/reserva-tema.service.js';
 
 interface PostgresDriverError {
   code?: string;
@@ -87,6 +88,39 @@ type ResponsableTransicion =
 
 const SISTEMA: ResponsableTransicion = { actor: null, ip: null, automatico: true };
 
+/** Fecha ajustada por una transición forzada: se audita con su valor anterior y el motivo. */
+export interface AjusteForzado {
+  campo: 'fecha_inicio_postulacion' | 'fecha_fin_postulacion' | 'fecha_inicio_titulacion';
+  anterior: Date;
+  nuevo: Date;
+  motivo: string;
+}
+
+/** Hora del servidor PostgreSQL: los disparadores comparan con `clock_timestamp()`, no con el reloj de Node. */
+export async function ahoraBaseDatos(manager: EntityManager): Promise<Date> {
+  const rows = await manager.query('SELECT clock_timestamp() AS ahora') as Array<{ ahora: Date | string }>;
+  const value = rows[0]?.ahora;
+  if (value === undefined) throw new ServiceUnavailableException('No se pudo leer la hora de PostgreSQL.');
+  return new Date(value);
+}
+
+/** Motivo ya recortado de una transición forzada; el DTO lo exige y el servicio lo repite como defensa. */
+export function motivoForzado(dto: TransicionPeriodoDto): string {
+  const motivo = dto.motivo?.trim() ?? '';
+  if (motivo.length < 10 || motivo.length > 500) {
+    throw new BadRequestException('El motivo de una transición forzada debe tener entre 10 y 500 caracteres.');
+  }
+  return motivo;
+}
+
+export function valoresAnterioresAjuste(ajuste: AjusteForzado | null): Record<string, unknown> {
+  return ajuste ? { [ajuste.campo]: ajuste.anterior } : {};
+}
+
+export function valoresNuevosAjuste(ajuste: AjusteForzado | null): Record<string, unknown> {
+  return ajuste ? { [ajuste.campo]: ajuste.nuevo, forzado: true, motivo: ajuste.motivo } : {};
+}
+
 export interface CandidatosTransicionAutomatica {
   aperturas: string[];
   cierres: string[];
@@ -121,6 +155,8 @@ export class PeriodosService {
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
     private readonly academico: AcademicoService = new AcademicoService(),
+    /** Opcional solo para pruebas unitarias; Nest siempre lo inyecta (PostulacionesPersistenciaModule). */
+    private readonly reservas?: ReservaTemaService,
   ) {}
 
   async create(dto: CreatePeriodoDto): Promise<PeriodoResponseDto> {
@@ -271,7 +307,7 @@ export class PeriodosService {
 
   async abrirPostulacion(
     id: string,
-    _dto: AbrirPostulacionDto,
+    dto: TransicionPeriodoDto,
     actor: Usuario,
     ip: string | null,
   ): Promise<PeriodoResponseDto> {
@@ -284,14 +320,25 @@ export class PeriodosService {
         if (previous !== PeriodoEstado.BORRADOR && !reopening) {
           throw new ConflictException('Solo se pueden abrir períodos en BORRADOR o reabrir períodos en POSTULACION_CERRADA.');
         }
-        if (!enPlazoPostulacion(periodo, new Date())) {
+        let ajuste: AjusteForzado | null = null;
+        if (dto.forzar === true) {
+          const motivo = motivoForzado(dto);
+          const ahora = await ahoraBaseDatos(manager);
+          if (!enPlazoPostulacion(periodo, ahora)) {
+            if (periodo.fecha_fin_postulacion.getTime() <= ahora.getTime()) {
+              throw new ConflictException('No se puede forzar la apertura: la fecha fin de postulación ya pasó. Edita primero la fecha fin de postulación.');
+            }
+            ajuste = { campo: 'fecha_inicio_postulacion', anterior: periodo.fecha_inicio_postulacion, nuevo: ahora, motivo };
+            periodo.fecha_inicio_postulacion = ahora;
+          }
+        } else if (!enPlazoPostulacion(periodo, new Date())) {
           throw new ConflictException(reopening
             ? 'La postulación solo puede reabrirse dentro de las fechas de postulación. Edita primero la fecha fin de postulación del período.'
             : 'El período solo puede abrirse dentro de las fechas de postulación.');
         }
 
         // Las postulaciones existentes se conservan al reabrir.
-        return await this.respuesta(await this.aplicarApertura(manager, periodo, { actor, ip, automatico: false }));
+        return await this.respuesta(await this.aplicarApertura(manager, periodo, { actor, ip, automatico: false }, ajuste));
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
@@ -300,7 +347,7 @@ export class PeriodosService {
 
   async cerrarPostulacion(
     id: string,
-    _dto: AbrirPostulacionDto,
+    dto: TransicionPeriodoDto,
     actor: Usuario,
     ip: string | null,
   ): Promise<PeriodoResponseDto> {
@@ -311,11 +358,22 @@ export class PeriodosService {
         if (periodo.estado !== PeriodoEstado.POSTULACION_ABIERTA) {
           throw new ConflictException('Solo se pueden cerrar períodos con postulaciones abiertas.');
         }
-        if (!plazoPostulacionVencido(periodo, new Date())) {
+        let ajuste: AjusteForzado | null = null;
+        if (dto.forzar === true) {
+          const motivo = motivoForzado(dto);
+          const ahora = await ahoraBaseDatos(manager);
+          if (!plazoPostulacionVencido(periodo, ahora)) {
+            if (ahora.getTime() <= periodo.fecha_inicio_postulacion.getTime()) {
+              throw new ConflictException('No se puede forzar el cierre: la fecha de inicio de postulación aún no llega.');
+            }
+            ajuste = { campo: 'fecha_fin_postulacion', anterior: periodo.fecha_fin_postulacion, nuevo: ahora, motivo };
+            periodo.fecha_fin_postulacion = ahora;
+          }
+        } else if (!plazoPostulacionVencido(periodo, new Date())) {
           throw new ConflictException('El período solo puede cerrarse después de vencer el plazo de postulación.');
         }
 
-        return await this.respuesta(await this.aplicarCierre(manager, periodo, { actor, ip, automatico: false }));
+        return await this.respuesta(await this.aplicarCierre(manager, periodo, { actor, ip, automatico: false }, ajuste));
       });
     } catch (error: unknown) {
       this.handleDatabaseError(error);
@@ -383,17 +441,19 @@ export class PeriodosService {
     manager: EntityManager,
     periodo: PeriodoTitulacion,
     responsable: ResponsableTransicion,
+    ajuste: AjusteForzado | null = null,
   ): Promise<PeriodoTitulacion> {
     const previous = periodo.estado;
     periodo.estado = PeriodoEstado.POSTULACION_ABIERTA;
     const updated = await manager.getRepository(PeriodoTitulacion).save(periodo);
+    const accion = previous === PeriodoEstado.POSTULACION_CERRADA ? 'REABRIR_POSTULACION' : 'ABRIR_POSTULACION';
     await this.auditoria.registrar(manager, {
       actor: responsable.actor,
-      accion: previous === PeriodoEstado.POSTULACION_CERRADA ? 'REABRIR_POSTULACION' : 'ABRIR_POSTULACION',
+      accion: ajuste ? `${accion}_FORZADA` : accion,
       entidad_tipo: 'periodo_titulacion',
       entidad_id: periodo.id,
-      valores_anteriores: { estado: previous },
-      valores_nuevos: { estado: PeriodoEstado.POSTULACION_ABIERTA, ...(responsable.automatico ? { automatico: true } : {}) },
+      valores_anteriores: { estado: previous, ...valoresAnterioresAjuste(ajuste) },
+      valores_nuevos: { estado: PeriodoEstado.POSTULACION_ABIERTA, ...(responsable.automatico ? { automatico: true } : {}), ...valoresNuevosAjuste(ajuste) },
       ip_origen: responsable.ip,
     });
     return updated;
@@ -404,18 +464,21 @@ export class PeriodosService {
     manager: EntityManager,
     periodo: PeriodoTitulacion,
     responsable: ResponsableTransicion,
+    ajuste: AjusteForzado | null = null,
   ): Promise<PeriodoTitulacion> {
     periodo.estado = PeriodoEstado.POSTULACION_CERRADA;
     const updated = await manager.getRepository(PeriodoTitulacion).save(periodo);
     await this.auditoria.registrar(manager, {
       actor: responsable.actor,
-      accion: 'CERRAR_POSTULACION',
+      accion: ajuste ? 'CERRAR_POSTULACION_FORZADA' : 'CERRAR_POSTULACION',
       entidad_tipo: 'periodo_titulacion',
       entidad_id: periodo.id,
-      valores_anteriores: { estado: PeriodoEstado.POSTULACION_ABIERTA },
-      valores_nuevos: { estado: PeriodoEstado.POSTULACION_CERRADA, ...(responsable.automatico ? { automatico: true } : {}) },
+      valores_anteriores: { estado: PeriodoEstado.POSTULACION_ABIERTA, ...valoresAnterioresAjuste(ajuste) },
+      valores_nuevos: { estado: PeriodoEstado.POSTULACION_CERRADA, ...(responsable.automatico ? { automatico: true } : {}), ...valoresNuevosAjuste(ajuste) },
       ip_origen: responsable.ip,
     });
+    // Las reservas que no se confirmaron dentro del plazo vencen con el cierre (misma transacción).
+    await this.reservas?.expirarPorCierre(manager, periodo.id, { actor: responsable.actor, ip: responsable.ip });
     return updated;
   }
 

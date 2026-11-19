@@ -68,7 +68,9 @@ export class AsignacionesTemaService {
         if (!topicLock) throw new NotFoundException('No existe el tema de esa postulación.');
         const topic = await topicRepo.findOne({ where: { id: topicLock.id }, relations: { linea: true, docente_proponente: { usuario: true } } });
         if (!topic) throw new NotFoundException('No existe el tema de esa postulación.');
-        if (topic.estado !== EstadoTema.PUBLICADO) throw new ConflictException('Solo se asignan postulaciones a temas PUBLICADOS.');
+        // RESERVADO: tema retenido por la postulación confirmada; PUBLICADO: postulaciones anteriores a la reserva.
+        if (topic.estado !== EstadoTema.PUBLICADO && topic.estado !== EstadoTema.RESERVADO) throw new ConflictException('Solo se asignan postulaciones a temas PUBLICADOS o RESERVADOS.');
+        const estadoTemaAnterior = topic.estado;
         const initial = found.grupo ? await manager.getRepository(Grupo).findOne({ where: { id: found.grupo.id, periodo: { id: periodoId } }, lock: { mode: 'pessimistic_write' } }) : null;
         if (found.grupo && !initial) throw new NotFoundException('No existe el grupo de la postulación.');
         const schema = this.schema(manager);
@@ -118,14 +120,14 @@ export class AsignacionesTemaService {
         topic.estado = EstadoTema.ASIGNADO;
         await topicRepo.save(topic);
         const nextTopic = this.topicValues(topic);
-        await manager.getRepository(TemaHistorial).save(manager.getRepository(TemaHistorial).create({ tema: topic, usuario: actor, estado_anterior: EstadoTema.PUBLICADO, estado_nuevo: EstadoTema.ASIGNADO, cambios: { anteriores: beforeTopic, nuevos: nextTopic }, fecha: now }));
+        await manager.getRepository(TemaHistorial).save(manager.getRepository(TemaHistorial).create({ tema: topic, usuario: actor, estado_anterior: estadoTemaAnterior, estado_nuevo: EstadoTema.ASIGNADO, cambios: { anteriores: beforeTopic, nuevos: nextTopic }, fecha: now }));
         await this.auditoria.registrar(manager, { actor, accion: 'ACEPTAR_POSTULACION', entidad_tipo: 'postulacion', entidad_id: app.id, valores_anteriores: { estado: EstadoPostulacion.PENDIENTE, observacion: null }, valores_nuevos: { estado: app.estado, observacion: app.observacion }, ip_origen: ip });
         await this.auditoria.registrar(manager, { actor, accion: 'ASIGNAR_TEMA', entidad_tipo: 'asignacion_tema', entidad_id: assignment.id, valores_anteriores: null, valores_nuevos: { periodo_id: periodoId, tema_id: topic.id, postulacion_id: app.id, grupo_id: app.grupo?.id ?? null, estudiante_id: app.estudiante?.id ?? null, participantes: participantIds, aprobada_por_id: actor.id, estado: assignment.estado, fecha_asignacion: now, motivo: assignment.motivo }, ip_origen: ip });
         await this.auditoria.registrar(manager, { actor, accion: 'ASIGNAR_TEMA', entidad_tipo: 'tema', entidad_id: topic.id, valores_anteriores: beforeTopic, valores_nuevos: nextTopic, ip_origen: ip });
         await this.notificaciones.asignacionTema(manager, assignment.id, NotificacionTipo.TEMA_ASIGNADO, actor.id);
         const losers = await manager.getRepository(Postulacion).find({ where: { tema: { id: topic.id }, periodo: { id: periodoId } } });
         for (const loser of losers) {
-          if (loser.id === app.id || ![EstadoPostulacion.PENDIENTE, EstadoPostulacion.EN_CONFLICTO].includes(loser.estado)) continue;
+          if (loser.id === app.id || ![EstadoPostulacion.PENDIENTE, EstadoPostulacion.PENDIENTE_CONFIRMACION, EstadoPostulacion.EN_CONFLICTO].includes(loser.estado)) continue;
           const previous = { estado: loser.estado, observacion: loser.observacion };
           loser.estado = EstadoPostulacion.RECHAZADA;
           loser.observacion = `Otra postulación fue asignada: ${dto.motivo.trim()}`;

@@ -39,4 +39,12 @@ describe('EstudiantesService carrera', () => {
     await state.service.list({ page: 1, limit: 20, carrera_id: 'car-1' } as never);
     expect(state.estudianteRepo.findAndCount).toHaveBeenCalledWith(expect.objectContaining({ where: { carrera_id: 'car-1' } }));
   });
+
+  it('filtra el listado por facultad y lo combina con la carrera (AND)', async () => {
+    const state = setup();
+    await state.service.list({ page: 1, limit: 20, facultad_id: 'fac-1' } as never);
+    expect(state.estudianteRepo.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: { carrera: { facultad_id: 'fac-1' } } }));
+    await state.service.list({ page: 1, limit: 20, carrera_id: 'car-1', facultad_id: 'fac-1' } as never);
+    expect(state.estudianteRepo.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: { carrera_id: 'car-1', carrera: { facultad_id: 'fac-1' } } }));
+  });
 });

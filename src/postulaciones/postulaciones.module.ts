@@ -14,10 +14,13 @@ import { TutoresPropuestosModule } from './tutores-propuestos.module.js';
 import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacion-tema-persistencia.module.js';
 import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 import { PostulacionesPersistenciaModule } from './postulaciones-persistencia.module.js';
+import { PostulacionConfirmacion } from './entities/postulacion-confirmacion.entity.js';
+import { ConfirmacionesPostulacionController } from './confirmaciones-postulacion.controller.js';
+import { ConfirmacionesPostulacionService } from './confirmaciones-postulacion.service.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Postulacion, Estudiante, GrupoIntegrante]), EstudiantesModule, HabilitadosModule, AuditoriaModule, InvitacionPersistenciaModule, TutoresPropuestosModule, AsignacionTemaPersistenciaModule, NotificacionesModule, PostulacionesPersistenciaModule, AcademicoModule],
-  controllers: [PostulacionesController],
-  providers: [PostulacionesService],
+  imports: [TypeOrmModule.forFeature([Postulacion, PostulacionConfirmacion, Estudiante, GrupoIntegrante]), EstudiantesModule, HabilitadosModule, AuditoriaModule, InvitacionPersistenciaModule, TutoresPropuestosModule, AsignacionTemaPersistenciaModule, NotificacionesModule, PostulacionesPersistenciaModule, AcademicoModule],
+  controllers: [PostulacionesController, ConfirmacionesPostulacionController],
+  providers: [PostulacionesService, ConfirmacionesPostulacionService],
 })
 export class PostulacionesModule {}

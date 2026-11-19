@@ -67,9 +67,9 @@ describe('AsignacionesTemaService.anular', () => {
 });
 
 describe('AsignacionesTemaService.assign', () => {
-  it('rejects the topic open applications of other periods inside the same assignment transaction', async () => {
+  it.each([EstadoTema.PUBLICADO, EstadoTema.RESERVADO])('rejects the topic open applications of other periods inside the same assignment transaction (tema %s)', async (estadoTema) => {
     const actor = { id: 'admin-id' };
-    const topic = { id: 'tema-id', carrera_id: 'car', linea: { id: 'linea-id' }, docente_proponente: { id: 'docente-id' }, tipo: TipoTema.INDIVIDUAL, titulo: 'Tema', descripcion: 'D', estado: EstadoTema.PUBLICADO, creado_en: new Date() };
+    const topic = { id: 'tema-id', carrera_id: 'car', linea: { id: 'linea-id' }, docente_proponente: { id: 'docente-id' }, tipo: TipoTema.INDIVIDUAL, titulo: 'Tema', descripcion: 'D', estado: estadoTema, creado_en: new Date() };
     const app = { id: 'post-id', estado: EstadoPostulacion.PENDIENTE, observacion: null as string | null, tema: topic, grupo: null, estudiante: { id: 'est-id' } };
     const save = vi.fn(async (value: unknown) => value);
     const repos = new Map<unknown, unknown>([
@@ -99,5 +99,7 @@ describe('AsignacionesTemaService.assign', () => {
 
     expect(persistencia.rechazarAbiertasDeOtrosPeriodos).toHaveBeenCalledWith(manager, 'tema-id', 'periodo-a', ' Acta 7 ', actor, '10.0.0.1');
     expect(order).toEqual(['cross-period', 'commit']);
+    expect(topic.estado).toBe(EstadoTema.ASIGNADO);
+    expect((repos.get(TemaHistorial) as { create: ReturnType<typeof vi.fn> }).create).toHaveBeenCalledWith(expect.objectContaining({ estado_anterior: estadoTema, estado_nuevo: EstadoTema.ASIGNADO }));
   });
 });

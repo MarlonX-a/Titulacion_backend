@@ -13,9 +13,10 @@ export class TemaHistorial {
   @JoinColumn({ name: 'tema_id', foreignKeyConstraintName: 'FK_tema_historial_tema' })
   tema: Tema;
 
-  @ManyToOne(() => Usuario, { nullable: false, onDelete: 'RESTRICT' })
+  /** Null only for automatic changes (`cambios.automatico = true`, e.g. an expired reservation). */
+  @ManyToOne(() => Usuario, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'usuario_id', foreignKeyConstraintName: 'FK_tema_historial_usuario' })
-  usuario: Usuario;
+  usuario: Usuario | null;
 
   @Column({ type: 'enum', enum: EstadoTema, enumName: 'tema_estado_enum', nullable: true, name: 'estado_anterior' })
   estado_anterior: EstadoTema | null;

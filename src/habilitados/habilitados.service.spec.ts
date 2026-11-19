@@ -331,6 +331,15 @@ describe('HabilitadosService datos del estudiante en respuestas', () => {
     await service.list('p1', { page: 1, limit: 20, carrera_id: 'car-1' } as never);
     expect(repository.findAndCount).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ estudiante: { carrera_id: 'car-1' } }) }));
   });
+
+  it('filtra el listado por facultad y lo combina con la carrera (AND)', async () => {
+    const repository = { findAndCount: vi.fn(async () => [[], 0]) };
+    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, { catalogo: async () => construirCatalogo([], []) } as never);
+    await service.list('p1', { page: 1, limit: 20, facultad_id: 'fac-1' } as never);
+    expect(repository.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ estudiante: { carrera: { facultad_id: 'fac-1' } } }) }));
+    await service.list('p1', { page: 1, limit: 20, carrera_id: 'car-1', facultad_id: 'fac-1' } as never);
+    expect(repository.findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ estudiante: { carrera_id: 'car-1', carrera: { facultad_id: 'fac-1' } } }) }));
+  });
 });
 
 describe('HabilitadosService.create carrera', () => {

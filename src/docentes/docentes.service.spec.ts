@@ -13,7 +13,7 @@ const CATALOGO = construirCatalogo(
   [{ id: 'car-1', codigo: 'SOFTWARE', nombre: 'Ingeniería en Software', facultad_id: 'fac-1' }, { id: 'car-2', codigo: 'SISTEMAS', nombre: 'Ingeniería en Sistemas', facultad_id: 'fac-1' }],
 );
 
-function setup(temasPropuestos = 0) {
+function setup(temasPropuestos = 0, listRepo: object = {}) {
   const usuario = { id: 'u-1', email: 'd@uleam.edu.ec', nombres: 'Doc', apellidos: 'Ente', rol: UsuarioRol.DOCENTE, estado: UsuarioEstado.ACTIVO };
   const docente = { id: 'd-1', usuario, cedula: null, titulo_academico: null, carrera_id: 'car-1', habilitado_tutoria: false };
   const docenteRepo = {
@@ -32,7 +32,7 @@ function setup(temasPropuestos = 0) {
   const academico = new AcademicoService();
   vi.spyOn(academico, 'catalogo').mockResolvedValue(CATALOGO);
   const auditoria = { registrar: vi.fn(async () => undefined) };
-  const service = new DocentesService({} as never, dataSource as never, { revocarSesiones: vi.fn() } as never, auditoria as never, academico);
+  const service = new DocentesService(listRepo as never, dataSource as never, { revocarSesiones: vi.fn() } as never, auditoria as never, academico);
   return { service, docenteRepo, auditoria };
 }
 
@@ -62,5 +62,14 @@ describe('DocentesService carrera', () => {
     const state = setup(1);
     await expect(state.service.update('d-1', { carrera_id: 'car-2' } as never, { id: 'admin' } as never, null)).rejects.toBeInstanceOf(ConflictException);
     expect(state.docenteRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('filtra el listado por facultad y lo combina con la carrera (AND)', async () => {
+    const findAndCount = vi.fn(async () => [[], 0]);
+    const state = setup(0, { findAndCount });
+    await state.service.list({ page: 1, limit: 20, facultad_id: 'fac-1' } as never);
+    expect(findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: { carrera: { facultad_id: 'fac-1' } } }));
+    await state.service.list({ page: 1, limit: 20, carrera_id: 'car-1', facultad_id: 'fac-1' } as never);
+    expect(findAndCount).toHaveBeenLastCalledWith(expect.objectContaining({ where: { carrera_id: 'car-1', carrera: { facultad_id: 'fac-1' } } }));
   });
 });

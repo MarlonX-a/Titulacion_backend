@@ -11,6 +11,11 @@ export class ListHabilitadosQueryDto extends PaginationQueryDto {
   @IsUUID()
   carrera_id?: string;
 
+  @ApiPropertyOptional({ format: 'uuid', description: 'Filtra por la facultad de la carrera del estudiante (combina con carrera_id mediante AND).' })
+  @IsOptional()
+  @IsUUID()
+  facultad_id?: string;
+
   @ApiPropertyOptional({ enum: CondicionIngreso })
   @IsOptional()
   @IsEnum(CondicionIngreso)

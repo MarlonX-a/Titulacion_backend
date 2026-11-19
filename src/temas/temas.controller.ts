@@ -30,19 +30,19 @@ export class TemasController {
   constructor(private readonly temas: TemasService) {}
 
   @Post()
-  @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Registrar un tema en borrador en el banco de su carrera' })
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR)
+  @ApiOperation({ summary: 'Registrar un tema en borrador en el banco de su carrera (COORDINADOR: dentro de uno de sus programas)' })
   @ApiCreatedResponse({ type: TemaResponseDto })
   @ApiBadRequestResponse({ description: 'Datos inválidos, carrera inexistente o docente de otra carrera.' })
-  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
-  @ApiNotFoundResponse({ description: 'No existe la línea o el docente indicado.' })
-  @ApiConflictResponse({ description: 'Una referencia está inactiva.' })
+  @ApiForbiddenResponse({ description: 'Se requiere ADMIN, o COORDINADOR responsable del programa.' })
+  @ApiNotFoundResponse({ description: 'No existe la línea, el docente o el programa indicado.' })
+  @ApiConflictResponse({ description: 'Una referencia está inactiva, el programa es de otra carrera o alcanzó su máximo de temas.' })
   create(@Body() dto: CreateTemaDto, @CurrentUsuario() actor: Usuario, @Req() request: Request) {
     return this.temas.create(dto, actor, request.ip || null);
   }
 
   @Get()
-  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Listar el banco de temas (ESTUDIANTE: temas publicados de su carrera en un período abierto)' })
   @ApiOkResponse(paginado(TemaResponseDto))
   @ApiBadRequestResponse({ description: 'Filtros inválidos o ESTUDIANTE sin periodo_id.' })
@@ -61,7 +61,7 @@ export class TemasController {
   }
 
   @Get(':id')
-  @Roles(UsuarioRol.ADMIN, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR, UsuarioRol.DOCENTE, UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Consultar el detalle de un tema' })
   @ApiOkResponse({ type: TemaResponseDto })
   @ApiNotFoundResponse({ description: 'No existe el tema o no es visible para el usuario.' })
@@ -70,8 +70,8 @@ export class TemasController {
   }
 
   @Patch(':id')
-  @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Editar un tema sin asignación VIGENTE' })
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR)
+  @ApiOperation({ summary: 'Editar un tema sin asignación VIGENTE (COORDINADOR: solo temas de sus programas)' })
   @ApiOkResponse({ type: TemaResponseDto })
   @ApiBadRequestResponse({ description: 'Cuerpo vacío, datos inválidos o carrera incompatible.' })
   @ApiNotFoundResponse({ description: 'No existe el tema indicado.' })
@@ -82,8 +82,8 @@ export class TemasController {
 
   @Post(':id/publicar')
   @HttpCode(HttpStatus.OK)
-  @Roles(UsuarioRol.ADMIN)
-  @ApiOperation({ summary: 'Publicar un tema en borrador o reabrir un tema CERRADO' })
+  @Roles(UsuarioRol.ADMIN, UsuarioRol.COORDINADOR)
+  @ApiOperation({ summary: 'Publicar un tema en borrador o reabrir un tema CERRADO (COORDINADOR: solo temas de sus programas)' })
   @ApiOkResponse({ type: TemaResponseDto })
   @ApiBadRequestResponse({ description: 'El cuerpo debe estar vacío o los datos del tema son inválidos.' })
   @ApiNotFoundResponse({ description: 'No existe el tema indicado.' })

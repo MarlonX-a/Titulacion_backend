@@ -5,6 +5,7 @@ import { TipoTema } from '../enums/tipo-tema.enum.js';
 
 const supplied = (_object: object, value: unknown): boolean => value !== undefined;
 const trim = ({ value }: { value: unknown }): unknown => typeof value === 'string' ? value.trim() : value;
+const presente = (_object: object, value: unknown): boolean => value !== undefined && value !== null;
 
 export class UpdateTemaDto {
   @ApiPropertyOptional({ format: 'uuid', description: 'Debe coincidir con la carrera del docente proponente; no cambia con postulaciones abiertas.' })
@@ -40,4 +41,16 @@ export class UpdateTemaDto {
   @IsString()
   @Length(1, 20_000)
   descripcion?: string;
+
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true, description: 'null saca el tema del programa (solo ADMIN).' })
+  @ValidateIf(presente)
+  @IsUUID()
+  programa_id?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 120, description: 'null borra la categoría.' })
+  @ValidateIf(presente)
+  @Transform(trim)
+  @IsString()
+  @Length(1, 120)
+  categoria?: string | null;
 }
