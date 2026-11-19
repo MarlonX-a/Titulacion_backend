@@ -8,6 +8,7 @@ import { AuthRateLimiterService } from '../../src/auth/auth-rate-limiter.service
 import type { AppEnvironment } from '../../src/config/environment.js';
 import { CorreoModule } from '../../src/correo/correo.module.js';
 import { ExportacionesWorker } from '../../src/exportaciones/exportaciones.worker.js';
+import { GeneracionesPatWorker } from '../../src/generaciones-pat/generaciones-pat.worker.js';
 import { ImportacionesModule } from '../../src/importaciones/importaciones.module.js';
 import { COLA_TRANSICIONES_PERIODO } from '../../src/periodos/transiciones-periodo.service.js';
 import { TransicionesPeriodoWorker } from '../../src/periodos/transiciones-periodo.worker.js';
@@ -60,9 +61,11 @@ export function createE2eTestingModule(metadata: ModuleMetadata): TestingModuleB
     .overrideProvider(getQueueToken(COLA_TRANSICIONES_PERIODO)).useValue({ upsertJobScheduler: async () => undefined })
     .overrideProvider(getQueueToken('limpieza-archivos')).useValue({ add: async () => undefined })
     .overrideProvider(getQueueToken('exportaciones')).useValue({ add: async () => undefined })
+    .overrideProvider(getQueueToken('generaciones-pat')).useValue({ add: async () => undefined, getJob: async () => undefined })
     .overrideProvider(TransicionesPeriodoWorker).useValue({})
     .overrideProvider(ArchivoLimpiezaWorker).useValue({})
     .overrideProvider(ExportacionesWorker).useValue({})
+    .overrideProvider(GeneracionesPatWorker).useValue({})
     .overrideModule(CorreoModule).useModule(CorreoE2eModule)
     .overrideModule(ImportacionesModule).useModule(ImportacionesE2eModule);
 }

@@ -1,5 +1,6 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Queue } from 'bullmq';
 import PDFDocument from 'pdfkit';
@@ -10,6 +11,7 @@ import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.
 import { ArchivoLimpiezaService } from '../almacenamiento/archivo-limpieza.service.js';
 import { ArchivoPendiente } from '../almacenamiento/entities/archivo-pendiente.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import type { AppEnvironment } from '../config/environment.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -25,7 +27,8 @@ type Source = DataSource | import('typeorm').EntityManager;
 export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
   private publishing = false;
-  private readonly testMode = process.env.NODE_ENV === 'test';
+  /** `BACKGROUND_TASKS_ENABLED`: republicación periódica de generaciones EN_COLA. */
+  private readonly tareasActivas: boolean;
   constructor(
     private readonly db: DataSource,
     @InjectRepository(EstudianteDatosPat) private readonly datosRepo: Repository<EstudianteDatosPat>,
@@ -35,9 +38,10 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     private readonly cleanup: ArchivoLimpiezaService,
     private readonly audit: AuditoriaService,
     @InjectQueue('generaciones-pat') private readonly queue: Queue<GeneracionJob>,
-  ) {}
+    config: ConfigService<AppEnvironment, true>,
+  ) { this.tareasActivas = config.get('BACKGROUND_TASKS_ENABLED', { infer: true }) === true; }
 
-  onModuleInit(): void { if (!this.testMode) { this.timer = setInterval(() => void this.publicarPendientes(), 5000); this.timer.unref(); void this.publicarPendientes(); } }
+  onModuleInit(): void { if (this.tareasActivas) { this.timer = setInterval(() => void this.publicarPendientes(), 5000); this.timer.unref(); void this.publicarPendientes(); } }
   onModuleDestroy(): void { if (this.timer) clearInterval(this.timer); }
 
   async obtenerDatos(actor: Usuario) {

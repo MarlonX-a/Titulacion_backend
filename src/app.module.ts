@@ -63,7 +63,9 @@ import { GeneracionesPatModule } from './generaciones-pat/generaciones-pat.modul
     ReportesModule,
     ExportacionesModule,
     GeneracionesPatModule,
-    ...(process.env.NODE_ENV === 'test' ? [] : [CorreoModule, ImportacionesModule]),
+    // Las pruebas sin Redis sustituyen estos módulos en createE2eTestingModule (test/support/e2e-app.ts).
+    CorreoModule,
+    ImportacionesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
