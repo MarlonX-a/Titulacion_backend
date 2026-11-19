@@ -29,7 +29,7 @@ Prefix used below: `P = /periodos/:periodoId/asignaciones-tema/:asignacionId/pat
 | POST | `P/generaciones` | 202 | tutor now resolved automatically (§5.2); 400 `pendientes` uses §3 keys |
 | GET | `P/generaciones/:id` | 200 | response gains `ciclo`, `procesando_desde`, `documento_pat_id` (§5.1) |
 | GET | `P/generaciones/:id/descarga` | 200 | unchanged `{ url, expira_en }` (300 s) |
-| POST | `P/generaciones/:id/reintentar` | 200 | fixed lookup (§5.4) |
+| POST | `P/generaciones/:id/reintentar` | 201 | fixed lookup (§5.4) |
 | **POST** | **`P/generaciones/:id/entregar`** | 201 | **new** — deliver the generated PDF without signature (§6) |
 | POST | `/periodos/:periodoId/asignaciones-tema/:asignacionId/documentos-pat` | 201 | optional signed upload; unchanged request; response gains `origen`/`firmado` |
 
@@ -190,10 +190,10 @@ The frozen `instantanea` now includes the autofilled values (`curso`, `modalidad
 The caller's generations for that assignment, latest first (`solicitada_en DESC`), at most 50.
 Replaces frontend `sessionStorage` tracking.
 
-### 5.4 `POST P/generaciones/:id/reintentar` → `200 { id, estado: "EN_COLA" }`
+### 5.4 `POST P/generaciones/:id/reintentar` → `201 { id, estado: "EN_COLA" }`
 
 Looks up the generation by `id + asignacion_tema_id + estudiante_id` (same rule as every other read).
-Only `FALLIDO` → `409 «Solo se pueden reintentar generaciones fallidas.»`. Increments `ciclo` and publishes
+Only `FALLIDO` → `409 «Solo se pueden reintentar generaciones fallidas.»`; not found for this student → `404`; a concurrent change → `409 «Otra operación cambió la generación PAT; vuelve a consultarla.»`. Increments `ciclo` and publishes
 BullMQ job `generar-pat` with `jobId = pat-{id}-{ciclo}`; a new cycle therefore never collides with the failed
 job retained by `removeOnFail: false`. When an `EN_COLA` row is republished and the job with the same id is
 in the failed set (e.g. it failed before changing state), the failed job is removed and re-added.
