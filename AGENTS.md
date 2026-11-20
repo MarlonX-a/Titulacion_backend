@@ -129,7 +129,7 @@ de Sonar al workflow sin cambiar primero esa configuración.
    de este repositorio backend; coordinarla como trabajo separado.
 7. **Validar el nuevo flujo PAT integrado con servicios locales.** Iniciar
    Redis y SeaweedFS, configurar una extensión del período de prueba y recorrer
-   datos complementarios → generación → descarga → firma → carga → revisión.
+   datos complementarios → resumen → generación → entrega directa (o firma y carga) → revisión.
    Comprobar las pruebas entre dos integrantes de grupo y que sus documentos no
    sean visibles entre sí.
 
@@ -885,16 +885,41 @@ solo el estudiante puede consultarlos o editarlos. La identidad institucional
 existente no se modifica desde el formulario. La auditoría de datos personales
 registra únicamente los nombres de campos modificados, no sus valores.
 
-Antes de generar, deben estar completos los campos obligatorios y ADMIN debe
-haber configurado la extensión/sede del período. El estudiante solicita un PDF
-sin firma mediante BullMQ; cada generación conserva una instantánea inmutable y
-usa la versión de diseño del backend, no una plantilla PDF/DOCX publicada. El
-tutor vigente se selecciona automáticamente; si no hay tutor vigente, el
-estudiante debe seleccionar una propuesta asociada a su postulación. Nunca se
-aceptan nombres libres de tutor. El estudiante descarga, firma y carga su PDF.
+Autocompletado (`GET .../pat/me/resumen`): identidad, correo institucional,
+carrera, facultad, período, extensión, curso (derivado de `estudiante.nivel`),
+tema, problemática sugerida (descripción del tema), línea de investigación,
+articulaciones sugeridas (`INVESTIGACION` si hay línea), modalidad
+(`INDIVIDUAL`/`GRUPAL` según la asignación), integrantes y tutor salen de la base
+con su fuente. El estudiante solo aporta los datos personales no automatizables
+(se guardan una vez por estudiante) y confirma la problemática; puede editar
+problemática, articulaciones y elegir otra propuesta de tutor
+(`tutor_propuesto_id` en `PATCH .../pat/me` o en la generación). Los pendientes
+salen de una sola función (`src/generaciones-pat/pat-pendientes.ts`) usada por los
+GET, el resumen y el 400 de la generación.
 
-La carga acepta únicamente PDF, requiere una generación propia y una asignación
-de tema vigente, y se permite en `POSTULACION_CERRADA` o `EN_CURSO`. Cada
+Antes de generar, no debe haber pendientes y ADMIN debe haber configurado la
+extensión/sede del período. El estudiante solicita un PDF sin firma mediante
+BullMQ; cada generación conserva una instantánea inmutable (incluidos los valores
+autocompletados) y usa la versión de diseño del backend, no una plantilla PDF/DOCX
+publicada. Tutor: vigente; si no, la propuesta guardada por el estudiante; si no,
+la primera propuesta de la postulación. Nunca se aceptan nombres libres de tutor.
+`GET .../pat/me/generaciones` lista las generaciones propias. El reintento busca
+por `estudiante_id` y usa un ciclo nuevo (`jobId pat-{id}-{ciclo}`); al republicar
+se retira un trabajo fallido con el mismo jobId. Con `BACKGROUND_TASKS_ENABLED`,
+el republicador devuelve a `EN_COLA` (ciclo + 1) las generaciones que siguen en
+`PROCESANDO` más de 5 minutos (`GENERACION_PAT_ATASCADA_MS`).
+
+Entrega: con una generación `LISTO`, el estudiante entrega directamente el PDF
+generado sin firma (`POST .../pat/me/generaciones/:id/entregar`, decisión
+aprobada); la versión tiene `origen=GENERADO` (`firmado=false`) y **referencia**
+la misma clave, hash y tamaño de la generación (no se copia: las generaciones son
+inmutables y la limpieza solo borra claves sin referencias; el trigger lo exige).
+Una generación se entrega como mucho una vez. La carga del PDF firmado queda como
+camino opcional (`origen=FIRMADO`, `firmado=true`). Contrato HTTP:
+`docs/superpowers/specs/2026-11-19-pat-automatico-design.md`.
+
+Ambas entregas (directa o firmada) requieren una generación propia y una
+asignación de tema vigente; la carga firmada acepta únicamente PDF. Se permiten en `POSTULACION_CERRADA` o `EN_CURSO`. Cada
 integrante puede entregar por su cuenta. Las versiones se numeran por
 asignación y estudiante, registran SHA-256 y no se sobrescriben. Una nueva
 versión solo se permite si la entrega individual más reciente está `OBSERVADO`
@@ -913,10 +938,12 @@ Rutas principales:
 
 - `GET/PATCH /estudiantes/me/datos-pat`
 - `GET/PATCH /periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me`
+- `GET .../pat/me/resumen` autocompletado, editables, pendientes y tutores
 - `GET .../pat/me/tutores-propuestos` devuelve tutor vigente o propuestas disponibles para el estudiante
-- `POST .../pat/me/generaciones` y `GET .../generaciones/:id`
-- `GET .../generaciones/:id/descarga`
-- `POST .../documentos-pat` con `generacion_id` y PDF firmado
+- `GET/POST .../pat/me/generaciones` y `GET .../generaciones/:id`
+- `GET .../generaciones/:id/descarga` y `POST .../generaciones/:id/reintentar`
+- `POST .../pat/me/generaciones/:id/entregar` entrega directa sin firma (`origen=GENERADO`)
+- `POST .../documentos-pat` con `generacion_id` y PDF firmado (opcional, `origen=FIRMADO`)
 - `PATCH /periodos/:periodoId/datos-formato-pat` para ADMIN
 
 Al aplicar la migración, confirmar primero `DB_SCHEMA=titulacion_dev`; ejecutar

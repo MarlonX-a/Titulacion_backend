@@ -3,6 +3,7 @@ import { AsignacionTema } from '../../asignaciones-tema/entities/asignacion-tema
 import { PlantillaPat } from '../../plantillas-pat/entities/plantilla-pat.entity.js';
 import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 import { DocumentoPatFormato } from '../enums/documento-pat-formato.enum.js';
+import { DocumentoPatOrigen } from '../enums/documento-pat-origen.enum.js';
 import type { RevisionPat } from '../../revisiones-pat/entities/revision-pat.entity.js';
 import type { Estudiante } from '../../estudiantes/entities/estudiante.entity.js';
 import type { GeneracionPat } from '../../generaciones-pat/entities/generacion-pat.entity.js';
@@ -15,6 +16,9 @@ import type { GeneracionPat } from '../../generaciones-pat/entities/generacion-p
 @Check('CHK_documento_pat_nombre_no_vacio', 'length(btrim("nombre_archivo")) > 0')
 @Check('CHK_documento_pat_ruta_no_vacia', 'length(btrim("ruta_almacenamiento")) > 0')
 @Check('CHK_documento_pat_tamano_positivo', '"tamano_bytes" > 0')
+@Check('CHK_documento_pat_origen', `"origen" IN ('GENERADO','FIRMADO')`)
+@Check('CHK_documento_pat_origen_generacion', `"origen"<>'GENERADO' OR "generacion_id" IS NOT NULL`)
+@Index('UQ_documento_pat_generacion_entregada', ['generacion_id'], { unique: true, where: `"origen"='GENERADO'` })
 @Check('CHK_documento_pat_hash_sha256', '"hash_sha256" ~ \'^[a-f0-9]{64}$\'')
 export class DocumentoPat {
   @PrimaryGeneratedColumn('uuid') id: string;
@@ -39,4 +43,6 @@ export class DocumentoPat {
   @ManyToOne('Estudiante', { nullable: true, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'estudiante_id', foreignKeyConstraintName: 'FK_documento_pat_estudiante' }) estudiante: Estudiante | null;
   @Column({ type: 'uuid', name: 'generacion_id', nullable: true }) generacion_id: string | null;
   @ManyToOne('GeneracionPat', { nullable: true, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'generacion_id', foreignKeyConstraintName: 'FK_documento_pat_generacion' }) generacion: GeneracionPat | null;
+  /** GENERADO: referencia el PDF de la generación (sin firma); FIRMADO: PDF firmado cargado. */
+  @Column({ type: 'varchar', length: 20, default: DocumentoPatOrigen.FIRMADO }) origen: DocumentoPatOrigen;
 }

@@ -1,9 +1,8 @@
-import { BullModule, getQueueToken } from '@nestjs/bullmq';
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AlmacenamientoModule } from '../almacenamiento/almacenamiento.module.js';
 import { ArchivoLimpiezaModule } from '../almacenamiento/archivo-limpieza.module.js';
-import { ArchivoLimpiezaService } from '../almacenamiento/archivo-limpieza.service.js';
 import { AuditoriaModule } from '../auditoria/auditoria.module.js';
 import { ColasModule } from '../colas/colas.module.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
@@ -14,17 +13,10 @@ import { GeneracionesPatController, ConfigurarFormatoPatController } from './gen
 import { GeneracionesPatService } from './generaciones-pat.service.js';
 import { GeneracionesPatWorker } from './generaciones-pat.worker.js';
 
-const testMode = process.env.NODE_ENV === 'test';
-const queues = testMode ? [] : [ColasModule, BullModule.registerQueue({ name: 'generaciones-pat' })];
-const infra = testMode ? [] : [ArchivoLimpiezaModule];
-const providers = testMode ? [
-  { provide: getQueueToken('generaciones-pat'), useValue: { add: async () => undefined } },
-  { provide: ArchivoLimpiezaService, useValue: { registrar: async () => undefined, solicitar: async () => undefined } },
-] : [GeneracionesPatWorker];
-
+// Las pruebas sin Redis sustituyen la cola y el worker en el módulo de pruebas (test/support/e2e-app.ts).
 @Module({
-  imports: [TypeOrmModule.forFeature([Estudiante, EstudianteDatosPat, ContenidoPatEstudiante, GeneracionPat]), AlmacenamientoModule, AuditoriaModule, ...queues, ...infra],
+  imports: [TypeOrmModule.forFeature([Estudiante, EstudianteDatosPat, ContenidoPatEstudiante, GeneracionPat]), AlmacenamientoModule, AuditoriaModule, ColasModule, BullModule.registerQueue({ name: 'generaciones-pat' }), ArchivoLimpiezaModule],
   controllers: [GeneracionesPatController, ConfigurarFormatoPatController],
-  providers: [GeneracionesPatService, ...providers],
+  providers: [GeneracionesPatService, GeneracionesPatWorker],
 })
 export class GeneracionesPatModule {}

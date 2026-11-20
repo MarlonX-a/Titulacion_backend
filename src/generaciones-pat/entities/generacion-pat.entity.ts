@@ -24,4 +24,6 @@ export class GeneracionPat {
   @Column({ type: 'varchar', length: 300, name: 'error_sanitizado', nullable: true }) error_sanitizado: string | null;
   @Column({ type: 'timestamptz', name: 'solicitada_en', default: () => 'CURRENT_TIMESTAMP' }) solicitada_en: Date;
   @Column({ type: 'timestamptz', name: 'generada_en', nullable: true }) generada_en: Date | null;
+  /** Inicio del procesamiento del ciclo actual; detecta generaciones atascadas. */
+  @Column({ type: 'timestamptz', name: 'procesando_desde', nullable: true }) procesando_desde: Date | null;
 }
