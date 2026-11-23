@@ -112,6 +112,7 @@ export class AuthController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({ summary: 'Solicitar código para restablecer la contraseña' })
   @ApiResponse({ status: 429, description: 'Demasiadas solicitudes desde esta IP.' })
+  @ApiResponse({ status: 503, description: 'La recuperación por correo está desactivada en este despliegue.' })
   async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() request: Request): Promise<{ message: string }> {
     await this.authentication.requestPasswordReset(dto, clientIp(request));
     return { message: 'Si existe una cuenta activa con ese correo, recibirá instrucciones para recuperar el acceso.' };

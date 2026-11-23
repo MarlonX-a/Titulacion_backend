@@ -35,6 +35,8 @@ export interface AppEnvironment {
   SMTP_USERNAME?: string;
   SMTP_PASSWORD?: string;
   SMTP_FROM?: string;
+  /** Permite omitir por completo el envío de correo en despliegues de demostración. Predeterminado: true. */
+  EMAIL_ENABLED: boolean;
   /** Exige STARTTLS con el servidor SMTP. Predeterminado: true en production, false en otros entornos. */
   SMTP_REQUIRE_TLS: boolean;
   S3_ENDPOINT?: string;
@@ -170,6 +172,7 @@ export function validateEnvironment(
   const dbSsl = booleanFlag(environment.DB_SSL, 'DB_SSL', production);
   const dbSslRejectUnauthorized = booleanFlag(environment.DB_SSL_REJECT_UNAUTHORIZED, 'DB_SSL_REJECT_UNAUTHORIZED', true);
   const smtpRequireTls = booleanFlag(environment.SMTP_REQUIRE_TLS, 'SMTP_REQUIRE_TLS', production);
+  const emailEnabled = booleanFlag(environment.EMAIL_ENABLED, 'EMAIL_ENABLED', true);
   const redisPassword = environment.REDIS_PASSWORD;
   if (redisPassword !== undefined && typeof redisPassword !== 'string') throw new Error('Configuración inválida: REDIS_PASSWORD no es válido.');
   const trustProxy = parseTrustProxy(environment.TRUST_PROXY);
@@ -200,8 +203,10 @@ export function validateEnvironment(
   const tempCredentialKeyPath = environment.TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH;
   if ((environment.SMTP_USERNAME === undefined) !== (environment.SMTP_PASSWORD === undefined)) throw new Error('Configuración inválida: SMTP_USERNAME y SMTP_PASSWORD deben configurarse juntos.');
   if ((environment.S3_ACCESS_KEY === undefined) !== (environment.S3_SECRET_KEY === undefined)) throw new Error('Configuración inválida: S3_ACCESS_KEY y S3_SECRET_KEY deben configurarse juntos.');
-  if (nodeEnv === 'production' && (!environment.REDIS_HOST || !environment.SMTP_HOST || !environment.SMTP_FROM || !environment.S3_BUCKET || !outboxKeyPath || !tempCredentialKeyPath || origins.length === 0)) {
-    throw new Error('Configuración inválida: Redis, SMTP, S3 y cifrado son obligatorios en production.');
+  if (nodeEnv === 'production' && (!environment.REDIS_HOST || (emailEnabled && (!environment.SMTP_HOST || !environment.SMTP_FROM || !outboxKeyPath)) || !environment.S3_BUCKET || !tempCredentialKeyPath || origins.length === 0)) {
+    throw new Error(emailEnabled
+      ? 'Configuración inválida: Redis, SMTP, S3 y cifrado son obligatorios en production.'
+      : 'Configuración inválida: Redis, S3 y cifrado de credenciales son obligatorios en production.');
   }
   if (production && (redisPassword === undefined || redisPassword.trim().length === 0)) {
     throw new Error('Configuración inválida: REDIS_PASSWORD es obligatorio en production.');
@@ -241,6 +246,7 @@ export function validateEnvironment(
     ...(typeof environment.SMTP_HOST === 'string' ? { SMTP_HOST: requiredString(environment.SMTP_HOST, 'SMTP_HOST') } : {}),
     SMTP_PORT: smtpPort,
     SMTP_REQUIRE_TLS: smtpRequireTls,
+    EMAIL_ENABLED: emailEnabled,
     ...(typeof environment.SMTP_USERNAME === 'string' ? { SMTP_USERNAME: environment.SMTP_USERNAME } : {}),
     ...(typeof environment.SMTP_PASSWORD === 'string' ? { SMTP_PASSWORD: environment.SMTP_PASSWORD } : {}),
     ...(typeof environment.SMTP_FROM === 'string' ? { SMTP_FROM: requiredString(environment.SMTP_FROM, 'SMTP_FROM') } : {}),

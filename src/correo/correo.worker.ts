@@ -22,6 +22,7 @@ interface ClaimedDelivery { notificacion_id: string; usuario_id: string; email: 
 @Processor('correo')
 export class CorreoWorker extends WorkerHost {
   private readonly encryptionKey: Buffer;
+  private readonly emailEnabled: boolean;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -29,13 +30,24 @@ export class CorreoWorker extends WorkerHost {
     private readonly smtp: SmtpTransportService,
   ) {
     super();
+    this.emailEnabled = config.get('EMAIL_ENABLED', { infer: true }) ?? true;
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-    // Sin llave configurada el worker no arranca: nunca se cifra ni descifra con una llave constante.
-    if (!keyPath) throw new Error('El worker de correo requiere OUTBOX_ENCRYPTION_KEY_PATH; no se usa una llave por defecto.');
-    this.encryptionKey = Buffer.from(readEncryptionKey(keyPath), 'base64');
+    // El despliegue puede omitir SMTP y sus secretos; en ese modo el worker solo descarta
+    // trabajos antiguos y no cifra, descifra ni envía mensajes.
+    if (this.emailEnabled && !keyPath) throw new Error('El worker de correo requiere OUTBOX_ENCRYPTION_KEY_PATH; no se usa una llave por defecto.');
+    this.encryptionKey = keyPath ? Buffer.from(readEncryptionKey(keyPath), 'base64') : Buffer.alloc(0);
   }
 
   async process(job: Job<NotificationJob>): Promise<void> {
+    if (!this.emailEnabled) {
+      if (job.name === 'enviar-notificacion') {
+        const s = this.schema();
+        await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='OMITIDO'::${s}."entrega_correo_estado_enum", "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "estado" IN ('PENDIENTE','PROCESANDO')`, [job.data.id]);
+      } else {
+        await this.dataSource.getRepository(CorreoSalida).update({ id: job.data.id, enviado_en: IsNull() }, { secreto_cifrado: '', nonce: '', tag: '', expira_en: new Date() });
+      }
+      return;
+    }
     if (job.name === 'enviar-notificacion') return this.sendNotification(job.data.id, job.data.generation ?? 0);
     const repo = this.dataSource.getRepository(CorreoSalida);
     const message = await repo.findOne({ where: { id: job.data.id }, relations: { usuario: true } });

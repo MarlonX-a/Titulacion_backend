@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IsNull } from 'typeorm';
 import {
@@ -304,6 +304,14 @@ describe('AuthenticationService (sesiones y recuperación)', () => {
   });
 
   describe('solicitud de recuperación', () => {
+    it('rechaza recuperación por correo si EMAIL_ENABLED=false sin consultar cuentas', async () => {
+      const store = accountStore();
+      const service = await authenticationServiceWith(keys, store.dataSource, limiterMock(), auditoriaMock(), primerAccesoMock(), false);
+      await expect(service.requestPasswordReset({ email: EMAIL }, IP)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await expect(service.resetPassword({ code: 'codigo-ficticio', password: NEW_PASSWORD }, IP)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(store.getRepository).not.toHaveBeenCalledWith(Usuario);
+    });
+
     it('supera el límite por correo en silencio, sin buscar la cuenta', async () => {
       const store = accountStore();
       const limiter = limiterMock();

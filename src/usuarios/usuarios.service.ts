@@ -19,7 +19,7 @@ import { Usuario } from './entities/usuario.entity.js';
 import { UsuarioEstado } from './enums/usuario-estado.enum.js';
 import { UsuarioRol } from './enums/usuario-rol.enum.js';
 import type { AppEnvironment } from '../config/environment.js';
-import { decryptTemporarySecret, generateOneTimeSecret, importTempTtlMs, readEncryptionKey, setTemporaryPassword } from '../auth/credentials.js';
+import { decryptTemporarySecret, generateOneTimeSecret, importTempTtlMs, persistTemporaryPassword, readEncryptionKey, setTemporaryPassword } from '../auth/credentials.js';
 import { hashPassword } from '../auth/password-hasher.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
@@ -102,10 +102,14 @@ export class UsuariosService implements OnModuleInit, OnModuleDestroy {
       rol: dto.rol, id_externo_sso: null, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null,
     }));
     const temporaryPassword = generateOneTimeSecret();
-    const encryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
     const temporaryKey = this.readKey('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', 'La clave temporal no puede almacenarse de forma segura.');
-    const outbox = await setTemporaryPassword(manager, created.id, temporaryPassword, encryptionKey, temporaryKey);
-    await manager.getRepository(CorreoSalida).save(outbox);
+    if (this.emailEnabled()) {
+      const encryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
+      await manager.getRepository(CorreoSalida).save(await setTemporaryPassword(manager, created.id, temporaryPassword, encryptionKey, temporaryKey));
+    } else {
+      const expiry = new Date(Date.now() + 72 * 60 * 60 * 1000);
+      await persistTemporaryPassword(manager, created.id, temporaryPassword, await hashPassword(temporaryPassword), expiry, temporaryKey);
+    }
     if (actor && this.auditoria) await this.auditoria.registrar(manager, { actor, accion: 'CREAR_USUARIO', entidad_tipo: 'usuario', entidad_id: created.id, valores_anteriores: null, valores_nuevos: { email: created.email, nombres: created.nombres, apellidos: created.apellidos, rol: created.rol, estado: created.estado }, ip_origen: ip });
     return created;
   }
@@ -134,14 +138,18 @@ export class UsuariosService implements OnModuleInit, OnModuleDestroy {
         const credentials = manager.getRepository(CredencialUsuario);
         const current = await credentials.findOne({ where: { usuario_id: id }, lock: { mode: 'pessimistic_write' } });
         if (current && !current.requiere_cambio) throw new ConflictException('La cuenta ya estableció una contraseña personal.');
-        const encryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
         const temporaryKey = this.readKey('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', 'La clave temporal no puede almacenarse de forma segura.');
         const outbox = manager.getRepository(CorreoSalida);
         const pending = await outbox.find({ where: { usuario_id: id, enviado_en: IsNull() } });
         for (const old of pending) { old.secreto_cifrado = ''; old.nonce = ''; old.tag = ''; old.expira_en = new Date(); }
         if (pending.length) await outbox.save(pending);
         const password = generateOneTimeSecret();
-        await outbox.save(await setTemporaryPassword(manager, id, password, encryptionKey, temporaryKey));
+        if (this.emailEnabled()) {
+          const encryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
+          await outbox.save(await setTemporaryPassword(manager, id, password, encryptionKey, temporaryKey));
+        } else {
+          await persistTemporaryPassword(manager, id, password, await hashPassword(password), new Date(Date.now() + 72 * 60 * 60 * 1000), temporaryKey, current);
+        }
         await manager.getRepository(SesionUsuario).update({ usuario_id: id, revocada_en: IsNull() }, { revocada_en: new Date() });
         if (this.auditoria) await this.auditoria.registrar(manager, { actor, accion: 'REENVIAR_ACCESO_USUARIO', entidad_tipo: 'usuario', entidad_id: id, valores_anteriores: { requiere_cambio: current?.requiere_cambio ?? true }, valores_nuevos: { requiere_cambio: true, acceso_temporal_reenviado: true }, ip_origen: ip });
         return target;
@@ -184,16 +192,19 @@ export class UsuariosService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        const outboxEncryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
         const pending = await manager.getRepository(CorreoSalida).find({ where: { usuario_id: id, enviado_en: IsNull() } });
         for (const item of pending) { item.secreto_cifrado = ''; item.nonce = ''; item.tag = ''; item.expira_en = now; }
         if (pending.length) await manager.getRepository(CorreoSalida).save(pending);
         const password = generateOneTimeSecret();
         const ttlMs = importTempTtlMs(this.config?.get('IMPORT_TEMP_TTL_HOURS', { infer: true }));
-        const outbox = await setTemporaryPassword(manager, id, password, outboxEncryptionKey, temporaryKey, ttlMs);
-        await manager.getRepository(CorreoSalida).save(outbox);
+        const expiry = new Date(Date.now() + ttlMs);
+        if (this.emailEnabled()) {
+          const outboxEncryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
+          await manager.getRepository(CorreoSalida).save(await setTemporaryPassword(manager, id, password, outboxEncryptionKey, temporaryKey, ttlMs));
+        } else {
+          await persistTemporaryPassword(manager, id, password, await hashPassword(password), expiry, temporaryKey, credential);
+        }
         await manager.getRepository(SesionUsuario).update({ usuario_id: id, revocada_en: IsNull() }, { revocada_en: now });
-        const expiry = outbox.expira_en;
         await this.auditoria?.registrar(manager, { actor: admin, accion: 'GENERAR_CLAVE_TEMPORAL_ADMIN', entidad_tipo: 'usuario', entidad_id: id, valores_anteriores: { requiere_cambio: true, expira_en: credential.temporal_expira_en }, valores_nuevos: { requiere_cambio: true, expira_en: expiry, clave_revelada: true }, ip_origen: ip });
         return { clave_temporal: password, expira_en: expiry, regenerada: true };
       });
@@ -207,6 +218,10 @@ export class UsuariosService implements OnModuleInit, OnModuleDestroy {
     const path = this.config?.get(name, { infer: true });
     if (!path) throw new ServiceUnavailableException(message);
     try { return readEncryptionKey(path); } catch { throw new ServiceUnavailableException(message); }
+  }
+
+  private emailEnabled(): boolean {
+    return this.config?.get('EMAIL_ENABLED', { infer: true }) !== false;
   }
 
   private async eliminarClavesTemporalesVencidas(): Promise<void> {

@@ -15,7 +15,15 @@ afterAll(() => rmSync(keyDir, { recursive: true, force: true }));
 
 describe('CorreoWorker: llave del outbox', () => {
   it('se niega a arrancar sin OUTBOX_ENCRYPTION_KEY_PATH', () => {
-    expect(() => new CorreoWorker({} as DataSource, { get: () => undefined } as never, {} as SmtpTransportService)).toThrow(/OUTBOX_ENCRYPTION_KEY_PATH/);
+    expect(() => new CorreoWorker({} as DataSource, { get: (key: string) => key === 'EMAIL_ENABLED' ? true : undefined } as never, {} as SmtpTransportService)).toThrow(/OUTBOX_ENCRYPTION_KEY_PATH/);
+  });
+
+  it('arranca sin SMTP ni clave del outbox cuando el correo está desactivado', async () => {
+    const query = vi.fn().mockResolvedValue([]);
+    const dataSource = { options: { schema: 'test_schema' }, query } as unknown as DataSource;
+    const worker = new CorreoWorker(dataSource, { get: (key: string) => key === 'EMAIL_ENABLED' ? false : undefined } as never, {} as SmtpTransportService);
+    await worker.process({ name: 'enviar-notificacion', data: { id: 'delivery-id' } } as Job<{ id: string }>);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("SET \"estado\"='OMITIDO'"), ['delivery-id']);
   });
 });
 
@@ -35,7 +43,7 @@ describe('CorreoWorker: notificaciones', () => {
       transaction: vi.fn(async (callback: (manager: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
     } as unknown as DataSource;
     const smtp = { send } as unknown as SmtpTransportService;
-    const config = { get: () => keyPath };
+    const config = { get: (key: string) => key === 'OUTBOX_ENCRYPTION_KEY_PATH' ? keyPath : true };
     const worker = new CorreoWorker(dataSource, config as never, smtp);
     const job = { name: 'enviar-notificacion', data: { id: 'delivery-id', generation: 0 } } as Job<{ id: string; generation: number }>;
     return { worker, dataSource, query, smtp: send, txQuery, job };

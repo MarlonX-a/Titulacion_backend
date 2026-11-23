@@ -2,6 +2,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { ConflictException, Injectable, OnModuleDestroy, OnModuleInit, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { DataSource, IsNull, LessThanOrEqual, MoreThan } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import type { AppEnvironment } from '../config/environment.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
@@ -29,6 +31,7 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
     @InjectQueue('correo') private readonly queue: Queue,
     private readonly dataSource: DataSource,
     private readonly auditoria: AuditoriaService,
+    private readonly config: ConfigService<AppEnvironment, true>,
   ) {}
 
   onModuleInit(): void {
@@ -45,6 +48,15 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
     if (this.dispatching || !this.dataSource.isInitialized) return;
     this.dispatching = true;
     try {
+      if (this.config.get('EMAIL_ENABLED', { infer: true }) === false) {
+        await this.dataSource.getRepository(CorreoSalida).update(
+          { enviado_en: IsNull() },
+          { secreto_cifrado: '', nonce: '', tag: '', expira_en: new Date() },
+        );
+        const s = this.schema();
+        await this.dataSource.query(`UPDATE ${s}."entrega_correo_notificacion" SET "estado"='OMITIDO'::${s}."entrega_correo_estado_enum", "reserva_hasta"=NULL, "reserva_token"=NULL, "actualizada_en"=CURRENT_TIMESTAMP, "ultimo_error"=NULL WHERE "estado" IN ('PENDIENTE','PROCESANDO')`);
+        return;
+      }
       await this.dataSource.getRepository(CorreoSalida).update(
         { enviado_en: IsNull(), expira_en: LessThanOrEqual(new Date()) },
         { secreto_cifrado: '', nonce: '', tag: '' },
@@ -93,6 +105,7 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
   }
 
   async retry(id: string, actor: Usuario, ip: string | null): Promise<void> {
+    this.assertEmailEnabled();
     const record = await this.dataSource.getRepository(CorreoSalida).findOneBy({ id });
     if (!record) throw new NotFoundException('No existe el correo pendiente.');
     if (record.enviado_en || record.expira_en <= new Date() || !record.secreto_cifrado) throw new ConflictException('El correo ya se envió o venció; genera una nueva solicitud de acceso.');
@@ -122,6 +135,7 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
   }
 
   async retryNotification(id: string, actor: Usuario, ip: string | null): Promise<void> {
+    this.assertEmailEnabled();
     const s = this.schema();
     try {
       await this.dataSource.transaction(async (manager) => {
@@ -142,5 +156,9 @@ export class CorreoOutboxService implements OnModuleInit, OnModuleDestroy {
     const name = (this.dataSource.options as PostgresConnectionOptions).schema ?? 'public';
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(name)) throw new ServiceUnavailableException('El esquema PostgreSQL configurado no es válido.');
     return `"${name}"`;
+  }
+
+  private assertEmailEnabled(): void {
+    if (this.config.get('EMAIL_ENABLED', { infer: true }) === false) throw new ConflictException('El envío de correo está desactivado en este despliegue.');
   }
 }

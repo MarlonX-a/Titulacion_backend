@@ -90,6 +90,7 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
   private privateKey!: CryptoKey;
   private publicKey!: CryptoKey;
   private readonly encryptionKey: string;
+  private readonly emailEnabled: boolean;
   private readonly privateKeyPath?: string;
   private readonly publicKeyPath?: string;
   private readonly throttle: LoginThrottle;
@@ -104,6 +105,7 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     private readonly primerAcceso: PrimerAccesoService,
   ) {
     this.issuer = config.get('AUTH_ISSUER', { infer: true });
+    this.emailEnabled = config.get('EMAIL_ENABLED', { infer: true }) ?? true;
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
     this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
     this.privateKeyPath = config.get('JWT_PRIVATE_KEY_PATH', { infer: true });
@@ -382,6 +384,7 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
    * el límite por correo descarta la solicitud en silencio.
    */
   async requestPasswordReset(dto: ForgotPasswordDto, ip: string): Promise<void> {
+    if (!this.emailEnabled) throw new ServiceUnavailableException('La recuperación por correo está desactivada en este despliegue.');
     try {
       const email = dto.email.trim().toLowerCase();
       await this.limiter.enforce(`reset-ip:${ip}`, FORGOT_IP_LIMIT, FORGOT_WINDOW_SECONDS);
@@ -410,6 +413,7 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
   }
 
   async resetPassword(dto: ResetPasswordDto, ip: string): Promise<void> {
+    if (!this.emailEnabled) throw new ServiceUnavailableException('La recuperación por correo está desactivada en este despliegue.');
     try {
       await this.limiter.assertBelow(resetIpFailureKey(ip), RESET_IP_FAILURE_LIMIT);
       try {

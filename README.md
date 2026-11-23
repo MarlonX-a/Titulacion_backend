@@ -84,6 +84,7 @@ prioridad sobre la misma variable del archivo.
 | `AUTH_ORIGINS`                                               | Lista exacta de orígenes web                                   | Vacía; producción debe definir los orígenes       |
 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TLS`    | Redis/BullMQ para límites y trabajos (contraseña obligatoria en producción y en el Compose) | `127.0.0.1`, `6379`, sin valor por defecto |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
+| `EMAIL_ENABLED`                                              | Activa SMTP, recuperación por correo y entregas EMAIL          | `true`; puede ser `false` para un despliegue demo |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | SeaweedFS en `127.0.0.1:8333`                     |
 | `OUTBOX_ENCRYPTION_KEY_PATH`                                 | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente                               |
 | `TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH`                         | Clave AES externa para recuperar claves temporales activas | Generada localmente; obligatoria en producción |
@@ -109,8 +110,13 @@ arrancar, porque confiaría en cualquier `X-Forwarded-For`; fuera de producción
 La autenticación usa claves RSA persistentes. Genéralas una sola vez y conserva
 `/.secrets` fuera de Git y de respaldos públicos. El `sub` JWT es el UUID interno
 de usuario; los permisos y el estado de la cuenta se consultan en PostgreSQL.
-En producción se exige HTTPS, claves persistentes, Redis, SMTP y almacenamiento
-privado configurados.
+En producción se exige HTTPS, claves persistentes, Redis y almacenamiento
+privado configurados. SMTP se exige únicamente cuando `EMAIL_ENABLED=true` (predeterminado).
+Para un despliegue de demostración sin correo, configura `EMAIL_ENABLED=false` y omite
+`SMTP_HOST`, `SMTP_FROM` y `OUTBOX_ENCRYPTION_KEY_PATH`. Las notificaciones dentro de la
+aplicación siguen disponibles; las entregas EMAIL pendientes se marcan `OMITIDO`, la recuperación
+de contraseña por correo responde `503` y los reintentos de correo se bloquean. Las claves
+temporales se siguen mostrando mediante el flujo administrativo y no dependen del SMTP.
 
 Swagger (`/docs` y `/docs-json`) está desactivado por defecto en todos los entornos y
 `.env.example` define `SWAGGER_ENABLED=false`. Para consultarlo en desarrollo, define

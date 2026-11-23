@@ -82,6 +82,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   private readonly encryptionKey: string;
   private readonly temporaryEncryptionKey: string;
   private readonly tempTtlMs: number;
+  private readonly emailEnabled: boolean;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -92,7 +93,8 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     private readonly academico: AcademicoService = new AcademicoService(),
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-    this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
+    this.emailEnabled = config.get('EMAIL_ENABLED', { infer: true }) !== false;
+    this.encryptionKey = keyPath && this.emailEnabled ? readEncryptionKey(keyPath) : '';
     const tempKeyPath = config.get('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', { infer: true });
     this.temporaryEncryptionKey = tempKeyPath ? readEncryptionKey(tempKeyPath) : '';
     // Las claves temporales aleatorias de estudiantes importados tienen vigencia corta.
@@ -283,9 +285,9 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           if (!credential) {
             const expiry = new Date(Date.now() + this.tempTtlMs);
             const temporary = tempPasswords.get(row.email);
-            if (!temporary || !this.encryptionKey || !this.temporaryEncryptionKey) throw new Error('No se pudo proteger la clave temporal.');
+            if (!temporary || (this.emailEnabled && !this.encryptionKey) || !this.temporaryEncryptionKey) throw new Error('No se pudo proteger la clave temporal.');
             await persistTemporaryPassword(manager, user.id, temporary.secret, temporary.hash, expiry, this.temporaryEncryptionKey, credential);
-            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
+            if (this.emailEnabled) await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
           }
         }
         lot.filas_ok = rows.length;
