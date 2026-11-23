@@ -12,11 +12,13 @@ import { AsignacionTemaPersistenciaModule } from '../asignaciones-tema/asignacio
 import { NotificacionesModule } from '../notificaciones/notificaciones.module.js';
 import { PostulacionesPersistenciaModule } from '../postulaciones/postulaciones-persistencia.module.js';
 import { GrupoIntegrantePersistenciaModule } from '../grupos/grupo-integrante-persistencia.module.js';
+import { UsuariosModule } from '../usuarios/usuarios.module.js';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([EstudianteHabilitado, PeriodoTitulacion, Auditoria]),
     EstudiantesModule,
+    UsuariosModule,
     AcademicoModule,
     AuditoriaModule,
     AsignacionTemaPersistenciaModule,

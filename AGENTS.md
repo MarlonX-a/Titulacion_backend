@@ -109,18 +109,18 @@ de Sonar al workflow sin cambiar primero esa configuración.
    `CARRERA <NOMBRE>` del título se ignora (puede faltar o no coincidir). Un estudiante
    existente de otra carrera o con cédula incompatible es error por fila. En una
    cuenta coincidente se actualiza el nivel desde el Excel y se audita; se conserva
-   la matrícula que ya tenía el perfil. Para cuentas nuevas, matrícula y clave
-   temporal inicial son la cédula. El correo es `e{cedula}@live.uleam.edu.ec`; la clave
+   la matrícula que ya tenía el perfil. Para cuentas nuevas, la matrícula sigue
+   siendo la cédula y la clave temporal inicial es aleatoria (256 bits). El correo
+   es `e{cedula}@live.uleam.edu.ec`; la clave
    exige cambio obligatorio en
    el primer acceso. SI/SI en ACADEMICO/INGLES crea la habilitación
    `HABILITADO`/`ADMITIDO`; cualquier otra combinación válida crea
    `SUSPENDIDO`/`NO_ADMITIDO` (ambas REGULAR, resueltas por el ADMIN que
    importó). Se admiten filas ocultas por autofiltro. La importación sigue
-   permitida solo en períodos BORRADOR. **Decisión del propietario: la cédula se
-   mantiene como clave temporal inicial**, con las mitigaciones de la sección
-   «Usuarios» (vigencia corta, aviso al titular, alerta a ADMIN) y un riesgo
-   residual aceptado que allí se describe. Pendiente: confirmar con la
-   institución si la cédula como clave inicial es aceptable en producción.
+   permitida solo en períodos BORRADOR. ADMIN puede revelar/copiar la clave desde
+   la fila mientras la cuenta siga pendiente; claves vencidas o no recuperables
+   se rotan y vuelven a enviarse por correo. Las instalaciones antiguas deben
+   ejecutar el comando de transición descrito en «Usuarios».
 5. **Preparar el despliegue real.** La salida SMTP institucional autorizada,
    secretos de producción, almacenamiento, Redis, PostgreSQL, copias de
    seguridad y operación del entorno deben configurarse con sus responsables;
@@ -404,19 +404,28 @@ Núcleo de autenticación (diseño `docs/seguridad/diseno-s1-autenticacion.md`):
 Las cuentas se crean por ADMIN o por importación confirmada de Excel. La
 importación solo se admite con un período BORRADOR; validar genera vista previa
 y confirmar vuelve a comprobar los datos dentro de la transacción que crea
-usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso. En la
-importación, la clave temporal inicial de cada estudiante es su cédula y debe
-cambiarse en el primer acceso; las altas manuales conservan claves aleatorias.
+usuarios, perfiles, habilitaciones, lote, auditoría y correo de acceso. Todas
+las claves temporales son aleatorias. Las de estudiantes importados vencen según
+`IMPORT_TEMP_TTL_HOURS` (1–168 horas, predeterminado 24); las altas administrativas
+y docentes vencen en 72 horas. ADMIN puede ver/copiar las claves de estudiantes
+pendientes desde su fila; si una venció o no se puede recuperar, la acción rota
+la clave y vuelve a encolar el correo.
 
-Primer acceso con la cédula como clave temporal (decisión del propietario; mitigaciones S2,
-`src/auth/primer-acceso.service.ts`). Quien conozca la cédula, o el correo
-`e{cedula}@live.uleam.edu.ec`, de un compañero que aún no ha ingresado puede activar su cuenta
-antes que él. No se elimina ese riesgo; se acorta la ventana y se añaden detección y recuperación:
+Instalaciones antiguas deben aplicar la migración `ClaveTemporalVisible` y luego
+ejecutar `npm run auth:invalidate-cedula-temporales` antes de habilitar la nueva
+versión. El comando compara hashes Argon2id en memoria, invalida solo claves
+vigentes coincidentes con la cédula, borra correos de acceso pendientes, revoca
+sesiones, audita la transición y reporta únicamente un conteo agregado. Incluye
+cuentas inactivas para que no conserven una clave heredada al reactivarse.
 
-- La clave temporal de la importación de estudiantes vence a las `IMPORT_TEMP_TTL_HOURS` (entero
-  1–168, predeterminado 24); el alta manual y `reenviar-acceso` conservan su vigencia de 72 h.
-  Vencida, el login responde el 401 genérico y la única vía es `POST /usuarios/:id/reenviar-acceso`
-  (ADMIN; clave aleatoria por correo).
+Las claves recuperables se cifran con AES-256-GCM mediante
+`TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH`, distinto de `OUTBOX_ENCRYPTION_KEY_PATH`
+y almacenado fuera de Git. Debe permanecer estable mientras haya credenciales
+temporales activas. El endpoint de revelado es `no-store`, audita actor y fecha
+sin guardar la contraseña, invalida autorizaciones de primer acceso previas al
+rotar y elimina la copia al cambiar la contraseña o al vencer.
+
+Se mantienen las mitigaciones de `src/auth/primer-acceso.service.ts`:
 - Al completar el primer acceso (`changeInitialPassword`), el titular recibe en la misma
   transacción un aviso en app y un correo (notificación `CUENTA_ACTIVADA`, texto neutro: cuenta
   activada y, si no fue él, contactar a la administración; sin IP, claves, códigos ni tokens). El
@@ -426,9 +435,7 @@ antes que él. No se elimina ese riesgo; se acorta la ventana y se añaden detec
   crea un aviso en app (`ACTIVACIONES_MASIVAS`, sin correo) para cada ADMIN activo, una vez por IP y
   hora. Un fallo de Redis o de este aviso nunca hace fallar el cambio de contraseña.
 - La contraseña definitiva no puede ser la cédula (política de contraseñas de S1).
-- **Riesgo residual:** el atacante sigue pudiendo activar la cuenta de una víctima que no ha
-  ingresado durante la vigencia de la clave; el titular lo sabe después (aviso y correo) y debe
-  pedir a ADMIN `reenviar-acceso`. Un atacante que rote de IP evita la alerta masiva.
+- La contraseña definitiva continúa aplicando la política S1; nunca se registra en auditoría o logs.
 - La matrícula de un estudiante importado es su cédula, por lo que solo ADMIN y el propio
   estudiante la reciben: compañeros y docentes ven únicamente identificador, nombres y apellidos
   (`src/common/privacidad/visor-datos.ts`, aplicado en grupos, invitaciones, postulaciones,
@@ -1454,6 +1461,7 @@ S3_ACCESS_KEY
 S3_SECRET_KEY
 SMTP_HOST
 OUTBOX_ENCRYPTION_KEY_PATH
+TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH
 TRUST_PROXY
 SMTP_REQUIRE_TLS
 SWAGGER_ENABLED
@@ -1482,8 +1490,9 @@ componen la aplicación sin Redis con `createE2eTestingModule`):
   Se lee de `process.env` antes de cargar `.env` (`src/app.module.ts`), por lo que solo surte efecto
   como variable del proceso, no escrita dentro de `.env`.
 
-`IMPORT_TEMP_TTL_HOURS` es un entero de 1 a 168 (predeterminado 24) con la vigencia de la clave
-temporal de la importación de estudiantes.
+`IMPORT_TEMP_TTL_HOURS` es un entero de 1 a 168 (predeterminado 24) con la vigencia de claves
+aleatorias de estudiantes importados. `TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH` debe ser una clave
+AES-256 distinta de la del outbox y permanecer estable mientras existan claves temporales.
 
 Mantener un `.env.example` sin secretos reales.
 

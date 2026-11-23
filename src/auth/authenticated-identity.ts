@@ -5,6 +5,7 @@ export interface AuthenticatedIdentity {
   issuer: string;
   sessionId?: string;
   firstAccess?: boolean;
+  credentialVersion?: number;
 }
 
 export const CurrentIdentity = createParamDecorator(

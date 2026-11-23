@@ -51,7 +51,8 @@ export class AuthController {
   @ApiResponse({ status: 429, description: 'Demasiados intentos para esta cuenta.' })
   @HttpCode(HttpStatus.NO_CONTENT)
   async changeInitialPassword(@CurrentIdentity() identity: AuthenticatedIdentity, @Body() dto: NewPasswordDto, @Req() request: Request): Promise<void> {
-    await this.authentication.changeInitialPassword(identity.subject, dto, clientIp(request));
+    if (identity.credentialVersion === undefined) throw new UnauthorizedException('El token de primer acceso fue invalidado.');
+    await this.authentication.changeInitialPassword(identity.subject, dto, clientIp(request), identity.credentialVersion);
   }
 
   @Post('change-password')

@@ -86,10 +86,11 @@ prioridad sobre la misma variable del archivo.
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | SeaweedFS en `127.0.0.1:8333`                     |
 | `OUTBOX_ENCRYPTION_KEY_PATH`                                 | Clave externa para cifrar claves temporales/códigos pendientes | Generada localmente                               |
+| `TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH`                         | Clave AES externa para recuperar claves temporales activas | Generada localmente; obligatoria en producción |
 | `TRUST_PROXY`                                                | `false`, saltos (`1`) o subredes (`loopback, 10.0.0.0/8`); `true` se rechaza en producción | `false` fuera de producción; en producción es obligatorio un valor explícito |
 | `DB_SSL`, `DB_SSL_REJECT_UNAUTHORIZED`                       | `true` o `false`; TLS con PostgreSQL y verificación de su certificado | `DB_SSL`: `true` en producción y `false` en otros entornos; `DB_SSL_REJECT_UNAUTHORIZED`: `true` |
 | `SMTP_REQUIRE_TLS`                                           | `true` o `false`; exige STARTTLS con el servidor SMTP          | `true` en producción y `false` en otros entornos  |
-| `IMPORT_TEMP_TTL_HOURS`                                      | Entero entre `1` y `168`; horas de vigencia de la clave temporal (la cédula) de los estudiantes importados | `24` |
+| `IMPORT_TEMP_TTL_HOURS`                                      | Entero entre `1` y `168`; horas de vigencia de la clave aleatoria de estudiantes importados | `24` |
 | `BACKGROUND_TASKS_ENABLED`                                   | `true` o `false`; tareas periódicas (transiciones de período por fecha, barridos de exportaciones y limpieza de archivos) | `true`; solo las pruebas la desactivan; en production se rechaza `false` |
 | `IGNORE_ENV_FILE`                                            | `true` o `false`; con `true` no se lee `.env`, solo las variables del proceso (solo surte efecto como variable del proceso, no escrita en `.env`) | `false`; las pruebas lo activan |
 
@@ -149,8 +150,10 @@ npm run usuario:bootstrap-admin
 npm run start:dev
 ```
 
-`auth:keys` crea claves privadas locales ignoradas por Git y no sobrescribe
-archivos existentes. El comando `db:prepare-auth` crea únicamente el esquema
+`auth:keys` crea claves JWT y AES locales ignoradas por Git, conserva las que ya
+existen y completa las que falten. Mantén `TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH`
+fuera de Git, separada de la clave del outbox y persistente entre despliegues.
+El comando `db:prepare-auth` crea únicamente el esquema
 `titulacion_dev` y ejecuta las migraciones; no modifica `public` ni
 `local_demo`. En desarrollo el backend crea el bucket privado de SeaweedFS al
 recibir la primera importación. Mailpit muestra los mensajes locales en
@@ -298,8 +301,10 @@ Rutas disponibles: `POST /auth/login`, `POST /auth/change-initial-password`,
 `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/change-password`,
 `POST /auth/forgot-password`, `POST /auth/reset-password` y `GET /auth/me`.
 En Swagger, copia el `access_token` y usa **Authorize**. El refresh requiere
-cookie y origen permitido, por lo que normalmente se usa desde el frontend.
-Las claves no se registran en respuestas, auditoría ni logs.
+cookie y origen permitido, por lo que normalmente se usa desde el frontend. Las
+claves temporales nunca aparecen en auditoría ni logs; su única respuesta
+excepcional es la acción protegida de ADMIN en la lista de habilitados, con
+`Cache-Control: no-store`.
 
 ## Usuarios
 
@@ -344,19 +349,32 @@ datos obligatorios se omiten por completo. Las columnas auxiliares como
 completas. Una cédula numérica sin el cero inicial se completa a 10 dígitos.
 La confirmación crea cuentas ESTUDIANTE con correo `e{cedula}@live.uleam.edu.ec`,
 perfiles (matrícula igual a la cédula) y habilitaciones; la clave temporal
-inicial es la cédula, exige cambio en el primer acceso y se pone en cola para
-correo. SI/SI queda `HABILITADO` y `ADMITIDO`; cualquier otra combinación queda
+inicial es aleatoria (256 bits), exige cambio en el primer acceso, vence según
+`IMPORT_TEMP_TTL_HOURS` y se pone en cola para correo. SI/SI queda `HABILITADO` y `ADMITIDO`; cualquier otra combinación queda
 `SUSPENDIDO` y `NO_ADMITIDO`. Las reimportaciones no cambian claves, estados ni
 decisiones previas. Si la cuenta, cédula y carrera coinciden, el nivel del perfil
 se actualiza al valor del archivo y queda auditado; se conserva la matrícula ya
 registrada. Una cédula o carrera incompatible requiere revisión administrativa.
 
+ADMIN puede revelar/copiar la clave vigente desde la acción **Clave temporal**
+de la fila del estudiante habilitado. La respuesta usa `no-store` y el frontend
+mantiene el valor solo en memoria mientras el diálogo está abierto. Si venció o
+no existe una copia recuperable, esa acción rota la clave, invalida tokens de
+primer acceso anteriores y envía una nueva al correo institucional. La copia
+cifrada se elimina al cambiar la contraseña o al vencer.
+
 Los mensajes de desarrollo se pueden leer en Mailpit en
-[http://localhost:8025](http://localhost:8025). Las claves temporales vencen
-en 72 horas. La persona debe iniciar sesión con `POST /auth/login` y establecer
-su contraseña desde `POST /auth/change-initial-password`; luego puede usar la
-API normalmente. El correo institucional real requiere un remitente SMTP
-autorizado, todavía pendiente.
+[http://localhost:8025](http://localhost:8025). Las claves temporales vencen en
+24 horas para estudiantes importados (configurable) y 72 horas para altas
+administrativas/docentes. La persona inicia sesión con `POST /auth/login` y
+establece su contraseña en `POST /auth/change-initial-password`. El correo
+institucional real requiere un remitente SMTP autorizado, todavía pendiente.
+
+En instalaciones que aún aceptaban cédulas como claves temporales, aplica la
+migración nueva y luego ejecuta `npm run auth:invalidate-cedula-temporales` con
+`DB_SCHEMA` apuntando al esquema correcto. Invalida solo claves no vencidas cuyo
+hash coincide con la cédula (incluidas cuentas inactivas) y muestra únicamente
+el total actualizado; ADMIN podrá generar claves aleatorias desde el listado.
 
 ## Perfiles de estudiantes y docentes
 

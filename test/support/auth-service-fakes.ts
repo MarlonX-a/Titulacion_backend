@@ -17,6 +17,7 @@ export function fakeRepository(overrides: Record<string, unknown> = {}) {
     findOneBy: vi.fn().mockResolvedValue(null),
     findOne: vi.fn().mockResolvedValue(null),
     update: vi.fn().mockResolvedValue({ affected: 1 }),
+    delete: vi.fn().mockResolvedValue({ affected: 0 }),
     save: vi.fn((value: unknown) => Promise.resolve(value)),
     insert: vi.fn().mockResolvedValue(undefined),
     create: vi.fn((value: Record<string, unknown>) => ({ ...value })),

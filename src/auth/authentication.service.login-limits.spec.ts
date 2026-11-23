@@ -130,6 +130,16 @@ describe('AuthenticationService.login (límites y eventos)', () => {
       expect(limiter.release).toHaveBeenCalledTimes(2);
     });
 
+    it('invalida una autorización de primer acceso al rotar la versión de credencial', async () => {
+      const credential = { usuario_id: USER_ID, password_hash: passwordHash, requiere_cambio: true, temporal_expira_en: new Date(Date.now() + 60_000), version_sesion: 4 };
+      const { service } = await serviceFor(scenario({ credential }));
+      const login = await service.login({ email: EMAIL, password: PASSWORD }, IP);
+
+      await expect(service.verifyToken(login.response.access_token)).resolves.toMatchObject({ subject: USER_ID, firstAccess: true });
+      credential.version_sesion += 1;
+      await expect(service.verifyToken(login.response.access_token)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
     it('si falla la base de datos durante la verificación, devuelve las reservas (no es un fallo de contraseña)', async () => {
       const fake = scenario();
       fake.credenciales.findOneBy.mockRejectedValue(new Error('conexión perdida'));

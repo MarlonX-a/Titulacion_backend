@@ -10,7 +10,7 @@ export const VENTANA_ACTIVACIONES_SEGUNDOS = 3600;
 const SAVEPOINT = 'aviso_primer_acceso';
 
 /**
- * Mitigaciones del primer acceso con la cédula como clave temporal (S2): avisa al titular cuando
+ * Controles del primer acceso con clave temporal (S2): avisa al titular cuando
  * su cuenta se activa y alerta a ADMIN si una misma dirección activa varias cuentas. Ningún
  * fallo de estos avisos puede deshacer o hacer fallar el cambio de contraseña.
  */

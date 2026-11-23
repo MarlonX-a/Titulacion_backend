@@ -8,7 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, QueryFailedError, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, QueryFailedError, Repository } from 'typeorm';
 import { AcademicoService } from '../academico/academico.service.js';
 import { resumenCatalogo, type CatalogoAcademico } from '../academico/catalogo-academico.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
@@ -34,6 +34,7 @@ import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignaci
 import { NotificacionesPersistenciaService, type AvisoIngreso } from '../notificaciones/notificaciones-persistencia.service.js';
 import { PostulacionPersistenciaService } from '../postulaciones/postulacion-persistencia.service.js';
 import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
+import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
 
 interface PostgresDriverError { code?: string; }
 
@@ -58,7 +59,7 @@ export interface PagedHabilitados {
  * candidatos de invitación (vistos por otros estudiantes) no exponen esos datos (la matrícula
  * de un estudiante importado es su cédula).
  */
-function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico | null, detallado = true): HabilitadoResponseDto {
+function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico | null, detallado = true, requiereCambioClave?: boolean): HabilitadoResponseDto {
   const resuelto = record.resuelto_por;
   return {
     id: record.id,
@@ -75,6 +76,7 @@ function responseFrom(record: EstudianteHabilitado, catalogo: CatalogoAcademico 
         carrera: resumenCatalogo(catalogo?.carrera(record.estudiante.carrera_id), record.estudiante.carrera_id),
         nivel: record.estudiante.nivel,
       } : {}),
+      ...(requiereCambioClave !== undefined ? { requiere_cambio_clave: requiereCambioClave } : {}),
     },
     ...(detallado ? { resuelto_por: resuelto ? { id: resuelto.id, nombres: resuelto.nombres, apellidos: resuelto.apellidos } : null } : {}),
     origen: record.origen,
@@ -231,7 +233,10 @@ export class HabilitadosService {
         take: query.limit,
       });
       const catalogo = await this.academico.catalogo(this.dataSource);
-      return { data: records.map((record) => responseFrom(record, catalogo)), total, page: query.page, limit: query.limit };
+      const userIds = records.map((record) => record.estudiante.usuario.id);
+      const credentials = userIds.length ? await this.dataSource.getRepository(CredencialUsuario).find({ where: { usuario_id: In(userIds) } }) : [];
+      const pendingActivation = new Set(credentials.filter((credential) => credential.requiere_cambio).map((credential) => credential.usuario_id));
+      return { data: records.map((record) => responseFrom(record, catalogo, true, pendingActivation.has(record.estudiante.usuario.id))), total, page: query.page, limit: query.limit };
     } catch (error: unknown) {
       this.handleDatabaseError(error);
     }
@@ -246,6 +251,21 @@ export class HabilitadosService {
       if (!record) throw new NotFoundException('No existe esa habilitación en el período indicado.');
       return await this.respuesta(record);
     } catch (error: unknown) {
+      this.handleDatabaseError(error);
+    }
+  }
+
+  /** Resuelve internamente la cuenta desde la fila habilitada, sin exponer el usuario en DTO públicos. */
+  async getUserIdForCredentialAction(periodoId: string, id: string): Promise<string> {
+    try {
+      const record = await this.repository.findOne({
+        where: { id, periodo: { id: periodoId } },
+        relations: { estudiante: { usuario: true } },
+      });
+      if (!record) throw new NotFoundException('No existe esa habilitación en el período indicado.');
+      return record.estudiante.usuario.id;
+    } catch (error: unknown) {
+      if (error instanceof NotFoundException) throw error;
       this.handleDatabaseError(error);
     }
   }

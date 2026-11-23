@@ -17,6 +17,7 @@
     "db:check": "npm run build && node dist/database/check.js",
     "usuario:bootstrap-admin": "npm run build && node dist/usuarios/bootstrap-admin.js",
     "auth:keys": "npm run build && node dist/auth/generate-keys.js",
+    "auth:invalidate-cedula-temporales": "npm run build && node dist/database/invalidate-legacy-temp-passwords.js",
     "storage:prepare-dev": "node scripts/storage-prepare-dev.mjs",
     "db:seed-dev-users": "node scripts/seed-dev-users.mjs",
     "db:reset-dev": "node scripts/reset-dev-schema.mjs",

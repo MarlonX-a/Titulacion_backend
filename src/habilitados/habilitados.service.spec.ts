@@ -304,9 +304,10 @@ describe('HabilitadosService datos del estudiante en respuestas', () => {
 
   it('el listado ADMIN incluye correo, cédula, carrera, nivel y el responsable', async () => {
     const repository = { findAndCount: vi.fn(async () => [[record], 1]) };
-    const service = new HabilitadosService(repository as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, catalogo);
+    const dataSource = { getRepository: vi.fn(() => ({ find: vi.fn(async () => []) })) };
+    const service = new HabilitadosService(repository as never, dataSource as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, catalogo);
     const page = await service.list('p1', { page: 1, limit: 20 } as never);
-    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1', email: 'e1300000001@live.uleam.edu.ec', cedula: '1300000001', carrera: { id: 'car-1', nombre: 'Software' }, nivel: 9 });
+    expect(page.data[0].estudiante).toEqual({ id: 'e1', nombres: 'Ana', apellidos: 'Pérez', matricula: 'M1', email: 'e1300000001@live.uleam.edu.ec', cedula: '1300000001', carrera: { id: 'car-1', nombre: 'Software' }, nivel: 9, requiere_cambio_clave: false });
     expect(page.data[0].resuelto_por).toEqual({ id: 'admin-1', nombres: 'Ada', apellidos: 'Admin' });
   });
 

@@ -6,9 +6,9 @@ import { UsuarioRol } from '../../usuarios/enums/usuario-rol.enum.js';
 /**
  * Destinatario de una respuesta que contiene datos de estudiantes.
  *
- * La matrícula de un estudiante importado es su cédula, que también es su clave temporal
- * inicial. Por eso solo ADMIN y el propio estudiante reciben la matrícula; compañeros y docentes
- * reciben únicamente identificador, nombres y apellidos.
+ * La matrícula de un estudiante importado es su cédula. Por eso solo ADMIN y el propio
+ * estudiante reciben la matrícula; compañeros y docentes reciben únicamente identificador,
+ * nombres y apellidos.
  */
 export interface VisorDatos {
   readonly esAdmin: boolean;

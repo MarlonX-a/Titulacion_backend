@@ -16,6 +16,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { AuthRateLimiterService } from './auth-rate-limiter.service.js';
 import { CorreoSalida } from './entities/correo-salida.entity.js';
 import { CredencialUsuario } from './entities/credencial-usuario.entity.js';
+import { ClaveTemporalVisible } from './entities/clave-temporal-visible.entity.js';
 import { SesionUsuario } from './entities/sesion-usuario.entity.js';
 import { SesionRefreshHash } from './entities/sesion-refresh-hash.entity.js';
 import { SolicitudRecuperacion } from './entities/solicitud-recuperacion.entity.js';
@@ -168,7 +169,7 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     if (user.estado !== UsuarioEstado.ACTIVO) throw new LoginFailure(user.id);
     if (credentials.requiere_cambio) {
       if (!credentials.temporal_expira_en || credentials.temporal_expira_en <= new Date()) throw new LoginFailure(user.id);
-      return { response: { access_token: await this.sign(user.id, undefined, true), token_type: 'Bearer', expires_in: FIRST_ACCESS_SECONDS, requiere_cambio_clave: true } };
+      return { response: { access_token: await this.sign(user.id, undefined, true, credentials.version_sesion ?? 0), token_type: 'Bearer', expires_in: FIRST_ACCESS_SECONDS, requiere_cambio_clave: true } };
     }
     const refresh = generateOneTimeSecret();
     const csrf = generateOneTimeSecret();
@@ -223,8 +224,9 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
         const user = await this.dataSource.getRepository(Usuario).findOneBy({ id: payload.sub, estado: UsuarioEstado.ACTIVO });
         if (!user) throw new UnauthorizedException(INVALID_TOKEN);
         const credential = await this.dataSource.getRepository(CredencialUsuario).findOneBy({ usuario_id: payload.sub });
-        if (!credential?.requiere_cambio || !credential.temporal_expira_en || credential.temporal_expira_en <= new Date()) throw new UnauthorizedException(INVALID_TOKEN);
-        return { subject: payload.sub, issuer: this.issuer, firstAccess };
+        if (!credential?.requiere_cambio || !credential.temporal_expira_en || credential.temporal_expira_en <= new Date() ||
+            !Number.isSafeInteger(payload.cv) || payload.cv !== credential.version_sesion) throw new UnauthorizedException(INVALID_TOKEN);
+        return { subject: payload.sub, issuer: this.issuer, firstAccess, credentialVersion: credential.version_sesion };
       }
       if (typeof payload.sid !== 'string' || !UUID.test(payload.sid)) throw new UnauthorizedException(INVALID_TOKEN);
       const sessions = this.dataSource.getRepository(SesionUsuario);
@@ -253,12 +255,13 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async changeInitialPassword(userId: string, dto: NewPasswordDto, ip: string): Promise<void> {
+  async changeInitialPassword(userId: string, dto: NewPasswordDto, ip: string, expectedCredentialVersion: number): Promise<void> {
     try {
       await this.limiter.enforce(`first:${userId}`, FIRST_ACCESS_LIMIT, CHANGE_WINDOW_SECONDS);
       await this.dataSource.transaction(async (manager) => {
         const credentials = await manager.getRepository(CredencialUsuario).findOne({ where: { usuario_id: userId }, lock: { mode: 'pessimistic_write' } });
         if (!credentials?.requiere_cambio || !credentials.password_hash || !credentials.temporal_expira_en || credentials.temporal_expira_en <= new Date()) throw new UnauthorizedException('La clave temporal venció; solicita otra a ADMIN.');
+        if (credentials.version_sesion !== expectedCredentialVersion) throw new UnauthorizedException(INVALID_TOKEN);
         await this.assertPasswordPolicy(manager, userId, dto.password);
         if (await verifyPassword(credentials.password_hash, dto.password)) throw new ForbiddenException('La nueva contraseña debe ser distinta de la temporal.');
         credentials.requiere_cambio = false;
@@ -446,6 +449,7 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     credentials.version_sesion += 1;
     credentials.actualizada_en = now;
     await manager.getRepository(CredencialUsuario).save(credentials);
+    await manager.getRepository(ClaveTemporalVisible).delete({ usuario_id: credentials.usuario_id });
     await manager.getRepository(SesionUsuario).update({ usuario_id: credentials.usuario_id, revocada_en: IsNull() }, { revocada_en: now });
     await manager.getRepository(SolicitudRecuperacion).update({ usuario_id: credentials.usuario_id, usada_en: IsNull() }, { usada_en: now });
   }
@@ -468,9 +472,9 @@ export class AuthenticationService implements OnModuleInit, OnModuleDestroy {
     throw new ServiceUnavailableException('El servicio de autenticación no está disponible.');
   }
 
-  private async sign(userId: string, sessionId: string | undefined, first: boolean): Promise<string> {
+  private async sign(userId: string, sessionId: string | undefined, first: boolean, credentialVersion?: number): Promise<string> {
     const now = Math.floor(Date.now() / 1000);
-    const token = new SignJWT({ typ: first ? 'first_access' : 'access', ...(sessionId ? { sid: sessionId } : {}) })
+    const token = new SignJWT({ typ: first ? 'first_access' : 'access', ...(first && credentialVersion !== undefined ? { cv: credentialVersion } : {}), ...(sessionId ? { sid: sessionId } : {}) })
       .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
       .setIssuer(this.issuer).setAudience(TOKEN_AUDIENCE).setSubject(userId).setIssuedAt(now)
       .setExpirationTime(now + (first ? FIRST_ACCESS_SECONDS : ACCESS_SECONDS));

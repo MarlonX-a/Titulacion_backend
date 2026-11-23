@@ -44,6 +44,7 @@ import { Carrera } from '../src/academico/entities/carrera.entity.js';
 import { EstudianteDatosPat } from '../src/generaciones-pat/entities/estudiante-datos-pat.entity.js';
 import { ContenidoPatEstudiante } from '../src/generaciones-pat/entities/contenido-pat.entity.js';
 import { GeneracionPat } from '../src/generaciones-pat/entities/generacion-pat.entity.js';
+import { ClaveTemporalVisible } from '../src/auth/entities/clave-temporal-visible.entity.js';
 
 export const FACULTAD_PRUEBA_ID = '00000000-0000-4000-8000-0000000000f1';
 export const FACULTAD_OTRA_ID = '00000000-0000-4000-8000-0000000000f2';
@@ -80,6 +81,7 @@ const invitacionRecords: Invitacion[] = [];
 const tutorPropuestoRecords: TutorPropuesto[] = [];
 const credencialRecords: CredencialUsuario[] = [];
 const correoRecords: CorreoSalida[] = [];
+const claveTemporalVisibleRecords: ClaveTemporalVisible[] = [];
 const notificacionRecords: Notificacion[] = [];
 const assignmentTemaTestRepository = { create: (value: unknown) => value, save: async (value: unknown) => value, insert: async () => ({ identifiers: [] }), findOneBy: async () => null, findOneByOrFail: async () => { throw new Error('No existe una asignación en el repositorio de prueba.'); }, findOne: async () => null, find: async () => [], findAndCount: async () => [[], 0] as const, exist: async () => false, update: async () => ({ affected: 0 }), createQueryBuilder: () => ({ leftJoinAndSelect() { return this; }, where() { return this; }, andWhere() { return this; }, orderBy() { return this; }, addOrderBy() { return this; }, skip() { return this; }, take() { return this; }, getManyAndCount: async () => [[], 0] as const }) };
 let transactionQueue: Promise<void> = Promise.resolve();
@@ -443,6 +445,12 @@ const credencialTestRepository = {
   },
   findOneBy: async (criteria: Partial<CredencialUsuario>) => credencialRecords.find((item) => Object.entries(criteria).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null,
   findOne: (options: { where: Partial<CredencialUsuario> }) => Promise.resolve(credencialRecords.find((item) => Object.entries(options.where).every(([key, value]) => item[key as keyof CredencialUsuario] === value)) ?? null),
+  find: async (options: { where: Partial<CredencialUsuario> }) => credencialRecords.filter((item) => Object.entries(options.where).every(([key, value]) => {
+    if (key === 'usuario_id' && value instanceof FindOperator && value.type === 'in') {
+      return (value.value as string[]).includes(item.usuario_id);
+    }
+    return item[key as keyof CredencialUsuario] === value;
+  })),
   update: () => Promise.resolve({ affected: 1 }),
 };
 const sesionRevocations: string[] = [];
@@ -452,6 +460,22 @@ const sesionTestRepository = {
 const correoTestRepository = {
   create: (value: Partial<CorreoSalida>) => ({ ...value }) as CorreoSalida,
   save: async (value: CorreoSalida) => { const stored = { ...value, id: value.id ?? randomUUID(), creada_en: value.creada_en ?? new Date() }; correoRecords.push(stored); return stored; },
+};
+const claveTemporalVisibleTestRepository = {
+  create: (value: Partial<ClaveTemporalVisible>) => ({ ...value }) as ClaveTemporalVisible,
+  save: async (value: ClaveTemporalVisible) => {
+    const index = claveTemporalVisibleRecords.findIndex((item) => item.usuario_id === value.usuario_id);
+    if (index >= 0) claveTemporalVisibleRecords[index] = value; else claveTemporalVisibleRecords.push(value);
+    return value;
+  },
+  findOne: async (options: { where: Partial<ClaveTemporalVisible> }) =>
+    claveTemporalVisibleRecords.find((item) => Object.entries(options.where).every(([key, value]) => item[key as keyof ClaveTemporalVisible] === value)) ?? null,
+  delete: async (criteria: Partial<ClaveTemporalVisible>) => {
+    const before = claveTemporalVisibleRecords.length;
+    const remaining = claveTemporalVisibleRecords.filter((item) => !Object.entries(criteria).every(([key, value]) => item[key as keyof ClaveTemporalVisible] === value));
+    claveTemporalVisibleRecords.splice(0, claveTemporalVisibleRecords.length, ...remaining);
+    return { affected: before - remaining.length };
+  },
 };
 const notificacionTestRepository = {
   create: (value: Partial<Notificacion>) => ({ ...value }) as Notificacion,
@@ -523,6 +547,7 @@ function sharedTestRepository(entity: unknown) {
   if (entity === PostulacionConfirmacion) return { create: (value: unknown) => value, save: async (value: unknown) => value, find: async () => [], findOne: async () => null, update: async () => ({ affected: 0 }) };
   if (entity === CredencialUsuario) return credencialTestRepository;
   if (entity === CorreoSalida) return correoTestRepository;
+  if (entity === ClaveTemporalVisible) return claveTemporalVisibleTestRepository;
   if (entity === ConfigCargaTutorial) return configCargaTutorialTestRepository;
   if (entity === AsignacionTutor) return asignacionTutorTestRepository;
   if (entity === PlantillaPat) return plantillaPatTestRepository;
@@ -570,6 +595,7 @@ export const usuarioTestDataSource = {
     { target: AsignacionTema },
     { target: CredencialUsuario },
     { target: CorreoSalida },
+    { target: ClaveTemporalVisible },
     { target: ConfigCargaTutorial },
     { target: AsignacionTutor },
     { target: PlantillaPat },
@@ -657,6 +683,7 @@ export function clearUsuarioTestRecords(): void {
   tutorPropuestoRecords.length = 0;
   credencialRecords.length = 0;
   correoRecords.length = 0;
+  claveTemporalVisibleRecords.length = 0;
   notificacionRecords.length = 0;
   sesionRevocations.length = 0;
 }

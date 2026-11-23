@@ -43,8 +43,10 @@ export interface AppEnvironment {
   S3_ACCESS_KEY?: string;
   S3_SECRET_KEY?: string;
   OUTBOX_ENCRYPTION_KEY_PATH?: string;
+  /** Clave externa, independiente de la del outbox, para conservar claves temporales hasta su consulta/expiración. */
+  TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH?: string;
   TRUST_PROXY: TrustProxySetting;
-  /** Horas de vigencia de la clave temporal (la cédula) de los estudiantes creados por importación. Entero 1–168; predeterminado 24. */
+  /** Horas de vigencia de claves temporales aleatorias de estudiantes importados. Entero 1–168; predeterminado 24. */
   IMPORT_TEMP_TTL_HOURS: number;
   /**
    * Tareas periódicas en segundo plano: scheduler de transiciones de período y barridos de
@@ -195,9 +197,10 @@ export function validateEnvironment(
   httpsOrLoopbackUrl(environment.AUTH_ISSUER, 'AUTH_ISSUER', `http://127.0.0.1:${portValue}`, nodeEnv === 'production');
   for (const origin of origins) httpsOrLoopbackUrl(origin, 'AUTH_ORIGINS', origin, nodeEnv === 'production');
   const outboxKeyPath = environment.OUTBOX_ENCRYPTION_KEY_PATH;
+  const tempCredentialKeyPath = environment.TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH;
   if ((environment.SMTP_USERNAME === undefined) !== (environment.SMTP_PASSWORD === undefined)) throw new Error('Configuración inválida: SMTP_USERNAME y SMTP_PASSWORD deben configurarse juntos.');
   if ((environment.S3_ACCESS_KEY === undefined) !== (environment.S3_SECRET_KEY === undefined)) throw new Error('Configuración inválida: S3_ACCESS_KEY y S3_SECRET_KEY deben configurarse juntos.');
-  if (nodeEnv === 'production' && (!environment.REDIS_HOST || !environment.SMTP_HOST || !environment.SMTP_FROM || !environment.S3_BUCKET || !outboxKeyPath || origins.length === 0)) {
+  if (nodeEnv === 'production' && (!environment.REDIS_HOST || !environment.SMTP_HOST || !environment.SMTP_FROM || !environment.S3_BUCKET || !outboxKeyPath || !tempCredentialKeyPath || origins.length === 0)) {
     throw new Error('Configuración inválida: Redis, SMTP, S3 y cifrado son obligatorios en production.');
   }
   if (production && (redisPassword === undefined || redisPassword.trim().length === 0)) {
@@ -247,6 +250,7 @@ export function validateEnvironment(
     ...(typeof environment.S3_ACCESS_KEY === 'string' ? { S3_ACCESS_KEY: environment.S3_ACCESS_KEY } : {}),
     ...(typeof environment.S3_SECRET_KEY === 'string' ? { S3_SECRET_KEY: environment.S3_SECRET_KEY } : {}),
     ...(typeof outboxKeyPath === 'string' ? { OUTBOX_ENCRYPTION_KEY_PATH: outboxKeyPath } : {}),
+    ...(typeof tempCredentialKeyPath === 'string' ? { TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH: requiredString(tempCredentialKeyPath, 'TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH') } : {}),
     TRUST_PROXY: trustProxy,
     IMPORT_TEMP_TTL_HOURS: importTempTtlHours,
     BACKGROUND_TASKS_ENABLED: backgroundTasks,

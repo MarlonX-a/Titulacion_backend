@@ -14,7 +14,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
-import { createEncryptedOutbox, createTemporaryCredentialHash, generateOneTimeSecret, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
+import { createEncryptedOutbox, createTemporaryCredentialHash, generateOneTimeSecret, persistTemporaryPassword, readEncryptionKey, TEMP_PASSWORD_TTL_MS } from '../auth/credentials.js';
 import { LoteImportacion } from './entities/lote-importacion.entity.js';
 import { PreparacionImportacion } from './entities/preparacion-importacion.entity.js';
 import { PreparacionImportacionEstado as EstadoPreparacion } from './enums/preparacion-importacion-estado.enum.js';
@@ -67,6 +67,7 @@ function response(record: PreparacionImportacion): ImportacionDocentesResumen {
 @Injectable()
 export class ImportacionesDocentesService {
   private readonly encryptionKey: string;
+  private readonly temporaryEncryptionKey: string;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -78,6 +79,8 @@ export class ImportacionesDocentesService {
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
     this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
+    const tempKeyPath = config.get('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', { infer: true });
+    this.temporaryEncryptionKey = tempKeyPath ? readEncryptionKey(tempKeyPath) : '';
   }
 
   async submit(actor: Usuario, originalName: string, buffer: Buffer, ip: string | null, carreraId: string): Promise<{ id: string; estado: EstadoPreparacion }> {
@@ -198,7 +201,7 @@ export class ImportacionesDocentesService {
           estado: LoteImportacionEstado.EN_PROCESO, total_filas: rows.length, filas_ok: 0, filas_error: 0,
           errores: null, fecha_inicio: now, fecha_fin: null,
         }));
-        const counts = await this.createRows(manager, rows, temporaryCredentials, record, now);
+        const counts = await this.createRows(manager, rows, temporaryCredentials, record);
         lot.filas_ok = rows.length;
         lot.estado = LoteImportacionEstado.COMPLETADO;
         lot.fecha_fin = new Date();
@@ -233,7 +236,7 @@ export class ImportacionesDocentesService {
   }
 
   /** Crea cuenta, perfil y credencial faltantes, o actualiza la habilitación de tutoría existente. */
-  private async createRows(manager: EntityManager, rows: DocenteExcelRow[], temporaryCredentials: Map<string, TemporaryCredential>, record: PreparacionImportacion, now: Date): Promise<ImportCounts> {
+  private async createRows(manager: EntityManager, rows: DocenteExcelRow[], temporaryCredentials: Map<string, TemporaryCredential>, record: PreparacionImportacion): Promise<ImportCounts> {
     const users = manager.getRepository(Usuario);
     const teachers = manager.getRepository(Docente);
     const credentials = manager.getRepository(CredencialUsuario);
@@ -259,7 +262,8 @@ export class ImportacionesDocentesService {
       if (!credential) {
         const expiry = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
         const temporary = temporaryCredentials.get(row.email) ?? await this.temporaryCredential();
-        await credentials.save(credentials.create({ usuario_id: user.id, password_hash: temporary.hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));
+        if (!this.temporaryEncryptionKey) throw new ServiceUnavailableException('La clave temporal no puede almacenarse de forma segura.');
+        await persistTemporaryPassword(manager, user.id, temporary.secret, temporary.hash, expiry, this.temporaryEncryptionKey, credential);
         await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
       }
     }

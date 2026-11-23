@@ -2,6 +2,10 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -15,12 +19,13 @@ import { Usuario } from './entities/usuario.entity.js';
 import { UsuarioEstado } from './enums/usuario-estado.enum.js';
 import { UsuarioRol } from './enums/usuario-rol.enum.js';
 import type { AppEnvironment } from '../config/environment.js';
-import { generateOneTimeSecret, readEncryptionKey, setTemporaryPassword } from '../auth/credentials.js';
+import { decryptTemporarySecret, generateOneTimeSecret, importTempTtlMs, readEncryptionKey, setTemporaryPassword } from '../auth/credentials.js';
 import { hashPassword } from '../auth/password-hasher.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
 import { SesionUsuario } from '../auth/entities/sesion-usuario.entity.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { ClaveTemporalVisible } from '../auth/entities/clave-temporal-visible.entity.js';
 
 /** Frecuencia máxima de escritura de `usuario.ultimo_acceso` (5 minutos). */
 export const ULTIMO_ACCESO_INTERVALO_MS = 5 * 60 * 1000;
@@ -56,7 +61,9 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 @Injectable()
-export class UsuariosService {
+export class UsuariosService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(UsuariosService.name);
+  private cleanupTimer: NodeJS.Timeout | undefined;
   constructor(
     @InjectRepository(Usuario)
     private readonly repository: Repository<Usuario>,
@@ -64,6 +71,16 @@ export class UsuariosService {
     @Optional() private readonly config?: ConfigService<AppEnvironment, true>,
     @Optional() private readonly auditoria?: AuditoriaService,
   ) {}
+
+  onModuleInit(): void {
+    this.cleanupTimer = setInterval(() => void this.eliminarClavesTemporalesVencidas(), 5 * 60 * 1000);
+    this.cleanupTimer.unref();
+    void this.eliminarClavesTemporalesVencidas();
+  }
+
+  onModuleDestroy(): void {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
 
   async create(dto: CreateUsuarioDto, actor?: Usuario, ip: string | null = null): Promise<UsuarioResponseDto> {
     try {
@@ -85,10 +102,9 @@ export class UsuariosService {
       rol: dto.rol, id_externo_sso: null, estado: UsuarioEstado.ACTIVO, ultimo_acceso: null,
     }));
     const temporaryPassword = generateOneTimeSecret();
-    const encryptionKeyPath = this.config?.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-    if (!encryptionKeyPath) throw new ServiceUnavailableException('El correo de acceso no puede prepararse: falta la clave de cifrado.');
-    const encryptionKey = readEncryptionKey(encryptionKeyPath);
-    const outbox = await setTemporaryPassword(manager, created.id, temporaryPassword, encryptionKey);
+    const encryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
+    const temporaryKey = this.readKey('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', 'La clave temporal no puede almacenarse de forma segura.');
+    const outbox = await setTemporaryPassword(manager, created.id, temporaryPassword, encryptionKey, temporaryKey);
     await manager.getRepository(CorreoSalida).save(outbox);
     if (actor && this.auditoria) await this.auditoria.registrar(manager, { actor, accion: 'CREAR_USUARIO', entidad_tipo: 'usuario', entidad_id: created.id, valores_anteriores: null, valores_nuevos: { email: created.email, nombres: created.nombres, apellidos: created.apellidos, rol: created.rol, estado: created.estado }, ip_origen: ip });
     return created;
@@ -118,15 +134,14 @@ export class UsuariosService {
         const credentials = manager.getRepository(CredencialUsuario);
         const current = await credentials.findOne({ where: { usuario_id: id }, lock: { mode: 'pessimistic_write' } });
         if (current && !current.requiere_cambio) throw new ConflictException('La cuenta ya estableció una contraseña personal.');
-        const keyPath = this.config?.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-        if (!keyPath) throw new ServiceUnavailableException('El correo de acceso no puede prepararse.');
-        const encryptionKey = readEncryptionKey(keyPath);
+        const encryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
+        const temporaryKey = this.readKey('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', 'La clave temporal no puede almacenarse de forma segura.');
         const outbox = manager.getRepository(CorreoSalida);
         const pending = await outbox.find({ where: { usuario_id: id, enviado_en: IsNull() } });
         for (const old of pending) { old.secreto_cifrado = ''; old.nonce = ''; old.tag = ''; old.expira_en = new Date(); }
         if (pending.length) await outbox.save(pending);
         const password = generateOneTimeSecret();
-        await outbox.save(await setTemporaryPassword(manager, id, password, encryptionKey));
+        await outbox.save(await setTemporaryPassword(manager, id, password, encryptionKey, temporaryKey));
         await manager.getRepository(SesionUsuario).update({ usuario_id: id, revocada_en: IsNull() }, { revocada_en: new Date() });
         if (this.auditoria) await this.auditoria.registrar(manager, { actor, accion: 'REENVIAR_ACCESO_USUARIO', entidad_tipo: 'usuario', entidad_id: id, valores_anteriores: { requiere_cambio: current?.requiere_cambio ?? true }, valores_nuevos: { requiere_cambio: true, acceso_temporal_reenviado: true }, ip_origen: ip });
         return target;
@@ -135,6 +150,72 @@ export class UsuariosService {
     } catch (error: unknown) {
       if (error instanceof ConflictException || error instanceof ForbiddenException || error instanceof ServiceUnavailableException) throw error;
       this.handleDatabaseError(error);
+    }
+  }
+
+  /** ADMIN puede recuperar una clave vigente o rotarla si expiró/no hay copia cifrada legible. */
+  async revealOrRotateTemporaryPassword(id: string, actor: Usuario, ip: string | null): Promise<{ clave_temporal: string; expira_en: Date; regenerada: boolean }> {
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const users = manager.getRepository(Usuario);
+        const admin = await users.findOne({ where: { id: actor.id }, lock: { mode: 'pessimistic_write' } });
+        if (!admin || admin.estado !== UsuarioEstado.ACTIVO || admin.rol !== UsuarioRol.ADMIN) throw new ForbiddenException('Se requiere una cuenta ADMIN activa.');
+        const target = await users.findOne({ where: { id, rol: UsuarioRol.ESTUDIANTE }, lock: { mode: 'pessimistic_write' } });
+        if (!target) throw new NotFoundException('No existe la cuenta estudiantil indicada.');
+        if (target.estado !== UsuarioEstado.ACTIVO) throw new ConflictException('La cuenta está inactiva; actívela antes de generar una clave temporal.');
+        const credentialsRepo = manager.getRepository(CredencialUsuario);
+        const credential = await credentialsRepo.findOne({ where: { usuario_id: id }, lock: { mode: 'pessimistic_write' } });
+        if (!credential?.requiere_cambio) throw new ConflictException('La cuenta ya estableció una contraseña personal. Use el proceso de restablecimiento de acceso.');
+
+        const now = new Date();
+        const temporaryKey = this.readKey('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', 'La clave temporal no está disponible de forma segura.');
+        const stored = await manager.getRepository(ClaveTemporalVisible).findOne({ where: { usuario_id: id }, lock: { mode: 'pessimistic_write' } });
+        if (credential.password_hash && credential.temporal_expira_en && credential.temporal_expira_en > now &&
+            stored && stored.expira_en.getTime() === credential.temporal_expira_en.getTime()) {
+          let secret: string | null = null;
+          try {
+            secret = decryptTemporarySecret(stored, temporaryKey);
+          } catch {
+            // Una copia ilegible se sustituye con una clave nueva; nunca se registra el fallo criptográfico.
+          }
+          if (secret !== null) {
+            await this.auditoria?.registrar(manager, { actor: admin, accion: 'REVELAR_CLAVE_TEMPORAL', entidad_tipo: 'usuario', entidad_id: id, valores_anteriores: null, valores_nuevos: { expira_en: stored.expira_en, clave_revelada: true }, ip_origen: ip });
+            return { clave_temporal: secret, expira_en: stored.expira_en, regenerada: false };
+          }
+        }
+
+        const outboxEncryptionKey = this.readKey('OUTBOX_ENCRYPTION_KEY_PATH', 'El correo de acceso no puede prepararse.');
+        const pending = await manager.getRepository(CorreoSalida).find({ where: { usuario_id: id, enviado_en: IsNull() } });
+        for (const item of pending) { item.secreto_cifrado = ''; item.nonce = ''; item.tag = ''; item.expira_en = now; }
+        if (pending.length) await manager.getRepository(CorreoSalida).save(pending);
+        const password = generateOneTimeSecret();
+        const ttlMs = importTempTtlMs(this.config?.get('IMPORT_TEMP_TTL_HOURS', { infer: true }));
+        const outbox = await setTemporaryPassword(manager, id, password, outboxEncryptionKey, temporaryKey, ttlMs);
+        await manager.getRepository(CorreoSalida).save(outbox);
+        await manager.getRepository(SesionUsuario).update({ usuario_id: id, revocada_en: IsNull() }, { revocada_en: now });
+        const expiry = outbox.expira_en;
+        await this.auditoria?.registrar(manager, { actor: admin, accion: 'GENERAR_CLAVE_TEMPORAL_ADMIN', entidad_tipo: 'usuario', entidad_id: id, valores_anteriores: { requiere_cambio: true, expira_en: credential.temporal_expira_en }, valores_nuevos: { requiere_cambio: true, expira_en: expiry, clave_revelada: true }, ip_origen: ip });
+        return { clave_temporal: password, expira_en: expiry, regenerada: true };
+      });
+    } catch (error: unknown) {
+      if (error instanceof ConflictException || error instanceof ForbiddenException || error instanceof NotFoundException || error instanceof ServiceUnavailableException) throw error;
+      this.handleDatabaseError(error);
+    }
+  }
+
+  private readKey(name: 'OUTBOX_ENCRYPTION_KEY_PATH' | 'TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', message: string): string {
+    const path = this.config?.get(name, { infer: true });
+    if (!path) throw new ServiceUnavailableException(message);
+    try { return readEncryptionKey(path); } catch { throw new ServiceUnavailableException(message); }
+  }
+
+  private async eliminarClavesTemporalesVencidas(): Promise<void> {
+    if (!this.dataSource.isInitialized) return;
+    try {
+      await this.dataSource.getRepository(ClaveTemporalVisible).createQueryBuilder()
+        .delete().where('"expira_en" <= CURRENT_TIMESTAMP').execute();
+    } catch {
+      this.logger.warn('No se pudieron limpiar copias cifradas de claves temporales vencidas.');
     }
   }
 
