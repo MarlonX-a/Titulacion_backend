@@ -14,6 +14,7 @@ describe('validateEnvironment', () => {
     expect(validateEnvironment(db)).toMatchObject({
       NODE_ENV: 'development', PORT: 3000, SWAGGER_ENABLED: false, DB_SCHEMA: 'titulacion_dev', AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [],
       REDIS_TLS: false, DB_SSL: false, DB_SSL_REJECT_UNAUTHORIZED: true, SMTP_REQUIRE_TLS: false,
+      EMAIL_ENABLED: true,
     });
     expect(validateEnvironment(db)).not.toHaveProperty('REDIS_PASSWORD');
   });
@@ -57,6 +58,14 @@ describe('validateEnvironment', () => {
     for (const key of ['REDIS_TLS', 'DB_SSL', 'DB_SSL_REJECT_UNAUTHORIZED', 'SMTP_REQUIRE_TLS']) {
       expect(() => validateEnvironment({ ...db, [key]: '1' })).toThrow(key);
     }
+  });
+
+  it('permite desactivar correo en despliegues sin exigir SMTP ni la clave del outbox', () => {
+    const { SMTP_HOST: _host, SMTP_FROM: _from, OUTBOX_ENCRYPTION_KEY_PATH: _outbox, ...sinCorreo } = produccion;
+    expect(validateEnvironment({ ...sinCorreo, EMAIL_ENABLED: 'false' })).toMatchObject({ EMAIL_ENABLED: false });
+    expect(() => validateEnvironment({ ...sinCorreo, EMAIL_ENABLED: 'true' })).toThrow('Redis, SMTP, S3 y cifrado');
+    expect(() => validateEnvironment({ ...db, EMAIL_ENABLED: 'no' })).toThrow('EMAIL_ENABLED');
+    expect(validateEnvironment({ ...produccion, EMAIL_ENABLED: 'true' }).EMAIL_ENABLED).toBe(true);
   });
 
   it('en producción activa TLS de PostgreSQL y SMTP por defecto y permite desactivarlo explícitamente', () => {

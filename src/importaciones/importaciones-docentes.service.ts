@@ -67,6 +67,7 @@ function response(record: PreparacionImportacion): ImportacionDocentesResumen {
 @Injectable()
 export class ImportacionesDocentesService {
   private readonly encryptionKey: string;
+  private readonly emailEnabled: boolean;
   private readonly temporaryEncryptionKey: string;
 
   constructor(
@@ -78,7 +79,8 @@ export class ImportacionesDocentesService {
     private readonly academico: AcademicoService = new AcademicoService(),
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
-    this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
+    this.emailEnabled = config.get('EMAIL_ENABLED', { infer: true }) !== false;
+    this.encryptionKey = keyPath && this.emailEnabled ? readEncryptionKey(keyPath) : '';
     const tempKeyPath = config.get('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', { infer: true });
     this.temporaryEncryptionKey = tempKeyPath ? readEncryptionKey(tempKeyPath) : '';
   }
@@ -264,7 +266,7 @@ export class ImportacionesDocentesService {
         const temporary = temporaryCredentials.get(row.email) ?? await this.temporaryCredential();
         if (!this.temporaryEncryptionKey) throw new ServiceUnavailableException('La clave temporal no puede almacenarse de forma segura.');
         await persistTemporaryPassword(manager, user.id, temporary.secret, temporary.hash, expiry, this.temporaryEncryptionKey, credential);
-        await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
+        if (this.emailEnabled) await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
       }
     }
     return counts;

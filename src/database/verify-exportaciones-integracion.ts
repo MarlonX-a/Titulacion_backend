@@ -7,6 +7,7 @@ import { ArchivoPendiente } from '../almacenamiento/entities/archivo-pendiente.e
 import { AlmacenamientoService } from '../almacenamiento/almacenamiento.service.js';
 import { loadEnvironment } from '../config/load-environment.js';
 import type { AppEnvironment } from '../config/environment.js';
+import { redisConnectionBase } from '../config/redis-options.js';
 import { createDatabaseOptions } from './database.options.js';
 import { DatabaseDataSource } from './database-data-source.js';
 import { catalogoSembrado } from './verify-academico.js';
@@ -76,7 +77,7 @@ async function verify(): Promise<void> {
   const cleanup = new ArchivoLimpiezaService(isolated.getRepository(ArchivoPendiente), cleanupQueue, config);
   const reports = new ReportesService(isolated);
   queue = new Queue<ExportacionJob>(queueName, {
-    connection: { host: env.REDIS_HOST ?? '127.0.0.1', port: env.REDIS_PORT, maxRetriesPerRequest: null },
+    connection: { ...redisConnectionBase(env), maxRetriesPerRequest: null },
   });
   await queue.waitUntilReady();
   const service = new ExportacionesService(

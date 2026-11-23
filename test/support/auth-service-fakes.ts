@@ -83,10 +83,12 @@ export async function authenticationServiceWith(
   limiter: ReturnType<typeof limiterMock>,
   auditoria: ReturnType<typeof auditoriaMock>,
   primerAcceso: ReturnType<typeof primerAccesoMock> = primerAccesoMock(),
+  emailEnabled = true,
 ): Promise<AuthenticationService> {
   const config = new ConfigService<AppEnvironment, true>({
     NODE_ENV: 'development', AUTH_ISSUER: 'http://127.0.0.1:3000', JWT_PRIVATE_KEY_PATH: keys.privateKey, JWT_PUBLIC_KEY_PATH: keys.publicKey,
     OUTBOX_ENCRYPTION_KEY_PATH: keys.outboxKey,
+    EMAIL_ENABLED: emailEnabled,
   } as AppEnvironment);
   const service = new AuthenticationService(config, dataSource, limiter as unknown as AuthRateLimiterService, auditoria as unknown as AuditoriaService, primerAcceso as unknown as PrimerAccesoService);
   await service.onModuleInit();
