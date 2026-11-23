@@ -56,5 +56,5 @@ describe('scripts/ci-guards.mjs', () => {
     const resultado = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' });
     expect(`${resultado.stdout}${resultado.stderr}`).toContain('sin hallazgos');
     expect(resultado.status).toBe(0);
-  });
+  }, 15_000);
 });

@@ -16,7 +16,7 @@ import { REPO_ROOT, bootAttackApp, type AttackApp } from './support/harness.js';
 const PRODUCCION: Record<string, string> = {
   NODE_ENV: 'production', PORT: '3000', DB_HOST: 'db.interna', DB_USERNAME: 'app', DB_PASSWORD: 'secreto-de-prueba', DB_NAME: 'titulacion',
   JWT_PRIVATE_KEY_PATH: '/run/secrets/jwt-private.pem', JWT_PUBLIC_KEY_PATH: '/run/secrets/jwt-public.pem',
-  OUTBOX_ENCRYPTION_KEY_PATH: '/run/secrets/outbox.key', AUTH_ISSUER: 'https://titulacion.example.edu',
+  OUTBOX_ENCRYPTION_KEY_PATH: '/run/secrets/outbox.key', TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH: '/run/secrets/temp-credential.key', AUTH_ISSUER: 'https://titulacion.example.edu',
   AUTH_ORIGINS: 'https://titulacion.example.edu', TRUST_PROXY: '1',
   REDIS_HOST: 'redis.interna', REDIS_PASSWORD: 'secreto-de-prueba', REDIS_TLS: 'true', DB_SSL: 'true',
   SMTP_HOST: 'smtp.example.edu', SMTP_FROM: 'Titulación <no-reply@example.edu>', SMTP_REQUIRE_TLS: 'true', S3_BUCKET: 'titulacion',

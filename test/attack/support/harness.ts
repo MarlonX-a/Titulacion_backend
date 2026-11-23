@@ -71,13 +71,14 @@ export async function dropTemporarySchema(base: AppEnvironment, schema: string):
   try { await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); } finally { await admin.destroy(); }
 }
 
-/** Claves desechables (JWT RS256 y llave del outbox) generadas en un directorio temporal. */
+/** Claves desechables (JWT RS256 y llaves AES independientes) generadas en un directorio temporal. */
 export function throwawayKeys(directory: string) {
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
-  const paths = { privateKey: join(directory, 'jwt-private.pem'), publicKey: join(directory, 'jwt-public.pem'), outboxKey: join(directory, 'outbox.key') };
+  const paths = { privateKey: join(directory, 'jwt-private.pem'), publicKey: join(directory, 'jwt-public.pem'), outboxKey: join(directory, 'outbox.key'), temporaryCredentialKey: join(directory, 'temp-credential.key') };
   writeFileSync(paths.privateKey, pair.privateKey, { mode: 0o600 });
   writeFileSync(paths.publicKey, pair.publicKey, { mode: 0o644 });
   writeFileSync(paths.outboxKey, randomBytes(32), { mode: 0o600 });
+  writeFileSync(paths.temporaryCredentialKey, randomBytes(32), { mode: 0o600 });
   return { ...paths, privateKeyPem: pair.privateKey, publicKeyPem: pair.publicKey };
 }
 
@@ -90,6 +91,7 @@ export function attackEnvironment(base: AppEnvironment, schema: string, keys: Re
     DB_PASSWORD: base.DB_PASSWORD, DB_NAME: base.DB_NAME, DB_SCHEMA: schema,
     JWT_PRIVATE_KEY_PATH: keys.privateKey, JWT_PUBLIC_KEY_PATH: keys.publicKey,
     OUTBOX_ENCRYPTION_KEY_PATH: keys.outboxKey,
+    TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH: keys.temporaryCredentialKey,
     AUTH_ISSUER: ATTACK_ISSUER, AUTH_ORIGINS: ATTACK_ORIGIN,
     TRUST_PROXY: '1',
     REDIS_HOST: base.REDIS_HOST ?? '127.0.0.1', REDIS_PORT: String(base.REDIS_PORT),
@@ -106,7 +108,7 @@ export function attackEnvironment(base: AppEnvironment, schema: string, keys: Re
 }
 
 const MANAGED_KEYS = ['NODE_ENV', 'PORT', 'SWAGGER_ENABLED', 'DB_HOST', 'DB_PORT', 'DB_USERNAME', 'DB_PASSWORD', 'DB_NAME', 'DB_SCHEMA',
-  'JWT_PRIVATE_KEY_PATH', 'JWT_PUBLIC_KEY_PATH', 'OUTBOX_ENCRYPTION_KEY_PATH', 'AUTH_ISSUER', 'AUTH_ORIGINS', 'TRUST_PROXY',
+  'JWT_PRIVATE_KEY_PATH', 'JWT_PUBLIC_KEY_PATH', 'OUTBOX_ENCRYPTION_KEY_PATH', 'TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', 'AUTH_ISSUER', 'AUTH_ORIGINS', 'TRUST_PROXY',
   'REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD', 'REDIS_TLS', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_FROM', 'SMTP_USERNAME', 'SMTP_PASSWORD',
   'S3_ENDPOINT', 'S3_REGION', 'S3_BUCKET', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'IMPORT_TEMP_TTL_HOURS'];
 
