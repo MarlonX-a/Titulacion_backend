@@ -119,7 +119,7 @@ describe('Matriz BOLA/BFLA generada desde las rutas (ataque)', () => {
     rutas = descubrirRutas(attack);
     for (const rol of ROLES) tokens.set(rol, await tokenDe(attack, await crearCuenta(attack, { rol })));
     const nueva = await crearCuenta(attack, { rol: 'ESTUDIANTE', requiereCambio: true });
-    firstAccessToken = await firmarToken(attack, nueva.usuarioId, { typ: 'first_access' });
+    firstAccessToken = await firmarToken(attack, nueva.usuarioId, { typ: 'first_access', cv: 0 });
   });
   afterAll(async () => { await attack?.close(); });
 

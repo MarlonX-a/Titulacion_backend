@@ -16,7 +16,7 @@ async function importDist<T>(relativePath: string): Promise<T> {
   return await import(pathToFileURL(join(REPO_ROOT, 'dist', relativePath)).href) as T;
 }
 
-describe('Primer acceso con cédula: mitigaciones (ataque)', () => {
+describe('Primer acceso con claves temporales aleatorias: mitigaciones (ataque)', () => {
   let attack: AttackApp;
 
   beforeAll(async () => { attack = await bootAttackApp({ IMPORT_TEMP_TTL_HOURS: String(IMPORT_TTL_HORAS) }); });
@@ -84,11 +84,21 @@ describe('Primer acceso con cédula: mitigaciones (ataque)', () => {
           expect(expira.getTime()).toBeGreaterThanOrEqual(antes + ttl - 5_000);
           expect(expira.getTime()).toBeLessThanOrEqual(despues + ttl + 5_000);
         }
-        // La cédula sigue siendo la clave inicial por decisión del propietario...
-        expect((await login(attack, email, cedula)).status).toBe(200);
-        // ...pero deja de servir cuando vence.
-        await attack.db.query(`UPDATE ${attack.s}."credencial_usuario" SET "temporal_expira_en"=now() - interval '1 minute' WHERE "usuario_id"=(SELECT "id" FROM ${attack.s}."usuario" WHERE "email"=$1)`, [email]);
+        const [vault] = await attack.db.query(
+          `SELECT "usuario_id", "secreto_cifrado", "nonce", "tag", "expira_en", "actualizada_en"
+             FROM ${attack.s}."clave_temporal_visible" WHERE "usuario_id"=(SELECT "id" FROM ${attack.s}."usuario" WHERE "email"=$1)`,
+          [email],
+        ) as Array<{ usuario_id: string; secreto_cifrado: string; nonce: string; tag: string; expira_en: Date; actualizada_en: Date }>;
+        const { decryptTemporarySecret, readEncryptionKey } = await importDist<{
+          decryptTemporarySecret(record: NonNullable<typeof vault>, key: string): string;
+          readEncryptionKey(path: string): string;
+        }>('auth/credentials.js');
+        const temporaryPassword = decryptTemporarySecret(vault!, readEncryptionKey(attack.env.TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH!));
+        expect(temporaryPassword).not.toBe(cedula);
         expect((await login(attack, email, cedula)).status).toBe(401);
+        expect((await login(attack, email, temporaryPassword)).status).toBe(200);
+        await attack.db.query(`UPDATE ${attack.s}."credencial_usuario" SET "temporal_expira_en"=now() - interval '1 minute' WHERE "usuario_id"=(SELECT "id" FROM ${attack.s}."usuario" WHERE "email"=$1)`, [email]);
+        expect((await login(attack, email, temporaryPassword)).status).toBe(401);
       } finally { lectura.mockRestore(); }
     });
   });

@@ -300,7 +300,7 @@ describe('Autenticación (ataque)', () => {
 
     it('[regresión] un token first_access no sirve en rutas normales', async () => {
       const usuario = await crearCuenta(attack, { rol: 'ESTUDIANTE', requiereCambio: true });
-      const token = await firmarToken(attack, usuario.usuarioId, { typ: 'first_access' });
+      const token = await firmarToken(attack, usuario.usuarioId, { typ: 'first_access', cv: 0 });
       expect((await request(attack.baseUrl).get('/usuarios/me').set('Authorization', `Bearer ${token}`)).status).toBe(403);
     });
 
