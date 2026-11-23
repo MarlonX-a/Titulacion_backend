@@ -5,6 +5,8 @@ import { Carrera } from '../academico/entities/carrera.entity.js';
 import { Facultad } from '../academico/entities/facultad.entity.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
+import { ClaveTemporalVisible } from '../auth/entities/clave-temporal-visible.entity.js';
+import { decryptTemporarySecret } from '../auth/credentials.js';
 import { Estudiante } from '../estudiantes/entities/estudiante.entity.js';
 import { EstudianteHabilitado } from '../habilitados/entities/estudiante-habilitado.entity.js';
 import { PeriodoTitulacion } from '../periodos/entities/periodo-titulacion.entity.js';
@@ -37,6 +39,7 @@ function setup(buffer: Buffer) {
     [Estudiante, memoryRepository([])],
     [EstudianteHabilitado, memoryRepository([])],
     [CredencialUsuario, memoryRepository([])],
+    [ClaveTemporalVisible, memoryRepository([])],
     [CorreoSalida, memoryRepository([])],
     [LoteImportacion, memoryRepository([])],
     [Facultad, memoryRepository([
@@ -81,7 +84,7 @@ describe('ImportacionesService carrera de la importación', () => {
     expect(context.repos.get(Estudiante)!.rows).toEqual([expect.objectContaining({ cedula: '1316661675', carrera_id: 'car-software' })]);
   });
 
-  it('la clave temporal importada vence a las IMPORT_TEMP_TTL_HOURS configuradas y el correo de acceso comparte ese vencimiento', async () => {
+  it('crea una clave temporal aleatoria recuperable hasta su vencimiento y el correo comparte esa vigencia', async () => {
     const buffer = await studentWorkbook(null);
     const context = setup(buffer);
     const args = [...context.args] as unknown as ConstructorParameters<typeof ImportacionesService>;
@@ -96,14 +99,21 @@ describe('ImportacionesService carrera de la importación', () => {
     await service.importConfirmed(id);
     const despues = Date.now();
 
-    const [credencial] = context.repos.get(CredencialUsuario)!.rows as Array<{ temporal_expira_en: Date; requiere_cambio: boolean }>;
+    const [credencial] = context.repos.get(CredencialUsuario)!.rows as Array<{ temporal_expira_en: Date; requiere_cambio: boolean; password_hash: string }>;
     const [correo] = context.repos.get(CorreoSalida)!.rows as Array<{ expira_en: Date; tipo: string }>;
+    const [secretoGuardado] = context.repos.get(ClaveTemporalVisible)!.rows as unknown as Array<ClaveTemporalVisible>;
     const seisHoras = 6 * 3_600_000;
     expect(credencial!.requiere_cambio).toBe(true);
     expect(credencial!.temporal_expira_en.getTime()).toBeGreaterThanOrEqual(antes + seisHoras);
     expect(credencial!.temporal_expira_en.getTime()).toBeLessThanOrEqual(despues + seisHoras);
     expect(correo).toMatchObject({ tipo: 'ACCESO' });
     expect(correo!.expira_en).toEqual(credencial!.temporal_expira_en);
+    const { readEncryptionKey } = await import('../auth/credentials.js');
+    const key = readEncryptionKey((args[3] as unknown as { get: (key: string) => string }).get('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH'));
+    const password = decryptTemporarySecret(secretoGuardado!, key);
+    expect(password).not.toBe('1316661675');
+    expect(password).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(secretoGuardado!.expira_en).toEqual(credencial!.temporal_expira_en);
   });
 
   it('sin IMPORT_TEMP_TTL_HOURS válido usa 24 horas', () => {

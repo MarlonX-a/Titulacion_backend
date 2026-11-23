@@ -28,7 +28,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
-import { createEncryptedOutbox, createTemporaryCredentialHash, importTempTtlMs, readEncryptionKey } from '../auth/credentials.js';
+import { createEncryptedOutbox, createTemporaryCredentialHash, generateOneTimeSecret, importTempTtlMs, persistTemporaryPassword, readEncryptionKey } from '../auth/credentials.js';
 
 const PREPARATION_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -80,6 +80,7 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | undefined;
   private dispatching = false;
   private readonly encryptionKey: string;
+  private readonly temporaryEncryptionKey: string;
   private readonly tempTtlMs: number;
 
   constructor(
@@ -92,7 +93,9 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
   ) {
     const keyPath = config.get('OUTBOX_ENCRYPTION_KEY_PATH', { infer: true });
     this.encryptionKey = keyPath ? readEncryptionKey(keyPath) : '';
-    // Solo la clave temporal de esta importación (la cédula) usa la vigencia corta; el alta manual y reenviar-acceso conservan la suya.
+    const tempKeyPath = config.get('TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH', { infer: true });
+    this.temporaryEncryptionKey = tempKeyPath ? readEncryptionKey(tempKeyPath) : '';
+    // Las claves temporales aleatorias de estudiantes importados tienen vigencia corta.
     this.tempTtlMs = importTempTtlMs(config.get('IMPORT_TEMP_TTL_HOURS', { infer: true }));
   }
 
@@ -214,9 +217,13 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
     }
     const buffer = await this.storage.readPrivate(record.ruta_almacenamiento);
     if (createHash('sha256').update(buffer).digest('hex') !== record.sha256) throw new ConflictException('El archivo guardado no coincide con la vista previa validada.');
-    // La clave temporal inicial es la cédula; la credencial exige cambiarla en el primer acceso.
-    const tempHashes = new Map<string, string>();
-    for (const row of rows) tempHashes.set(row.email, await createTemporaryCredentialHash(row.cedula));
+    // La clave aleatoria se prepara antes de la transacción; se conserva cifrada para que ADMIN
+    // pueda recuperarla durante su breve vigencia sin guardar texto claro.
+    const tempPasswords = new Map<string, { secret: string; hash: string }>();
+    for (const row of rows) {
+      const secret = generateOneTimeSecret();
+      tempPasswords.set(row.email, { secret, hash: await createTemporaryCredentialHash(secret) });
+    }
     try {
       const wasImported = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
         const period = await manager.getRepository(PeriodoTitulacion).findOne({ where: { id: periodoId }, lock: { mode: 'pessimistic_write' } });
@@ -275,10 +282,10 @@ export class ImportacionesService implements OnModuleInit, OnModuleDestroy {
           const credential = await credentials.findOne({ where: { usuario_id: user.id }, lock: { mode: 'pessimistic_write' } });
           if (!credential) {
             const expiry = new Date(Date.now() + this.tempTtlMs);
-            const hash = tempHashes.get(row.email);
-            if (!hash) throw new Error('No se pudo proteger la clave temporal.');
-            await credentials.save(credentials.create({ usuario_id: user.id, password_hash: hash, requiere_cambio: true, temporal_expira_en: expiry, version_sesion: 0, actualizada_en: now }));
-            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', row.cedula, expiry, this.encryptionKey));
+            const temporary = tempPasswords.get(row.email);
+            if (!temporary || !this.encryptionKey || !this.temporaryEncryptionKey) throw new Error('No se pudo proteger la clave temporal.');
+            await persistTemporaryPassword(manager, user.id, temporary.secret, temporary.hash, expiry, this.temporaryEncryptionKey, credential);
+            await outboxRepo.save(createEncryptedOutbox(manager, user.id, 'ACCESO', temporary.secret, expiry, this.encryptionKey));
           }
         }
         lot.filas_ok = rows.length;

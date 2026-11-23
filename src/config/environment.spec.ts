@@ -5,7 +5,7 @@ const db = { DB_USERNAME: 'test_user', DB_PASSWORD: 'test_password', DB_NAME: 't
 /** Entorno de producción mínimo y válido (rutas y valores ficticios). */
 const produccion: Record<string, string> = {
   ...db, NODE_ENV: 'production', AUTH_ISSUER: 'https://titulacion.example.test', AUTH_ORIGINS: 'https://titulacion.example.test',
-  JWT_PRIVATE_KEY_PATH: '/run/secrets/jwt-private.pem', JWT_PUBLIC_KEY_PATH: '/run/secrets/jwt-public.pem', OUTBOX_ENCRYPTION_KEY_PATH: '/run/secrets/outbox.key',
+  JWT_PRIVATE_KEY_PATH: '/run/secrets/jwt-private.pem', JWT_PUBLIC_KEY_PATH: '/run/secrets/jwt-public.pem', OUTBOX_ENCRYPTION_KEY_PATH: '/run/secrets/outbox.key', TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH: '/run/secrets/temp-credential.key',
   REDIS_HOST: 'redis.interna', REDIS_PASSWORD: 'clave-ficticia', SMTP_HOST: 'smtp.example.test', SMTP_FROM: 'no-reply@example.test', S3_BUCKET: 'titulacion', TRUST_PROXY: '1',
 };
 
@@ -68,6 +68,12 @@ describe('validateEnvironment', () => {
     const { REDIS_PASSWORD: _omitida, ...sinClave } = produccion;
     expect(() => validateEnvironment(sinClave)).toThrow('REDIS_PASSWORD');
     expect(() => validateEnvironment({ ...produccion, REDIS_PASSWORD: '  ' })).toThrow('REDIS_PASSWORD');
+  });
+
+  it('exige una clave separada para cifrar claves temporales recuperables en producción', () => {
+    const { TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH: _omitida, ...sinClaveTemporal } = produccion;
+    expect(() => validateEnvironment(sinClaveTemporal)).toThrow('Redis, SMTP, S3 y cifrado');
+    expect(validateEnvironment(produccion).TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH).toBe('/run/secrets/temp-credential.key');
   });
 
   it('en producción exige TRUST_PROXY explícito y rechaza true', () => {

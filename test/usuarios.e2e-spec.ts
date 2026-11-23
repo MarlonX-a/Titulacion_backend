@@ -124,6 +124,7 @@ describe('Usuarios (e2e)', () => {
       DB_NAME: 'test_database',
       AUTH_ISSUER: 'http://127.0.0.1:3000', AUTH_ORIGINS: [], REDIS_PORT: 6379, SMTP_PORT: 1025, S3_REGION: 'us-east-1',
       OUTBOX_ENCRYPTION_KEY_PATH: '.test-outbox-key',
+      TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH: '.test-outbox-key',
     });
     writeFileSync(join(process.cwd(), '.test-outbox-key'), randomBytes(32));
     const moduleFixture = await createE2eTestingModule({
@@ -841,6 +842,32 @@ describe('Usuarios (e2e)', () => {
       .then((response) => expect(response.body.id).toBe(pending.body.id));
     await authenticated('get', `/periodos/${period.body.id}/habilitados/me`, 'docente-sub').expect(403);
     await authenticated('get', `/periodos/${period.body.id}/habilitados`, 'student-sub').expect(403);
+  });
+
+  it('muestra desde la lista y permite recuperar la clave aleatoria solo a ADMIN mientras esté pendiente', async () => {
+    addAdmin();
+    const user = await authenticated('post', '/usuarios', 'admin-sub').send({
+      email: 'clave.temporal@live.uleam.edu.ec', nombres: 'Estudiante', apellidos: 'Temporal', rol: UsuarioRol.ESTUDIANTE,
+    }).expect(201);
+    const profile = await authenticated('post', '/estudiantes', 'admin-sub').send({
+      usuario_id: user.body.id, cedula: '0102030400', matricula: 'TEMP-01', carrera_id: CARRERA_PRUEBA_ID, nivel: 4,
+    }).expect(201);
+    const period = await createPeriod('CLAVE-TEMPORAL-1');
+    const habilitado = await authenticated('post', `/periodos/${period.body.id}/habilitados`, 'admin-sub').send({
+      estudiante_id: profile.body.id, condicion_ingreso: CondicionIngreso.REGULAR,
+    }).expect(201);
+
+    const listed = await authenticated('get', `/periodos/${period.body.id}/habilitados`, 'admin-sub').expect(200);
+    expect(listed.body.data[0].estudiante.requiere_cambio_clave).toBe(true);
+    const path = `/periodos/${period.body.id}/habilitados/${habilitado.body.id}/clave-temporal`;
+    const first = await authenticated('post', path, 'admin-sub').send({}).expect(200);
+    expect(first.body).toMatchObject({ regenerada: false, expira_en: expect.any(String) });
+    expect(first.body.clave_temporal).not.toBe('0102030400');
+    expect(first.headers['cache-control']).toBe('no-store');
+    const repeated = await authenticated('post', path, 'admin-sub').send({}).expect(200);
+    expect(repeated.body.clave_temporal).toBe(first.body.clave_temporal);
+    await authenticated('post', path, 'admin-sub').send({ secreto: 'no' }).expect(400);
+    await authenticated('post', path, 'student-sub').send({}).expect(403);
   });
 
   it('valida altas condicionadas, duplicados, datos administrados y cuentas incompatibles', async () => {

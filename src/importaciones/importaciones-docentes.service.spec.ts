@@ -11,6 +11,7 @@ import { UsuarioEstado } from '../usuarios/enums/usuario-estado.enum.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
 import { CorreoSalida } from '../auth/entities/correo-salida.entity.js';
 import { CredencialUsuario } from '../auth/entities/credencial-usuario.entity.js';
+import { ClaveTemporalVisible } from '../auth/entities/clave-temporal-visible.entity.js';
 import { LoteImportacion } from './entities/lote-importacion.entity.js';
 import { PreparacionImportacion } from './entities/preparacion-importacion.entity.js';
 import { PreparacionImportacionEstado as Estado } from './enums/preparacion-importacion-estado.enum.js';
@@ -31,6 +32,7 @@ function setup(buffer: Buffer) {
     [Usuario, memoryRepository([])],
     [Docente, memoryRepository([])],
     [CredencialUsuario, memoryRepository([])],
+    [ClaveTemporalVisible, memoryRepository([])],
     [CorreoSalida, memoryRepository([])],
     [LoteImportacion, memoryRepository([])],
     [Facultad, memoryRepository([{ id: 'fac-1', codigo: 'FAC', nombre: 'Facultad' }])],

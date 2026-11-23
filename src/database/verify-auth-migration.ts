@@ -39,8 +39,8 @@ async function verify(): Promise<void> {
   const id = '00000000-0000-4000-8000-000000000001';
   await isolated.query(`INSERT INTO ${schemaSql()}."usuario" ("id","email","nombres","apellidos","rol","estado","id_externo_sso") VALUES ($1,$2,$3,$4,$5,$6,NULL)`, [id, 'verificador@uleam.edu.ec', 'Verificador', 'Auth', 'ADMIN', 'ACTIVO']);
   step = 'comprobación de tablas';
-  const tables = await isolated.query(`SELECT to_regclass($1) AS credenciales, to_regclass($2) AS sesiones, to_regclass($3) AS refresh, to_regclass($4) AS recovery, to_regclass($5) AS outbox, to_regclass($6) AS importaciones`, [ `${schema}.credencial_usuario`, `${schema}.sesion_usuario`, `${schema}.sesion_refresh_hash`, `${schema}.solicitud_recuperacion`, `${schema}.correo_salida`, `${schema}.preparacion_importacion` ]) as Array<Record<string, string | null>>;
-  if (!tables[0]?.credenciales || !tables[0]?.sesiones || !tables[0]?.refresh || !tables[0]?.recovery || !tables[0]?.outbox || !tables[0]?.importaciones) throw new Error('Faltan tablas de autenticación u preparación de importación.');
+  const tables = await isolated.query(`SELECT to_regclass($1) AS credenciales, to_regclass($2) AS sesiones, to_regclass($3) AS refresh, to_regclass($4) AS recovery, to_regclass($5) AS outbox, to_regclass($6) AS importaciones, to_regclass($7) AS claves_temporales`, [ `${schema}.credencial_usuario`, `${schema}.sesion_usuario`, `${schema}.sesion_refresh_hash`, `${schema}.solicitud_recuperacion`, `${schema}.correo_salida`, `${schema}.preparacion_importacion`, `${schema}.clave_temporal_visible` ]) as Array<Record<string, string | null>>;
+  if (!tables[0]?.credenciales || !tables[0]?.sesiones || !tables[0]?.refresh || !tables[0]?.recovery || !tables[0]?.outbox || !tables[0]?.importaciones || !tables[0]?.claves_temporales) throw new Error('Faltan tablas de autenticación, claves temporales o preparación de importación.');
 
   step = 'columna de inactividad de sesiones';
   const activityColumn = await sessionActivityColumn();

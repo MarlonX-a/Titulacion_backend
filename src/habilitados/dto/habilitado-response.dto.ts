@@ -29,6 +29,9 @@ export class HabilitadoEstudianteDto {
 
   @ApiPropertyOptional({ description: 'Solo en respuestas para ADMIN o el propio estudiante.' })
   nivel?: number;
+
+  @ApiPropertyOptional({ description: 'Solo ADMIN: indica que la cuenta aún debe cambiar la clave temporal.' })
+  requiere_cambio_clave?: boolean;
 }
 
 export class HabilitadoResponsableDto {

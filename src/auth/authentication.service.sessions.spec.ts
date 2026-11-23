@@ -255,7 +255,7 @@ describe('AuthenticationService (sesiones y recuperación)', () => {
       store.credenciales.findOne.mockResolvedValue({ usuario_id: USER_ID, password_hash: currentHash, requiere_cambio: true, temporal_expira_en: new Date(Date.now() + 60_000), version_sesion: 0 });
       const { service, limiter, auditoria, primerAcceso } = await serviceFor(store.dataSource);
 
-      await service.changeInitialPassword(USER_ID, { password: NEW_PASSWORD }, IP);
+      await service.changeInitialPassword(USER_ID, { password: NEW_PASSWORD }, IP, 0);
 
       expect(limiter.enforce).toHaveBeenCalledWith(`first:${USER_ID}`, 10, 900);
       voidsRecoveryCodes(store);
@@ -270,7 +270,7 @@ describe('AuthenticationService (sesiones y recuperación)', () => {
       store.credenciales.findOne.mockResolvedValue({ usuario_id: USER_ID, password_hash: currentHash, requiere_cambio: true, temporal_expira_en: new Date(Date.now() - 60_000), version_sesion: 0 });
       const { service, primerAcceso } = await serviceFor(store.dataSource);
 
-      await expect(service.changeInitialPassword(USER_ID, { password: NEW_PASSWORD }, IP)).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.changeInitialPassword(USER_ID, { password: NEW_PASSWORD }, IP, 0)).rejects.toBeInstanceOf(UnauthorizedException);
 
       expect(primerAcceso.avisarAlTitular).not.toHaveBeenCalled();
       expect(primerAcceso.vigilarActivacionesPorIp).not.toHaveBeenCalled();

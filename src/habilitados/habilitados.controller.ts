@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   Param,
   ParseUUIDPipe,
@@ -13,6 +14,7 @@ import {
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiExtraModels,
@@ -38,6 +40,8 @@ import { ListHabilitadosQueryDto } from './dto/list-habilitados-query.dto.js';
 import { ResolveIngresoDto } from './dto/resolve-ingreso.dto.js';
 import { UpdateHabilitacionDto } from './dto/update-habilitacion.dto.js';
 import { HabilitadosService } from './habilitados.service.js';
+import { UsuariosService } from '../usuarios/usuarios.service.js';
+import { EmptyActionDto } from '../invitaciones/dto/empty-action.dto.js';
 
 @ApiTags('Estudiantes habilitados')
 @ApiBearerAuth('bearer')
@@ -46,7 +50,7 @@ import { HabilitadosService } from './habilitados.service.js';
 @ApiServiceUnavailableResponse({ description: 'PostgreSQL no está disponible.' })
 @Controller('periodos/:periodoId/habilitados')
 export class HabilitadosController {
-  constructor(private readonly habilitados: HabilitadosService) {}
+  constructor(private readonly habilitados: HabilitadosService, private readonly usuarios: UsuariosService) {}
 
   @Post()
   @Roles(UsuarioRol.ADMIN)
@@ -124,6 +128,28 @@ export class HabilitadosController {
     @Query() query: PaginationQueryDto,
   ) {
     return this.habilitados.candidatosInvitacion(periodoId, usuario, query);
+  }
+
+  @Post(':id/clave-temporal')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @Roles(UsuarioRol.ADMIN)
+  @ApiOperation({ summary: 'Consultar o generar la clave temporal de un estudiante pendiente de activación', description: 'Devuelve la clave aleatoria vigente. Si expiró o no existe una copia recuperable, genera y envía una nueva clave temporal. La respuesta no se almacena en caché.' })
+  @ApiBody({ type: EmptyActionDto })
+  @ApiOkResponse({ schema: { type: 'object', required: ['clave_temporal', 'expira_en', 'regenerada'], properties: { clave_temporal: { type: 'string' }, expira_en: { type: 'string', format: 'date-time' }, regenerada: { type: 'boolean' } } } })
+  @ApiBadRequestResponse({ description: 'No se permiten campos en el cuerpo.' })
+  @ApiForbiddenResponse({ description: 'Se requiere una cuenta ADMIN activa.' })
+  @ApiNotFoundResponse({ description: 'No existe la habilitación en el período.' })
+  @ApiConflictResponse({ description: 'La cuenta está inactiva o ya estableció su contraseña personal.' })
+  async claveTemporal(
+    @Param('periodoId', new ParseUUIDPipe()) periodoId: string,
+    @Param('id', new ParseUUIDPipe()) habilitacionId: string,
+    @Body() _body: EmptyActionDto,
+    @CurrentUsuario() actor: Usuario,
+    @Req() request: Request,
+  ) {
+    const usuarioId = await this.habilitados.getUserIdForCredentialAction(periodoId, habilitacionId);
+    return this.usuarios.revealOrRotateTemporaryPassword(usuarioId, actor, request.ip ?? null);
   }
 
   @Get(':id')

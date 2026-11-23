@@ -40,7 +40,7 @@ describe('Autenticación de cuenta propia (e2e)', () => {
       response: { access_token: 'refreshed-access-test', token_type: 'Bearer', expires_in: 900 },
       refresh_cookie: 'session.next-refresh', csrf_cookie: 'next-csrf',
     });
-    authentication.verifyToken.mockResolvedValue({ subject: identityId, issuer: 'http://127.0.0.1:3000', firstAccess: true });
+    authentication.verifyToken.mockResolvedValue({ subject: identityId, issuer: 'http://127.0.0.1:3000', firstAccess: true, credentialVersion: 0 });
     const module = await createE2eTestingModule({ imports: [AppModule] })
       .overrideModule(DatabaseModule).useModule(DatabaseTestingModule)
       .overrideProvider(ConfigService).useValue(config)
@@ -79,7 +79,7 @@ describe('Autenticación de cuenta propia (e2e)', () => {
     const initialPassword = randomBytes(18).toString('base64url');
     await request(app.getHttpServer()).get('/usuarios').set('Authorization', 'Bearer first-access-token').expect(403);
     await request(app.getHttpServer()).post('/auth/change-initial-password').set('Authorization', 'Bearer first-access-token').send({ password: initialPassword }).expect(204);
-    expect(authentication.changeInitialPassword).toHaveBeenCalledWith(identityId, { password: initialPassword }, expect.any(String));
+    expect(authentication.changeInitialPassword).toHaveBeenCalledWith(identityId, { password: initialPassword }, expect.any(String), 0);
   });
 
   it('renueva sesión solo con origen permitido y CSRF coincidente', async () => {

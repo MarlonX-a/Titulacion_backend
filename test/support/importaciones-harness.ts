@@ -60,7 +60,7 @@ export function importacionesHarness(repos: Map<unknown, MemoryRepository>, buff
   const storage = { savePrivate: vi.fn().mockResolvedValue('clave'), readPrivate: vi.fn().mockResolvedValue(buffer), removePrivate: vi.fn() };
   const auditoria = { registrar: vi.fn().mockResolvedValue(undefined) };
   const queue = { add: vi.fn().mockResolvedValue(undefined), getJob: vi.fn().mockResolvedValue(undefined) };
-  const config = { get: () => keyPath };
+  const config = { get: (name: string) => name === 'IMPORT_TEMP_TTL_HOURS' ? undefined : keyPath };
   const args = [dataSource as never, storage as never, auditoria as never, config as never, queue as never, new AcademicoService()] as const;
   return { admin, auditoria, queue, args };
 }

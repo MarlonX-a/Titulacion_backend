@@ -36,8 +36,8 @@ type FuenteAutomatico = 'USUARIO' | 'ESTUDIANTE' | 'ESTUDIANTE_NIVEL' | 'CARRERA
 const auto = <T>(valor: T, fuente: FuenteAutomatico) => ({ valor, fuente });
 
 /**
- * Integrante del trabajo tal como lo ven sus compañeros: la matrícula de un estudiante importado es su
- * cédula y su clave temporal inicial, así que solo se exponen identificador, nombres y apellidos
+ * Integrante del trabajo tal como lo ven sus compañeros: la matrícula de un estudiante importado es
+ * su cédula y otros datos personales, así que solo se exponen identificador, nombres y apellidos
  * (`src/common/privacidad/visor-datos.ts`). La matrícula propia sigue en `automaticos.matricula`.
  */
 export interface ParticipantePat { id: string; nombres: string; apellidos: string }
