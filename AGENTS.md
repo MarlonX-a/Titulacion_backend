@@ -853,7 +853,19 @@ esa asignación —manual o por incumplimiento— disuelve el grupo en la misma 
 (`DISOLVER_GRUPO`): los integrantes quedan RETIRADOS y pueden volver a conformar un equipo. Una
 postulación no disuelve su grupo. La anulación existente funciona sin postulación. Auditoría
 `CONFORMAR_EQUIPO`, `CREAR_GRUPO`, `INCORPORAR_INTEGRANTE_GRUPO`, `ASIGNAR_TEMA`,
-`ASIGNAR_TUTOR`/`REEMPLAZAR_TUTOR`, `DISOLVER_GRUPO`. Verificador
+`ASIGNAR_TUTOR`/`REEMPLAZAR_TUTOR`, `DISOLVER_GRUPO`.
+
+PAT inverso (pieza B del mismo diseño): por estudiante del equipo, ADMIN sube el Word
+oficial llenado (`POST .../equipos/:asignacionId/integrantes/:estudianteId/pat-inverso`).
+Solo se lee `word/document.xml`. La vista previa (tabla `preparacion_pat_inverso`, 12 h)
+muestra diferencias contra cédula, nombres, carrera, título, integrantes y tutor; los datos
+institucionales no se pisan. `.../confirmar` escribe `estudiante_datos_pat` y
+`contenido_pat_estudiante` (`modalidad_detalle` se imprime en el Word) y deja el tutor
+vigente desde los candidatos. ADMIN puede generar (`.../generar-pat`; el disparador acepta
+ADMIN como solicitante y el estudiante sigue siendo el dueño) y subir el PDF firmado
+(`.../documento-pat`). El camino del estudiante no cambia.
+
+Verificador
 `npm run db:verify-equipos-admin`; comportamiento en `test/attack/equipos-admin.attack-spec.ts`.
 
 ---

@@ -30,6 +30,7 @@ import { ReportesModule } from './reportes/reportes.module.js';
 import { ExportacionesModule } from './exportaciones/exportaciones.module.js';
 import { GeneracionesPatModule } from './generaciones-pat/generaciones-pat.module.js';
 import { EquiposModule } from './equipos/equipos.module.js';
+import { PatInversoModule } from './pat-inverso/pat-inverso.module.js';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { EquiposModule } from './equipos/equipos.module.js';
     ExportacionesModule,
     GeneracionesPatModule,
     EquiposModule,
+    PatInversoModule,
     // Las pruebas sin Redis sustituyen estos módulos en createE2eTestingModule (test/support/e2e-app.ts).
     CorreoModule,
     ImportacionesModule,

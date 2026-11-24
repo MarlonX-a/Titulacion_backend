@@ -81,8 +81,10 @@ export function datosPlantillaPat(instantanea: InstantaneaPat): Record<string, s
   const articulaciones = Array.isArray(contenido['articulaciones']) ? contenido['articulaciones'] as unknown[] : [];
   const marca = (articulacion: string) => (articulaciones.includes(articulacion) ? MARCA : '');
 
+  const modalidadDetalle = texto(contenido['modalidad_detalle']);
   const modalidadAcademica = texto(contenido['modalidad_academica']);
-  const modalidadEspecifica = modalidadAcademica !== '' && modalidadAcademica !== MODALIDAD_ACADEMICA_PREDETERMINADA;
+  const modalidadEspecifica = modalidadDetalle !== '' || (modalidadAcademica !== '' && modalidadAcademica !== MODALIDAD_ACADEMICA_PREDETERMINADA);
+  const modalidadImpresa = modalidadDetalle || (modalidadEspecifica ? modalidadAcademica : '');
   const otrosIntegrantes = companeros(instantanea);
   const mecanismo = instantanea.modalidad === 'GRUPAL' ? 'Grupal:' : instantanea.modalidad === 'INDIVIDUAL' ? 'Individual' : '';
 
@@ -111,7 +113,7 @@ export function datosPlantillaPat(instantanea: InstantaneaPat): Record<string, s
     modalidad_pendiente: !modalidadEspecifica,
     // El valor predeterminado (Trabajo de Integración Curricular) es la opción de aprobación, no una
     // modalidad de la columna MODALIDAD: en ese caso se conservan las instrucciones oficiales.
-    modalidad: modalidadEspecifica ? modalidadAcademica : '',
+    modalidad: modalidadImpresa,
     titulo: texto(instantanea.titulo),
     problematica: texto(contenido['problematica']),
     articulacion_investigacion: marca('INVESTIGACION'),

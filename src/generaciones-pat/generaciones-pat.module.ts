@@ -18,5 +18,6 @@ import { GeneracionesPatWorker } from './generaciones-pat.worker.js';
   imports: [TypeOrmModule.forFeature([Estudiante, EstudianteDatosPat, ContenidoPatEstudiante, GeneracionPat]), AlmacenamientoModule, AuditoriaModule, ColasModule, BullModule.registerQueue({ name: 'generaciones-pat' }), ArchivoLimpiezaModule],
   controllers: [GeneracionesPatController, ConfigurarFormatoPatController],
   providers: [GeneracionesPatService, GeneracionesPatWorker],
+  exports: [GeneracionesPatService],
 })
 export class GeneracionesPatModule {}

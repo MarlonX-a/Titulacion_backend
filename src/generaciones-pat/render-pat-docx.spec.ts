@@ -145,6 +145,10 @@ describe('renderizarPatDocx', () => {
     expect(especifica).toContain('Propuesta tecnológica');
     expect(especifica.join('\n')).not.toMatch(/Podrá ser|Deberá ser una sola modalidad/);
     expect(especifica[especifica.indexOf('Propuesta tecnológica') - 1]).toBe('Trabajo de Integración Curricular');
+
+    const detalle = parrafos(renderizarPatDocx(instantanea({ contenido: { modalidad_detalle: 'Aplicación profesional de prueba', modalidad_academica: 'TRABAJO_INTEGRACION_CURRICULAR' } })));
+    expect(detalle).toContain('Aplicación profesional de prueba');
+    expect(detalle.join('\n')).not.toMatch(/Podrá ser|Deberá ser una sola modalidad/);
   });
 
   it('deja vacías las celdas sin dato en una instantánea antigua o incompleta', () => {

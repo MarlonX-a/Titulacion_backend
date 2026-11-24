@@ -220,8 +220,15 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     return { asignacion_tema_id: assignmentId, estudiante_id: student.id, contenido: row.contenido, pendientes: pendientesContenido(contenidoEfectivo(row.contenido, sugerencias)) };
   }
 
-  async solicitar(periodoId: string, assignmentId: string, dto: GenerarPatDto, actor: Usuario, ip: string | null) {
-    await this.authorizeParticipant(periodoId, assignmentId, actor);
+  /** La admin genera el PAT del estudiante: la generación sigue siendo de ese estudiante. */
+  solicitarParaEstudiante(periodoId: string, assignmentId: string, estudianteId: string, actor: Usuario, ip: string | null) {
+    if (actor.rol !== UsuarioRol.ADMIN) throw new ForbiddenException('Solo ADMIN puede generar el PAT de un estudiante.');
+    return this.solicitar(periodoId, assignmentId, {}, actor, ip, estudianteId);
+  }
+
+  async solicitar(periodoId: string, assignmentId: string, dto: GenerarPatDto, actor: Usuario, ip: string | null, estudianteObjetivo: string | null = null) {
+    if (estudianteObjetivo) await this.estudianteParticipante(this.db, periodoId, assignmentId, estudianteObjetivo);
+    else await this.authorizeParticipant(periodoId, assignmentId, actor);
     const requestedProposalId = dto?.tutor_propuesto_id ?? null;
     const generation = await this.db.transaction(async (manager) => {
       const s = this.schema();
@@ -230,7 +237,9 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
       if (!['POSTULACION_CERRADA', 'EN_CURSO'].includes(p[0].estado)) throw new ConflictException('El PAT solo puede generarse con postulaciones cerradas o durante titulación.');
       const assignment = await this.assignment(manager, periodoId, assignmentId, true);
       if (assignment.estado !== 'VIGENTE') throw new ConflictException('La asignación de tema ya no está vigente.');
-      const freshStudent = await this.authorizeParticipant(periodoId, assignmentId, actor, manager);
+      const freshStudent = estudianteObjetivo
+        ? await this.estudianteParticipante(manager, periodoId, assignmentId, estudianteObjetivo)
+        : await this.authorizeParticipant(periodoId, assignmentId, actor, manager);
       const { contexto: c, contenido, tutor, pendientes } = await this.calcular(manager, periodoId, assignmentId, freshStudent.id, requestedProposalId);
       if (pendientes.length) throw new BadRequestException({ message: 'Completa los datos obligatorios antes de generar el PAT.', pendientes });
       const snapshot = {
@@ -239,7 +248,7 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
         periodo_codigo: c.periodo_codigo, periodo_nombre: c.periodo_nombre, extension: c.extension_pat, carrera: c.carrera, facultad: c.facultad,
         nombres: c.nombres, apellidos: c.apellidos, email: c.email, cedula: c.cedula, matricula: c.matricula, nivel: c.nivel, curso: cursoDesdeNivel(c.nivel),
         personal: c.personal, contenido, participantes: c.participantes, tutor: tutor.valor, tutor_fuente: tutor.fuente,
-        tutor_propuesto_id: tutor.valor?.tutor_propuesto_id ?? null, generado_para: `${actor.nombres} ${actor.apellidos}`, version_diseno: 1, capturado_en: new Date().toISOString(),
+        tutor_propuesto_id: tutor.valor?.tutor_propuesto_id ?? null, generado_para: `${c.nombres} ${c.apellidos}`, version_diseno: 1, capturado_en: new Date().toISOString(),
       };
       const repo = manager.getRepository(GeneracionPat);
       const saved = await repo.save(repo.create({ asignacion_tema_id: assignmentId, estudiante_id: freshStudent.id, solicitada_por_id: actor.id, version_diseno: 1, ciclo: 1, instantanea: snapshot, estado: 'EN_COLA', ruta_almacenamiento: null, tamano_bytes: null, hash_sha256: null, error_sanitizado: null }));
@@ -272,8 +281,16 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     return this.response(row, docs[0]?.id ?? null);
   }
 
-  async descarga(periodoId: string, assignmentId: string, id: string, actor: Usuario, formato: FormatoDescargaPat = 'pdf') {
-    const row = await this.generationForStudent(periodoId, assignmentId, id, actor);
+  async descargaDeEstudiante(periodoId: string, assignmentId: string, id: string, estudianteId: string, actor: Usuario, formato: FormatoDescargaPat = 'pdf') {
+    if (actor.rol !== UsuarioRol.ADMIN) throw new ForbiddenException('Solo ADMIN puede descargar el PAT de un estudiante.');
+    await this.estudianteParticipante(this.db, periodoId, assignmentId, estudianteId);
+    const row = await this.generacionesRepo.findOneBy({ id, asignacion_tema_id: assignmentId, estudiante_id: estudianteId });
+    if (!row) throw new NotFoundException('No existe esa generación PAT.');
+    return this.descarga(periodoId, assignmentId, id, actor, formato, row);
+  }
+
+  async descarga(periodoId: string, assignmentId: string, id: string, actor: Usuario, formato: FormatoDescargaPat = 'pdf', filaAjena?: GeneracionPat) {
+    const row = filaAjena ?? await this.generationForStudent(periodoId, assignmentId, id, actor);
     if (row.estado !== 'LISTO' || !row.ruta_almacenamiento) throw new ConflictException('La generación todavía no está disponible.');
     if (formato === 'docx') {
       const instantanea = row.instantanea as InstantaneaPat;
@@ -504,6 +521,7 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
   private validatePersonal(d:Record<string,unknown>){if(d['fecha_nacimiento']!==undefined){const value=String(d['fecha_nacimiento']);if(!/^\d{4}-\d{2}-\d{2}$/.test(value)){throw new BadRequestException('fecha_nacimiento debe ser una fecha ISO válida.');}const parsed=new Date(`${value}T00:00:00Z`);if(Number.isNaN(parsed.valueOf())||parsed.toISOString().slice(0,10)!==value||parsed.getTime()>Date.now())throw new BadRequestException('fecha_nacimiento debe ser una fecha real que no esté en el futuro.');}if(d['tiene_discapacidad']===false&&(d['discapacidades']||d['grado_discapacidad']||d['otra_discapacidad']))throw new BadRequestException('No se admiten detalles de discapacidad cuando se declara que no tiene.');const allowed:readonly string[]=DISCAPACIDADES_PAT;if(Array.isArray(d['discapacidades'])&&(d['discapacidades'] as unknown[]).some(v=>typeof v!=='string'||!allowed.includes(v)))throw new BadRequestException('La selección de discapacidad incluye una categoría inválida.');if(d['correo_personal_no_aplica']===true&&d['correo_personal'])throw new BadRequestException('Indica el correo personal o marca que no aplica, no ambos.');if(d['telefono_convencional_no_aplica']===true&&d['telefono_convencional'])throw new BadRequestException('Indica el teléfono convencional o marca que no aplica, no ambos.');if(d['certificado_votacion_no_aplica']===true&&d['certificado_votacion'])throw new BadRequestException('Indica el certificado o marca que no aplica, no ambos.');}
   private async studentFor(userId:string):Promise<Estudiante>{const rows=await this.db.query(`SELECT "id" FROM ${this.schema()}."estudiante" WHERE "usuario_id"=$1`,[userId]) as Array<{id:string}>;if(!rows[0])throw new NotFoundException('No existe perfil de estudiante para la cuenta.');return this.db.getRepository(Estudiante).findOneByOrFail({id:rows[0].id});}
   private async authorizeParticipant(periodoId:string,assignmentId:string,actor:Usuario,source:Source=this.db):Promise<Estudiante>{if(actor.rol!==UsuarioRol.ESTUDIANTE)throw new ForbiddenException('Solo el estudiante titular puede gestionar su PAT.');const student=await this.studentFor(actor.id);const s=this.schema();const rows=await source.query(`SELECT 1 FROM ${s}."asignacion_tema" a WHERE a."id"=$1 AND a."periodo_id"=$2 AND a."estado"='VIGENTE' AND (a."estudiante_id"=$3 OR EXISTS(SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=$3 AND gi."estado"='ACTIVO'))`,[assignmentId,periodoId,student.id]) as unknown[];if(!rows.length)throw new NotFoundException('No existe una asignación vigente propia.');return student;}
+  private async estudianteParticipante(source:Source,periodoId:string,assignmentId:string,estudianteId:string):Promise<Estudiante>{const s=this.schema();const rows=await source.query(`SELECT 1 FROM ${s}."asignacion_tema" a WHERE a."id"=$1 AND a."periodo_id"=$2 AND a."estado"='VIGENTE' AND (a."estudiante_id"=$3 OR EXISTS(SELECT 1 FROM ${s}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=$3 AND gi."estado"='ACTIVO'))`,[assignmentId,periodoId,estudianteId]) as unknown[];if(!rows.length)throw new NotFoundException('No existe una asignación vigente de ese estudiante.');const estudiante=await source.getRepository(Estudiante).findOneBy({id:estudianteId});if(!estudiante)throw new NotFoundException('No existe el estudiante indicado.');return estudiante;}
   private async assignment(source:Source,periodoId:string,id:string,lock=false){const rows=await source.query(`SELECT "id","periodo_id","estado"::text AS estado FROM ${this.schema()}."asignacion_tema" WHERE "id"=$1 AND "periodo_id"=$2 ${lock?'FOR UPDATE':''}`,[id,periodoId]) as Array<{id:string;periodo_id:string;estado:string}>;if(!rows[0])throw new NotFoundException('No existe la asignación del período.');return rows[0];}
   private schema(){const n=(this.db.options as PostgresConnectionOptions).schema??'public';if(!/^[a-z][a-z0-9_]{0,62}$/.test(n))throw new ServiceUnavailableException('Esquema PostgreSQL inválido.');return `"${n}"`;}
   private handleError(e:unknown):never{if(e instanceof Error&&'getStatus'in e)throw e;if(e instanceof QueryFailedError){const code=(e.driverError as {code?:string}).code;if(code==='23505')throw new ConflictException('Ya existe el registro PAT solicitado.');if(['23503','23514'].includes(code??''))throw new ConflictException('La operación no cumple las reglas vigentes del PAT.');if(['40001','40P01'].includes(code??''))throw new ConflictException('Otra operación simultánea cambió el PAT; vuelve a intentarlo.');}throw new ServiceUnavailableException('No fue posible completar la operación PAT.',{cause:e});}

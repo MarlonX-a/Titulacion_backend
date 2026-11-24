@@ -14,5 +14,6 @@ import { EquiposService } from './equipos.service.js';
   imports: [AuditoriaModule, AsignacionTemaPersistenciaModule, CargaTutorialPersistenciaModule, HabilitadosModule, NotificacionesModule, PostulacionesPersistenciaModule],
   controllers: [EquiposController],
   providers: [EquiposService, EquiposConsultaService],
+  exports: [EquiposService],
 })
 export class EquiposModule {}

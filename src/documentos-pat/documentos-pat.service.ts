@@ -42,16 +42,25 @@ export class DocumentosPatService {
     private readonly notificaciones: NotificacionesPersistenciaService,
   ) {}
 
-  async cargar(periodoId: string, asignacionId: string, dto: CargarDocumentoPatDto, file: Express.Multer.File | undefined, actor: Usuario, ip: string | null): Promise<DocumentoPatResponseDto> {
+  /** La admin entrega el PDF firmado del estudiante. El documento queda a nombre de ese estudiante. */
+  cargarFirmadoDeEstudiante(periodoId: string, asignacionId: string, estudianteId: string, dto: CargarDocumentoPatDto, file: Express.Multer.File | undefined, actor: Usuario, ip: string | null): Promise<DocumentoPatResponseDto> {
+    if (actor.rol !== UsuarioRol.ADMIN) throw new ForbiddenException('Solo ADMIN puede entregar el PAT firmado de un estudiante.');
+    return this.cargar(periodoId, asignacionId, dto, file, actor, ip, estudianteId);
+  }
+
+  async cargar(periodoId: string, asignacionId: string, dto: CargarDocumentoPatDto, file: Express.Multer.File | undefined, actor: Usuario, ip: string | null, estudianteObjetivo: string | null = null): Promise<DocumentoPatResponseDto> {
     if (!file) throw new BadRequestException('Adjunta el archivo en el campo archivo.');
-    if (actor.rol !== UsuarioRol.ESTUDIANTE) throw new ForbiddenException('Solo el estudiante titular o integrante puede entregar su PAT individual.');
+    if (estudianteObjetivo) {
+      if (actor.rol !== UsuarioRol.ADMIN) throw new ForbiddenException('Solo ADMIN puede entregar el PAT firmado de un estudiante.');
+    } else if (actor.rol !== UsuarioRol.ESTUDIANTE) throw new ForbiddenException('Solo el estudiante titular o integrante puede entregar su PAT individual.');
     if (!dto.generacion_id) throw new BadRequestException('Indica la generación individual a la que corresponde el PDF firmado.');
     const generationId = dto.generacion_id;
     const validated = validatePlantillaFile(file);
     if (validated.extension !== 'pdf' || file.mimetype !== 'application/pdf') throw new BadRequestException('El PAT firmado debe ser un archivo PDF.');
     const initial = await this.context(this.dataSource, periodoId, asignacionId);
-    await this.authorizeUpload(this.dataSource, initial, actor);
-    const studentId = await this.studentId(this.dataSource, actor.id);
+    if (estudianteObjetivo) await this.exigirParticipante(this.dataSource, periodoId, asignacionId, estudianteObjetivo);
+    else await this.authorizeUpload(this.dataSource, initial, actor);
+    const studentId = estudianteObjetivo ?? await this.studentId(this.dataSource, actor.id);
     if (!studentId) throw new ForbiddenException('Se requiere un perfil de estudiante.');
     await this.assertGeneration(this.dataSource, asignacionId, dto.generacion_id, studentId);
     await this.assertCorrectionAllowed(this.dataSource, asignacionId, studentId);
@@ -70,8 +79,9 @@ export class DocumentosPatService {
         if (!['POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('La entrega PAT solo se permite con postulaciones cerradas o durante titulación.');
         const context = await this.context(manager, periodoId, asignacionId, true);
         if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');
-        await this.authorizeUpload(manager, context, actor);
-        const participantId = await this.studentId(manager, actor.id);
+        if (estudianteObjetivo) await this.exigirParticipante(manager, periodoId, asignacionId, estudianteObjetivo);
+        else await this.authorizeUpload(manager, context, actor);
+        const participantId = estudianteObjetivo ?? await this.studentId(manager, actor.id);
         if (!participantId || participantId !== studentId) throw new ForbiddenException('No se pudo validar el estudiante de la sesión.');
         const generation = await this.assertGeneration(manager, asignacionId, generationId, participantId, true);
         await this.assertCorrectionAllowed(manager, asignacionId, participantId);
@@ -363,6 +373,14 @@ export class DocumentosPatService {
     const generation = await source.getRepository(GeneracionPat).findOne({ where: { id: generationId, asignacion_tema_id: assignmentId, estudiante_id: studentId }, ...(lock ? { lock: { mode: 'pessimistic_write' } as const } : {}) });
     if (!generation || generation.estado !== 'LISTO' || !generation.ruta_almacenamiento) throw new ConflictException('La generación PAT indicada no está disponible o no pertenece al estudiante y trabajo.');
     return generation;
+  }
+
+  private async exigirParticipante(source: DataSource | import('typeorm').EntityManager, periodoId: string, assignmentId: string, estudianteId: string): Promise<void> {
+    const rows = await source.query(
+      `SELECT 1 FROM ${this.schema()}."asignacion_tema" a WHERE a."id"=$1 AND a."periodo_id"=$2 AND a."estado"='VIGENTE' AND (a."estudiante_id"=$3 OR EXISTS (SELECT 1 FROM ${this.schema()}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=$3 AND gi."estado"='ACTIVO'))`,
+      [assignmentId, periodoId, estudianteId],
+    ) as unknown[];
+    if (!rows.length) throw new NotFoundException('El estudiante no pertenece a una asignación vigente.');
   }
 
   private async authorizeUpload(source: DataSource | import('typeorm').EntityManager, context: AssignmentContext, actor: Usuario): Promise<void> {
