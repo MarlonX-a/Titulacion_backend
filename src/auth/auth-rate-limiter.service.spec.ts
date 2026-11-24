@@ -61,11 +61,11 @@ describe('AuthRateLimiterService', () => {
     expect(evalMock).toHaveBeenCalledTimes(1);
   });
 
-  it('construye la conexión con REDIS_PASSWORD y REDIS_TLS', async () => {
-    const config = new ConfigService<AppEnvironment, true>({ NODE_ENV: 'production', REDIS_HOST: 'redis.interna', REDIS_PORT: 6380, REDIS_PASSWORD: 'clave-ficticia', REDIS_TLS: true } as AppEnvironment);
+  it('construye la conexión con REDIS_USERNAME, REDIS_PASSWORD y REDIS_TLS', async () => {
+    const config = new ConfigService<AppEnvironment, true>({ NODE_ENV: 'production', REDIS_HOST: 'redis.interna', REDIS_PORT: 6380, REDIS_USERNAME: 'usuario-ficticio', REDIS_PASSWORD: 'clave-ficticia', REDIS_TLS: true } as AppEnvironment);
     const limiter = new AuthRateLimiterService(config);
-    const options = (limiter as unknown as { redis: { options: { host: string; port: number; password?: string; tls?: object } } }).redis.options;
-    expect(options).toMatchObject({ host: 'redis.interna', port: 6380, password: 'clave-ficticia', tls: {} });
+    const options = (limiter as unknown as { redis: { options: { host: string; port: number; username?: string; password?: string; tls?: object } } }).redis.options;
+    expect(options).toMatchObject({ host: 'redis.interna', port: 6380, username: 'usuario-ficticio', password: 'clave-ficticia', tls: {} });
     await limiter.onModuleDestroy();
   });
 

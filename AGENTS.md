@@ -1452,6 +1452,7 @@ Ejemplos:
 DATABASE_URL
 REDIS_HOST
 REDIS_PORT
+REDIS_USERNAME
 REDIS_PASSWORD
 REDIS_TLS
 DB_SSL
@@ -1477,7 +1478,9 @@ IGNORE_ENV_FILE
 Contrato de plataforma (`src/config/environment.ts`): `SWAGGER_ENABLED` es false salvo valor
 `true` explícito; `DB_SSL` y `SMTP_REQUIRE_TLS` valen true en production (se admite `false`
 explícito) y false en otros entornos; `DB_SSL_REJECT_UNAUTHORIZED` vale true; `REDIS_TLS` vale
-false. En production son obligatorios `REDIS_PASSWORD` y un `TRUST_PROXY` explícito (`false`,
+false. `REDIS_USERNAME` es opcional para usuarios ACL de proveedores gestionados; si la URL es
+`redis://usuario:contraseña@host:puerto`, separar usuario y contraseña en `REDIS_USERNAME` y
+`REDIS_PASSWORD`. En production son obligatorios `REDIS_PASSWORD` y un `TRUST_PROXY` explícito (`false`,
 número de saltos o subredes), y se rechaza `TRUST_PROXY=true`. `NODE_ENV=test` solo existe en las
 pruebas: `main.ts` se niega a arrancar con ese valor (`assertRuntimeEnvironment`,
 `src/config/environment.ts`) y `src/` no ramifica por `NODE_ENV === 'test'`: `scripts/ci-guards.mjs`

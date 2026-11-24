@@ -82,7 +82,7 @@ prioridad sobre la misma variable del archivo.
 | `JWT_PRIVATE_KEY_PATH`, `JWT_PUBLIC_KEY_PATH`                | Rutas a claves RS256 persistentes                              | Generadas localmente; obligatorias en producción  |
 | `AUTH_ISSUER`                                                | Emisor de los JWT propios                                      | `http://127.0.0.1:3000` en desarrollo             |
 | `AUTH_ORIGINS`                                               | Lista exacta de orígenes web                                   | Vacía; producción debe definir los orígenes       |
-| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TLS`    | Redis/BullMQ para límites y trabajos (contraseña obligatoria en producción y en el Compose) | `127.0.0.1`, `6379`, sin valor por defecto |
+| `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_TLS` | Redis/BullMQ para límites y trabajos (contraseña obligatoria; usuario ACL opcional para proveedores gestionados) | `127.0.0.1`, `6379`, sin usuario por defecto |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`                        | Servidor de correo                                             | Mailpit local en puerto `1025`                    |
 | `EMAIL_ENABLED`                                              | Activa SMTP, recuperación por correo y entregas EMAIL          | `true`; puede ser `false` para un despliegue demo |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Almacenamiento privado compatible con S3                       | SeaweedFS en `127.0.0.1:8333`                     |

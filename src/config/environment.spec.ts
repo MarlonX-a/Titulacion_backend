@@ -53,8 +53,8 @@ describe('validateEnvironment', () => {
   });
 
   it('interpreta las opciones de transporte y rechaza valores no booleanos', () => {
-    expect(validateEnvironment({ ...db, REDIS_PASSWORD: 'r3dis', REDIS_TLS: 'true', DB_SSL: 'true', DB_SSL_REJECT_UNAUTHORIZED: 'false', SMTP_REQUIRE_TLS: 'true' }))
-      .toMatchObject({ REDIS_PASSWORD: 'r3dis', REDIS_TLS: true, DB_SSL: true, DB_SSL_REJECT_UNAUTHORIZED: false, SMTP_REQUIRE_TLS: true });
+    expect(validateEnvironment({ ...db, REDIS_USERNAME: 'redis-user', REDIS_PASSWORD: 'r3dis', REDIS_TLS: 'true', DB_SSL: 'true', DB_SSL_REJECT_UNAUTHORIZED: 'false', SMTP_REQUIRE_TLS: 'true' }))
+      .toMatchObject({ REDIS_USERNAME: 'redis-user', REDIS_PASSWORD: 'r3dis', REDIS_TLS: true, DB_SSL: true, DB_SSL_REJECT_UNAUTHORIZED: false, SMTP_REQUIRE_TLS: true });
     for (const key of ['REDIS_TLS', 'DB_SSL', 'DB_SSL_REJECT_UNAUTHORIZED', 'SMTP_REQUIRE_TLS']) {
       expect(() => validateEnvironment({ ...db, [key]: '1' })).toThrow(key);
     }

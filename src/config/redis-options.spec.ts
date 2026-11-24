@@ -10,6 +10,11 @@ describe('redisConnectionBase', () => {
       .toEqual({ host: 'redis.interno', port: 6380, password: 'x', tls: {} });
   });
 
+  it('incluye usuario ACL y contraseña por separado cuando el proveedor los entrega', () => {
+    expect(redisConnectionBase({ REDIS_HOST: 'redis.interno', REDIS_PORT: 6379, REDIS_USERNAME: 'app-user', REDIS_PASSWORD: 'secret', REDIS_TLS: false }))
+      .toEqual({ host: 'redis.interno', port: 6379, username: 'app-user', password: 'secret' });
+  });
+
   it('no impone commandTimeout a quien la reutiliza (BullMQ usa comandos bloqueantes)', () => {
     expect(redisConnectionBase({ REDIS_PORT: 6379, REDIS_TLS: false })).not.toHaveProperty('commandTimeout');
   });

@@ -22,6 +22,8 @@ export interface AppEnvironment {
   AUTH_ORIGINS: string[];
   REDIS_HOST?: string;
   REDIS_PORT: number;
+  /** Usuario ACL de Redis, cuando el proveedor lo requiere. */
+  REDIS_USERNAME?: string;
   /** Contraseña de Redis (AUTH). Obligatoria en production. */
   REDIS_PASSWORD?: string;
   /** Conexión TLS con Redis. Predeterminado: false. */
@@ -173,6 +175,8 @@ export function validateEnvironment(
   const dbSslRejectUnauthorized = booleanFlag(environment.DB_SSL_REJECT_UNAUTHORIZED, 'DB_SSL_REJECT_UNAUTHORIZED', true);
   const smtpRequireTls = booleanFlag(environment.SMTP_REQUIRE_TLS, 'SMTP_REQUIRE_TLS', production);
   const emailEnabled = booleanFlag(environment.EMAIL_ENABLED, 'EMAIL_ENABLED', true);
+  const redisUsername = environment.REDIS_USERNAME;
+  if (redisUsername !== undefined && typeof redisUsername !== 'string') throw new Error('Configuración inválida: REDIS_USERNAME no es válido.');
   const redisPassword = environment.REDIS_PASSWORD;
   if (redisPassword !== undefined && typeof redisPassword !== 'string') throw new Error('Configuración inválida: REDIS_PASSWORD no es válido.');
   const trustProxy = parseTrustProxy(environment.TRUST_PROXY);
@@ -241,6 +245,7 @@ export function validateEnvironment(
     AUTH_ORIGINS: origins,
     ...(typeof environment.REDIS_HOST === 'string' ? { REDIS_HOST: requiredString(environment.REDIS_HOST, 'REDIS_HOST') } : {}),
     REDIS_PORT: redisPort,
+    ...(typeof redisUsername === 'string' && redisUsername.length > 0 ? { REDIS_USERNAME: requiredString(redisUsername, 'REDIS_USERNAME') } : {}),
     ...(typeof redisPassword === 'string' && redisPassword.length > 0 ? { REDIS_PASSWORD: redisPassword } : {}),
     REDIS_TLS: redisTls,
     ...(typeof environment.SMTP_HOST === 'string' ? { SMTP_HOST: requiredString(environment.SMTP_HOST, 'SMTP_HOST') } : {}),

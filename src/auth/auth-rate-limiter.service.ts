@@ -40,6 +40,7 @@ export class AuthRateLimiterService implements OnApplicationBootstrap, OnModuleD
       ...redisConnectionBase({
         REDIS_HOST: config.get('REDIS_HOST', { infer: true }),
         REDIS_PORT: config.get('REDIS_PORT', { infer: true }),
+        REDIS_USERNAME: config.get('REDIS_USERNAME', { infer: true }),
         REDIS_PASSWORD: config.get('REDIS_PASSWORD', { infer: true }),
         REDIS_TLS: config.get('REDIS_TLS', { infer: true }),
       }),
