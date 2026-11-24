@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -65,6 +66,22 @@ export class AlmacenamientoService implements OnModuleDestroy {
       throw new ServiceUnavailableException('La ruta privada del archivo no es válida.');
     }
     await this.putPrivate(key, buffer, contentType, 'No se pudo guardar el archivo privado.');
+  }
+
+  /** Indica si existe un objeto generado (`generaciones-pat/`); otro error del proveedor se propaga como 503. */
+  async existsPrivate(key: string): Promise<boolean> {
+    if (!this.bucket || !key.startsWith('generaciones-pat/')) {
+      throw new ServiceUnavailableException('El archivo privado no está disponible.');
+    }
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch (error: unknown) {
+      const name = error instanceof Error ? error.name : '';
+      const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+      if (['NotFound', 'NoSuchKey'].includes(name) || status === 404) return false;
+      throw new ServiceUnavailableException('No se pudo consultar el archivo privado.', { cause: error });
+    }
   }
 
   async signPrivateDownload(key: string, fileName: string, contentType: string, expiresIn = 300): Promise<string> {

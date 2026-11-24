@@ -40,6 +40,11 @@ export class GenerarPatDto {
   @IsOptional() @IsUUID() tutor_propuesto_id?: string;
 }
 
+export class DescargaGeneracionPatQueryDto {
+  @ApiPropertyOptional({ enum: ['pdf', 'docx'], default: 'pdf', description: 'pdf: PDF sin firma; docx: Word institucional PAT-04-F-002.' })
+  @IsOptional() @IsIn(['pdf', 'docx']) formato?: 'pdf' | 'docx';
+}
+
 export class ConfigurarFormatoPatDto {
   @ApiPropertyOptional({ example: 'Extensión Manta - Matriz' })
   @IsString()

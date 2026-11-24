@@ -31,4 +31,14 @@ describe('AlmacenamientoService', () => {
       await storage.onModuleDestroy();
     }
   });
+
+  it('existsPrivate solo consulta archivos generados del PAT', async () => {
+    const config = new ConfigService<AppEnvironment, true>({ NODE_ENV: 'test', S3_REGION: 'us-east-1', S3_BUCKET: 'pat-test-bucket' } as AppEnvironment);
+    const storage = new AlmacenamientoService(config);
+    try {
+      await expect(storage.existsPrivate('documentos-pat/otro.pdf')).rejects.toThrow('El archivo privado no está disponible.');
+    } finally {
+      await storage.onModuleDestroy();
+    }
+  });
 });

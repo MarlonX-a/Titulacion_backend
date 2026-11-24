@@ -12,12 +12,17 @@ import type { EstudianteDatosPat } from './entities/estudiante-datos-pat.entity.
 import { GeneracionPat } from './entities/generacion-pat.entity.js';
 import { GeneracionesPatService, type GeneracionJob } from './generaciones-pat.service.js';
 import { renderizarPat } from './render-pat.js';
+import { renderizarPatDocx } from './render-pat-docx.js';
 
 vi.mock('./render-pat.js', () => ({ renderizarPat: vi.fn() }));
+vi.mock('./render-pat-docx.js', () => ({ renderizarPatDocx: vi.fn(), DOCX_CONTENT_TYPE: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
 
 const ID = 'gen-1';
 const CLAVE = 'generaciones-pat/archivo.pdf';
+const CLAVE_DOCX = 'generaciones-pat/archivo.docx';
 const PDF = Buffer.from('%PDF-1.7 contenido de prueba');
+const DOCX = Buffer.from('PK docx de prueba');
+const DOCX_TIPO = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 /**
  * Fila `generacion_pat` simulada en memoria: `findOne` devuelve su estado actual (como una lectura
@@ -43,7 +48,7 @@ function setup(inicial: Partial<GeneracionPat> | null) {
   } as unknown as DataSource;
   const storage = {
     createPrivateKey: vi.fn(() => CLAVE),
-    saveAtPrivateKey: vi.fn(async () => undefined),
+    saveAtPrivateKey: vi.fn(async (_clave: string, _contenido?: Buffer, _tipo?: string): Promise<void> => undefined),
   };
   const cleanup = { registrar: vi.fn(async () => true), solicitar: vi.fn(async () => undefined) };
   const config = { get: vi.fn(() => false) } as unknown as ConfigService<AppEnvironment, true>;
@@ -59,6 +64,8 @@ describe('GeneracionesPatService.procesar', () => {
   beforeEach(() => {
     vi.mocked(renderizarPat).mockReset();
     vi.mocked(renderizarPat).mockResolvedValue(PDF);
+    vi.mocked(renderizarPatDocx).mockReset();
+    vi.mocked(renderizarPatDocx).mockReturnValue(DOCX);
   });
 
   it('pasa EN_COLA a PROCESANDO con procesando_desde antes de renderizar', async () => {
@@ -133,5 +140,42 @@ describe('GeneracionesPatService.procesar', () => {
     expect(cleanup.registrar).toHaveBeenCalledWith(null, CLAVE);
     expect(cleanup.solicitar).toHaveBeenCalledWith(undefined, CLAVE);
     expect(archivoPendienteRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it('guarda también el Word institucional en la clave del PDF con extensión .docx y lo deja sin intención de limpieza', async () => {
+    const { service, fila, archivoPendienteRepo, storage, cleanup } = setup({ estado: 'EN_COLA', ciclo: 1 });
+    await service.procesar(ID, 1);
+    expect(renderizarPatDocx).toHaveBeenCalledWith({ titulo: 'Tema' });
+    expect(cleanup.registrar).toHaveBeenCalledWith(null, CLAVE_DOCX);
+    expect(storage.saveAtPrivateKey).toHaveBeenCalledWith(CLAVE_DOCX, DOCX, DOCX_TIPO);
+    expect(fila.actual).toMatchObject({ estado: 'LISTO', ruta_almacenamiento: CLAVE });
+    expect(archivoPendienteRepo.delete).toHaveBeenCalledWith({ ruta_almacenamiento: CLAVE_DOCX });
+    expect(cleanup.solicitar).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['el render del Word falla', 'render'],
+    ['la subida del Word falla', 'storage'],
+  ])('deja la generación LISTO con el PDF cuando %s', async (_caso, punto) => {
+    const { service, fila, archivoPendienteRepo, storage, cleanup, generacionRepo } = setup({ estado: 'EN_COLA', ciclo: 1 });
+    if (punto === 'render') vi.mocked(renderizarPatDocx).mockImplementationOnce(() => { throw new Error('docxtemplater'); });
+    else storage.saveAtPrivateKey.mockImplementation(async (clave: string) => { if (clave === CLAVE_DOCX) throw new Error('s3'); });
+    await service.procesar(ID, 1);
+    expect(fila.actual).toMatchObject({ estado: 'LISTO', ruta_almacenamiento: CLAVE, hash_sha256: createHash('sha256').update(PDF).digest('hex') });
+    expect(generacionRepo.update).not.toHaveBeenCalled();
+    expect(archivoPendienteRepo.delete).not.toHaveBeenCalledWith({ ruta_almacenamiento: CLAVE_DOCX });
+    if (punto === 'storage') expect(cleanup.solicitar).toHaveBeenCalledWith(undefined, CLAVE_DOCX);
+    else expect(cleanup.registrar).not.toHaveBeenCalledWith(null, CLAVE_DOCX);
+    expect(cleanup.solicitar).not.toHaveBeenCalledWith(undefined, CLAVE);
+  });
+
+  it('pide limpiar PDF y Word si otro ciclo tomó la generación', async () => {
+    const { service, fila, storage, cleanup } = setup({ estado: 'EN_COLA', ciclo: 1 });
+    storage.saveAtPrivateKey.mockImplementation(async (clave: string) => {
+      if (clave === CLAVE_DOCX) fila.actual = { ...fila.actual, estado: 'EN_COLA', ciclo: 2, procesando_desde: null };
+    });
+    await service.procesar(ID, 1);
+    expect(cleanup.solicitar).toHaveBeenCalledWith(undefined, CLAVE);
+    expect(cleanup.solicitar).toHaveBeenCalledWith(undefined, CLAVE_DOCX);
   });
 });

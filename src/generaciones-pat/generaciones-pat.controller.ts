@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query, Req } from '@nestjs/common';
 import { ApiAcceptedResponse, ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Roles } from '../common/roles.decorator.js';
 import { CurrentUsuario } from '../usuarios/current-usuario.decorator.js';
 import { Usuario } from '../usuarios/entities/usuario.entity.js';
 import { UsuarioRol } from '../usuarios/enums/usuario-rol.enum.js';
-import { ActualizarContenidoPatDto, ActualizarDatosPatDto, ConfigurarFormatoPatDto, GenerarPatDto } from './dto/actualizar-datos-pat.dto.js';
+import { ActualizarContenidoPatDto, ActualizarDatosPatDto, ConfigurarFormatoPatDto, DescargaGeneracionPatQueryDto, GenerarPatDto } from './dto/actualizar-datos-pat.dto.js';
 import { TutoresPropuestosPatResponseDto } from './dto/tutores-propuestos-pat.dto.js';
 import { GeneracionPatResponseDto, ListaGeneracionesPatResponseDto, ResumenPatResponseDto } from './dto/resumen-pat.dto.js';
 import { GeneracionesPatService } from './generaciones-pat.service.js';
@@ -58,8 +58,8 @@ export class GeneracionesPatController {
   generacion(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Param('id',new ParseUUIDPipe())id:string,@CurrentUsuario()actor:Usuario){return this.service.porId(p,a,id,actor);}
 
   @Get('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/descarga') @Roles(UsuarioRol.ESTUDIANTE) @Header('Cache-Control','no-store')
-  @ApiOperation({ summary: 'Obtener URL temporal para descargar el PAT generado sin firma' })
-  descargar(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Param('id',new ParseUUIDPipe())id:string,@CurrentUsuario()actor:Usuario){return this.service.descarga(p,a,id,actor);}
+  @ApiOperation({ summary: 'Obtener URL temporal para descargar el PAT generado sin firma (PDF o Word institucional PAT-04-F-002)' })
+  descargar(@Param('periodoId',new ParseUUIDPipe())p:string,@Param('asignacionId',new ParseUUIDPipe())a:string,@Param('id',new ParseUUIDPipe())id:string,@Query()query:DescargaGeneracionPatQueryDto,@CurrentUsuario()actor:Usuario){return this.service.descarga(p,a,id,actor,query.formato??'pdf');}
 
   @Post('periodos/:periodoId/asignaciones-tema/:asignacionId/pat/me/generaciones/:id/reintentar') @Roles(UsuarioRol.ESTUDIANTE)
   @ApiOperation({ summary: 'Reintentar una generación PAT propia fallida (nuevo ciclo)' })

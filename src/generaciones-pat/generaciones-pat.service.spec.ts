@@ -39,6 +39,7 @@ interface Opciones {
   atascadas?: Array<{ id: string; ciclo: number }>;
   updateAffected?: number;
   jobFallido?: boolean;
+  docxExiste?: boolean;
 }
 
 function setup(options: Opciones = {}) {
@@ -100,12 +101,17 @@ function setup(options: Opciones = {}) {
   const failedJob = { isFailed: vi.fn(async () => true), remove: vi.fn(async () => undefined) };
   const queue = { add: vi.fn(async () => undefined), getJob: vi.fn(async () => (options.jobFallido ? failedJob : undefined)) };
   const config = { get: vi.fn(() => false) } as unknown as ConfigService<AppEnvironment, true>;
+  const storage = {
+    signPrivateDownload: vi.fn(async () => 'https://signed'),
+    existsPrivate: vi.fn(async () => options.docxExiste ?? true),
+    saveAtPrivateKey: vi.fn(async () => undefined),
+  };
   const service = new GeneracionesPatService(
     db, {} as Repository<EstudianteDatosPat>, contenidoRepo as unknown as Repository<ContenidoPatEstudiante>, generacionRepo as unknown as Repository<GeneracionPat>,
-    { signPrivateDownload: vi.fn(async () => 'https://signed') } as unknown as AlmacenamientoService,
+    storage as unknown as AlmacenamientoService,
     { registrar: vi.fn(), solicitar: vi.fn() } as unknown as ArchivoLimpiezaService, audit, queue as unknown as Queue<GeneracionJob>, config,
   );
-  return { service, actor, query, queue, failedJob, generacionRepo, contenidoRepo, audit };
+  return { service, actor, query, queue, failedJob, generacionRepo, contenidoRepo, audit, storage };
 }
 
 describe('GeneracionesPatService', () => {
@@ -267,6 +273,52 @@ describe('GeneracionesPatService', () => {
     it('no lista generaciones de una asignación ajena', async () => {
       const { service, actor } = setup({ owner: false });
       await expect(service.listar(PERIODO, ASIGNACION, actor)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('descarga', () => {
+    const lista = {
+      id: 'gen-2', asignacion_tema_id: ASIGNACION, estudiante_id: 'student-id', estado: 'LISTO', ciclo: 1,
+      ruta_almacenamiento: 'generaciones-pat/abc.pdf', instantanea: { cedula: '1300000000', nombres: 'José', apellidos: 'Peña', titulo: 'Sistema de prueba' },
+    };
+
+    it('firma el PDF por defecto, como antes', async () => {
+      const { service, actor, storage } = setup({ generacion: lista });
+      await expect(service.descarga(PERIODO, ASIGNACION, 'gen-2', actor)).resolves.toMatchObject({ url: 'https://signed' });
+      expect(storage.signPrivateDownload).toHaveBeenCalledWith('generaciones-pat/abc.pdf', 'PAT-sin-firma.pdf', 'application/pdf');
+      expect(storage.existsPrivate).not.toHaveBeenCalled();
+    });
+
+    it('con formato=docx firma el Word derivado de la ruta del PDF con nombre por cédula', async () => {
+      const { service, actor, storage } = setup({ generacion: lista });
+      await expect(service.descarga(PERIODO, ASIGNACION, 'gen-2', actor, 'docx')).resolves.toMatchObject({ url: 'https://signed' });
+      expect(storage.existsPrivate).toHaveBeenCalledWith('generaciones-pat/abc.docx');
+      expect(storage.saveAtPrivateKey).not.toHaveBeenCalled();
+      expect(storage.signPrivateDownload).toHaveBeenCalledWith(
+        'generaciones-pat/abc.docx', 'PAT-04-F-002-1300000000.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
+    });
+
+    it('genera el Word desde la instantánea si la generación es anterior al Word', async () => {
+      const { service, actor, storage } = setup({ generacion: lista, docxExiste: false });
+      await service.descarga(PERIODO, ASIGNACION, 'gen-2', actor, 'docx');
+      expect(storage.saveAtPrivateKey).toHaveBeenCalledWith(
+        'generaciones-pat/abc.docx', expect.any(Buffer), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      );
+      const docx = (storage.saveAtPrivateKey.mock.calls[0] as unknown[])[1] as Buffer;
+      expect(docx.subarray(0, 2).toString()).toBe('PK');
+      expect(storage.signPrivateDownload).toHaveBeenCalledWith('generaciones-pat/abc.docx', 'PAT-04-F-002-1300000000.docx', expect.any(String));
+    });
+
+    it('aplica las mismas reglas que el PDF: generación propia y LISTO', async () => {
+      const ajena = setup({ generacion: lista, owner: false });
+      await expect(ajena.service.descarga(PERIODO, ASIGNACION, 'gen-2', ajena.actor, 'docx')).rejects.toBeInstanceOf(NotFoundException);
+      const inexistente = setup({ generacion: null });
+      await expect(inexistente.service.descarga(PERIODO, ASIGNACION, 'gen-2', inexistente.actor, 'docx')).rejects.toBeInstanceOf(NotFoundException);
+      const enCola = setup({ generacion: { ...lista, estado: 'EN_COLA', ruta_almacenamiento: null } });
+      await expect(enCola.service.descarga(PERIODO, ASIGNACION, 'gen-2', enCola.actor, 'docx')).rejects.toBeInstanceOf(ConflictException);
+      expect(enCola.storage.signPrivateDownload).not.toHaveBeenCalled();
+      expect(enCola.storage.saveAtPrivateKey).not.toHaveBeenCalled();
     });
   });
 

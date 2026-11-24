@@ -18,6 +18,7 @@ import { EstudianteDatosPat } from './entities/estudiante-datos-pat.entity.js';
 import { ContenidoPatEstudiante } from './entities/contenido-pat.entity.js';
 import { GeneracionPat } from './entities/generacion-pat.entity.js';
 import { renderizarPat, type InstantaneaPat } from './render-pat.js';
+import { DOCX_CONTENT_TYPE, renderizarPatDocx } from './render-pat-docx.js';
 import { ActualizarDatosPatDto, ActualizarContenidoPatDto, GenerarPatDto } from './dto/actualizar-datos-pat.dto.js';
 import {
   CAMPOS_PERSONALES_PAT, DISCAPACIDADES_PAT, calcularPendientesPat, contenidoEfectivo, cursoDesdeNivel, pendientesContenido, pendientesPersonales, resolverTutorPat,
@@ -25,6 +26,19 @@ import {
 } from './pat-pendientes.js';
 
 export interface GeneracionJob { id: string; ciclo: number }
+export type FormatoDescargaPat = 'pdf' | 'docx';
+
+/** Clave del Word institucional de una generación: la del PDF con extensión `.docx`. */
+export function rutaDocxDeGeneracion(rutaPdf: string): string {
+  if (!/^generaciones-pat\/[^/]+\.pdf$/.test(rutaPdf)) throw new ServiceUnavailableException('La ruta del archivo generado no es válida.');
+  return rutaPdf.replace(/\.pdf$/, '.docx');
+}
+
+/** `PAT-04-F-002-<cédula>.docx`; sin una cédula utilizable, `PAT-04-F-002.docx`. */
+export function nombreArchivoDocx(instantanea: InstantaneaPat): string {
+  const cedula = typeof instantanea.cedula === 'string' ? instantanea.cedula.replace(/[^0-9A-Za-z-]/g, '') : '';
+  return cedula ? `PAT-04-F-002-${cedula}.docx` : 'PAT-04-F-002.docx';
+}
 type Source = DataSource | import('typeorm').EntityManager;
 
 /** Una generación que sigue en PROCESANDO tras este plazo se considera atascada y vuelve a la cola. */
@@ -258,9 +272,16 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     return this.response(row, docs[0]?.id ?? null);
   }
 
-  async descarga(periodoId: string, assignmentId: string, id: string, actor: Usuario) {
+  async descarga(periodoId: string, assignmentId: string, id: string, actor: Usuario, formato: FormatoDescargaPat = 'pdf') {
     const row = await this.generationForStudent(periodoId, assignmentId, id, actor);
     if (row.estado !== 'LISTO' || !row.ruta_almacenamiento) throw new ConflictException('La generación todavía no está disponible.');
+    if (formato === 'docx') {
+      const instantanea = row.instantanea as InstantaneaPat;
+      const docxKey = rutaDocxDeGeneracion(row.ruta_almacenamiento);
+      // Generaciones anteriores al Word (o cuyo Word falló): se genera desde la instantánea inmutable.
+      if (!(await this.storage.existsPrivate(docxKey))) await this.storage.saveAtPrivateKey(docxKey, renderizarPatDocx(instantanea), DOCX_CONTENT_TYPE);
+      return { url: await this.storage.signPrivateDownload(docxKey, nombreArchivoDocx(instantanea), DOCX_CONTENT_TYPE), expira_en: new Date(Date.now() + 300_000) };
+    }
     return { url: await this.storage.signPrivateDownload(row.ruta_almacenamiento, 'PAT-sin-firma.pdf', 'application/pdf'), expira_en: new Date(Date.now() + 300_000) };
   }
 
@@ -290,10 +311,12 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
     });
     if (!row) return;
     const key = this.storage.createPrivateKey('generaciones-pat', 'pdf');
+    const docxKey = rutaDocxDeGeneracion(key);
     await this.cleanup.registrar(null, key);
     try {
       const buffer = await renderizarPat(row.instantanea as InstantaneaPat);
       await this.storage.saveAtPrivateKey(key, buffer, 'application/pdf');
+      const docxGuardado = await this.guardarDocx(row.instantanea as InstantaneaPat, docxKey);
       const stored = await this.db.transaction(async (m) => {
         const repo = m.getRepository(GeneracionPat);
         const current = await repo.findOne({ where: { id }, lock: { mode: 'pessimistic_write' } });
@@ -303,12 +326,35 @@ export class GeneracionesPatService implements OnModuleInit, OnModuleDestroy {
         current.hash_sha256 = createHash('sha256').update(buffer).digest('hex'); current.generada_en = new Date(); current.error_sanitizado = null;
         await repo.save(current);
         await m.getRepository(ArchivoPendiente).delete({ ruta_almacenamiento: key });
+        // El Word se deriva de la ruta del PDF (misma clave con `.docx`), sin columna propia.
+        if (docxGuardado) await m.getRepository(ArchivoPendiente).delete({ ruta_almacenamiento: docxKey });
         return true;
       });
-      if (!stored) await this.cleanup.solicitar(undefined, key);
+      if (!stored) {
+        await this.cleanup.solicitar(undefined, key);
+        if (docxGuardado) await this.cleanup.solicitar(undefined, docxKey);
+      }
     } catch {
       await this.generacionesRepo.update({ id, ciclo, estado: 'PROCESANDO' }, { estado: 'FALLIDO', error_sanitizado: 'No se pudo generar el archivo PAT.' });
       await this.cleanup.solicitar(undefined, key);
+    }
+  }
+
+  /**
+   * Genera y guarda el Word institucional junto al PDF. Es complementario: si falla, la generación sigue
+   * su curso con el PDF y el Word se vuelve a generar desde la instantánea al pedir su descarga.
+   */
+  private async guardarDocx(instantanea: InstantaneaPat, docxKey: string): Promise<boolean> {
+    let registrado = false;
+    try {
+      const docx = renderizarPatDocx(instantanea);
+      registrado = await this.cleanup.registrar(null, docxKey);
+      await this.storage.saveAtPrivateKey(docxKey, docx, DOCX_CONTENT_TYPE);
+      return true;
+    } catch {
+      this.logger.warn('No se pudo generar el Word del PAT; se generará al solicitar su descarga.');
+      if (registrado) await this.cleanup.solicitar(undefined, docxKey);
+      return false;
     }
   }
 

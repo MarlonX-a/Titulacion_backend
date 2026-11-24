@@ -921,6 +921,13 @@ se retira un trabajo fallido con el mismo jobId. Con `BACKGROUND_TASKS_ENABLED`,
 el republicador devuelve a `EN_COLA` (ciclo + 1) las generaciones que siguen en
 `PROCESANDO` más de 5 minutos (`GENERACION_PAT_ATASCADA_MS`).
 
+Word institucional: el worker también rellena el formato oficial PAT-04-F-002
+(`src/generaciones-pat/plantillas/PAT-04-F-002.docx`, etiquetas docxtemplater regenerables con
+`node scripts/generar-plantilla-pat-docx.mjs <oficial vacío.docx>`; render en `render-pat-docx.ts`)
+y lo guarda en la clave del PDF con extensión `.docx` (sin columna nueva; la limpieza la trata como
+referenciada por la generación). Es complementario: si falla, la generación queda `LISTO` con el PDF y
+`GET .../descarga?formato=docx` lo genera desde la instantánea. Solo se entrega el PDF.
+
 Entrega: con una generación `LISTO`, el estudiante entrega directamente el PDF
 generado sin firma (`POST .../pat/me/generaciones/:id/entregar`, decisión
 aprobada); la versión tiene `origen=GENERADO` (`firmado=false`) y **referencia**
@@ -953,7 +960,7 @@ Rutas principales:
 - `GET .../pat/me/resumen` autocompletado, editables, pendientes y tutores
 - `GET .../pat/me/tutores-propuestos` devuelve tutor vigente o propuestas disponibles para el estudiante
 - `GET/POST .../pat/me/generaciones` y `GET .../generaciones/:id`
-- `GET .../generaciones/:id/descarga` y `POST .../generaciones/:id/reintentar`
+- `GET .../generaciones/:id/descarga` (`?formato=docx` para el Word PAT-04-F-002) y `POST .../generaciones/:id/reintentar`
 - `POST .../pat/me/generaciones/:id/entregar` entrega directa sin firma (`origen=GENERADO`)
 - `POST .../documentos-pat` con `generacion_id` y PDF firmado (opcional, `origen=FIRMADO`)
 - `PATCH /periodos/:periodoId/datos-formato-pat` para ADMIN

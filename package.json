@@ -80,6 +80,7 @@
     "bullmq": "^6.3.11",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "docxtemplater": "^3.71.1",
     "exceljs": "^4.4.0",
     "ioredis": "^5.11.1",
     "jose": "6.2.12",
@@ -87,6 +88,7 @@
     "nodemailer": "^10.0.15",
     "pdfkit": "^0.17.2",
     "pg": "8.23.1",
+    "pizzip": "^3.3.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "0.3.31"

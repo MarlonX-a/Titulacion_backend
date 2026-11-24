@@ -7,6 +7,12 @@ import { AlmacenamientoService } from './almacenamiento.service.js';
 
 interface CleanupData { key: string }
 
+/**
+ * Una generación referencia su PDF (`ruta_almacenamiento`) y el Word institucional derivado de esa ruta
+ * (misma clave con `.docx`), que no tiene columna propia.
+ */
+const GENERACION_REFERENCIA = `("ruta_almacenamiento"=$1 OR ($1 LIKE 'generaciones-pat/%.docx' AND "ruta_almacenamiento"=left($1, length($1) - 5) || '.pdf'))`;
+
 @Injectable()
 @Processor('limpieza-archivos')
 export class ArchivoLimpiezaWorker extends WorkerHost {
@@ -36,11 +42,11 @@ export class ArchivoLimpiezaWorker extends WorkerHost {
       const exportTable = await manager.query('SELECT to_regclass($1) IS NOT NULL AS available', [`${schema}.solicitud_exportacion`]) as Array<{ available: boolean }>;
       const refs = exportTable[0]?.available
         ? await manager.query(
-            `SELECT EXISTS (SELECT 1 FROM "${schema}"."plantilla_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."documento_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."generacion_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."solicitud_exportacion" WHERE "ruta_almacenamiento"=$1 AND ("expira_en" IS NULL OR "expira_en">CURRENT_TIMESTAMP)) AS referenced, EXISTS (SELECT 1 FROM "${schema}"."solicitud_exportacion" WHERE "ruta_almacenamiento"=$1 AND "expira_en"<=CURRENT_TIMESTAMP AND "archivo_limpiado"=false) AS expired_export`,
+            `SELECT EXISTS (SELECT 1 FROM "${schema}"."plantilla_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."documento_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."generacion_pat" WHERE ${GENERACION_REFERENCIA}) OR EXISTS (SELECT 1 FROM "${schema}"."solicitud_exportacion" WHERE "ruta_almacenamiento"=$1 AND ("expira_en" IS NULL OR "expira_en">CURRENT_TIMESTAMP)) AS referenced, EXISTS (SELECT 1 FROM "${schema}"."solicitud_exportacion" WHERE "ruta_almacenamiento"=$1 AND "expira_en"<=CURRENT_TIMESTAMP AND "archivo_limpiado"=false) AS expired_export`,
             [job.data.key],
           ) as Array<{ referenced: boolean; expired_export: boolean }>
         : await manager.query(
-            `SELECT EXISTS (SELECT 1 FROM "${schema}"."plantilla_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."documento_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."generacion_pat" WHERE "ruta_almacenamiento"=$1) AS referenced, false AS expired_export`,
+            `SELECT EXISTS (SELECT 1 FROM "${schema}"."plantilla_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."documento_pat" WHERE "ruta_almacenamiento"=$1) OR EXISTS (SELECT 1 FROM "${schema}"."generacion_pat" WHERE ${GENERACION_REFERENCIA}) AS referenced, false AS expired_export`,
             [job.data.key],
           ) as Array<{ referenced: boolean; expired_export: boolean }>;
       if (refs[0]?.referenced) {
