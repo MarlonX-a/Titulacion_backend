@@ -57,6 +57,11 @@ verificadores `db:verify-*` deben usar esquemas temporales y limpiarlos al
 terminar. Nunca muestres ni copies secretos de `.env` en la salida o en la guía;
 usa `.env.example` como referencia.
 
+Para el bootstrap administrativo de un despliegue, usa el mismo comando
+`npm run usuario:bootstrap-admin` después de aplicar las migraciones. El comando
+muestra la base y el esquema, exige confirmación interactiva del nombre del
+esquema si no es `titulacion_dev` y rechaza siempre `public` y `local_demo`.
+
 ### Estado del backend
 
 El código contiene módulos para autenticación y usuarios, períodos, perfiles y

@@ -9,6 +9,7 @@ import { DatabaseDataSource } from '../database/database-data-source.js';
 import { CreateUsuarioDto } from './dto/create-usuario.dto.js';
 import { UsuariosService } from './usuarios.service.js';
 import { UsuarioRol } from './enums/usuario-rol.enum.js';
+import { assertBootstrapAdminTarget } from './bootstrap-admin-target.js';
 
 function messages(errors: ValidationError[]): string[] {
   return errors.flatMap((error) => Object.values(error.constraints ?? {}));
@@ -44,11 +45,13 @@ async function main(): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('Ejecuta este comando desde una terminal interactiva.');
   const prompts = createInterface({ input: stdin, output: stdout });
   const environment = loadEnvironment();
-  if (environment.DB_SCHEMA !== 'titulacion_dev') {
-    throw new Error('El comando de bootstrap solo opera en el esquema titulacion_dev.');
-  }
   let details: CreateUsuarioDto & { password: string };
   try {
+    stdout.write(`Destino de bootstrap: base ${environment.DB_NAME}, esquema ${environment.DB_SCHEMA}.\n`);
+    const schemaConfirmation = environment.DB_SCHEMA === 'titulacion_dev'
+      ? undefined
+      : await prompts.question(`Para continuar, escribe exactamente ${environment.DB_SCHEMA}: `);
+    assertBootstrapAdminTarget(environment.DB_SCHEMA, schemaConfirmation);
     const email = await prompts.question('Correo @uleam.edu.ec o @live.uleam.edu.ec: ');
     const nombres = await prompts.question('Nombres: ');
     const apellidos = await prompts.question('Apellidos: ');
