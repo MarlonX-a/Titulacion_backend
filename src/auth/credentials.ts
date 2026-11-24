@@ -19,8 +19,12 @@ export function importTempTtlMs(hours: unknown): number {
 
 export function readEncryptionKey(path: string): string {
   const key = readFileSync(path);
-  if (key.length !== 32) throw new Error('La clave de cifrado debe tener 32 bytes.');
-  return key.toString('base64');
+  if (key.length === 32) return key.toString('base64');
+  // Render Secret Files are entered as text. Accept a 64-character hex encoding of the
+  // same 32 random bytes while retaining compatibility with existing binary key files.
+  const encoded = key.toString('utf8').trim();
+  if (/^[0-9a-f]{64}$/i.test(encoded)) return Buffer.from(encoded, 'hex').toString('base64');
+  throw new Error('La clave de cifrado debe contener 32 bytes binarios o su representación hexadecimal de 64 caracteres.');
 }
 
 export function tokenDigest(value: string): string {

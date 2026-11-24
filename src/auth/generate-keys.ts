@@ -18,8 +18,8 @@ try {
     writeFileSync(paths.privateKey, pair.privateKey, { flag: 'wx', mode: 0o600 });
     writeFileSync(paths.publicKey, pair.publicKey, { flag: 'wx', mode: 0o644 });
   }
-  if (!existsSync(paths.outboxKey)) writeFileSync(paths.outboxKey, randomBytes(32), { flag: 'wx', mode: 0o600 });
-  if (!existsSync(paths.temporaryCredentialKey)) writeFileSync(paths.temporaryCredentialKey, randomBytes(32), { flag: 'wx', mode: 0o600 });
+  if (!existsSync(paths.outboxKey)) writeFileSync(paths.outboxKey, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 });
+  if (!existsSync(paths.temporaryCredentialKey)) writeFileSync(paths.temporaryCredentialKey, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 });
   process.stdout.write('Claves creadas en .secrets. Añade JWT_PRIVATE_KEY_PATH=.secrets/jwt-private.pem, JWT_PUBLIC_KEY_PATH=.secrets/jwt-public.pem, OUTBOX_ENCRYPTION_KEY_PATH=.secrets/outbox.key y TEMP_CREDENTIAL_ENCRYPTION_KEY_PATH=.secrets/temp-credential.key al .env.\n');
 } catch {
   process.stderr.write('No se generaron las claves. Comprueba si ya existen archivos en .secrets; no se sobrescribieron.\n');
