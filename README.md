@@ -324,9 +324,12 @@ normaliza a minúsculas. `ultimo_acceso` registra la última solicitud autorizad
 a la API, no un evento del proveedor de inicio de sesión.
 
 Para crear el primer ADMIN ejecuta `npm run usuario:bootstrap-admin` en una
-terminal interactiva después de aplicar la migración. Solicita correo,
-nombres, apellidos y una contraseña personal con entrada oculta. Solo permite
-la inicialización si todavía no existe ningún ADMIN.
+terminal interactiva después de aplicar la migración. Muestra la base y el
+esquema efectivos; en esquemas distintos de `titulacion_dev` exige escribir
+exactamente el nombre del esquema para confirmar el destino. Rechaza siempre
+`public` y `local_demo`. Solicita correo, nombres, apellidos y una contraseña
+personal con entrada oculta. Solo permite la inicialización si todavía no
+existe ningún ADMIN.
 
 El correo de ESTUDIANTE debe terminar en `@live.uleam.edu.ec`. DOCENTE y ADMIN
 pueden usar `@uleam.edu.ec` o `@live.uleam.edu.ec`. No existe registro público.
