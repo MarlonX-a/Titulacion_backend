@@ -1,6 +1,8 @@
 import { AcademicoService } from '../academico/academico.service.js';
 import { AsignacionTemaPersistenciaService } from '../asignaciones-tema/asignacion-tema-persistencia.service.js';
 import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
+import { InvitacionPersistenciaService } from '../invitaciones/invitacion-persistencia.service.js';
 import { AuditoriaService } from '../auditoria/auditoria.service.js';
 import { ConflictosService } from '../conflictos/conflictos.service.js';
 import { Docente } from '../docentes/entities/docente.entity.js';
@@ -146,7 +148,7 @@ async function verifyBancoTemasSql({ db, schemaSql: s, step }: TemporarySchemaCo
     if (archivada[0]?.estado !== 'PENDIENTE') throw new Error('El cierre modificó una postulación de un período archivado.');
 
     step('asignación: rechazo de postulaciones de otros períodos');
-    const persistencia = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notificaciones);
+    const persistencia = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notificaciones, new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notificaciones)));
     await db.transaction((manager) => persistencia.rechazarAbiertasDeOtrosPeriodos(manager, temaConPostulaciones, periodoA, 'Acta de verificación', actor, null));
     const estados = new Map((await db.query(`SELECT "id","estado"::text AS estado FROM ${s}."postulacion" WHERE "id" = ANY($1::uuid[])`, [[postA, postA2, postB, postC]]) as Array<{ id: string; estado: string }>).map((row) => [row.id, row.estado]));
     if (estados.get(postA) !== 'PENDIENTE' || estados.get(postA2) !== 'PENDIENTE' || estados.get(postB) !== 'RECHAZADA' || estados.get(postC) !== 'PENDIENTE') throw new Error(`Estados tras la asignación inesperados: ${JSON.stringify([...estados])}.`);

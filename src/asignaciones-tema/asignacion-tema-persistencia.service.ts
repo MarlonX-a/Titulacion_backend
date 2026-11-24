@@ -12,8 +12,10 @@ import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
 import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
 import { AsignacionTutorPersistenciaService } from '../asignaciones-tutor/asignacion-tutor-persistencia.service.js';
+import { GrupoIntegrantePersistenciaService } from '../grupos/grupo-integrante-persistencia.service.js';
 import { NotificacionesPersistenciaService } from '../notificaciones/notificaciones-persistencia.service.js';
 import { NotificacionTipo } from '../notificaciones/enums/notificacion-canal.enum.js';
+import { AsignacionTemaOrigen } from './enums/asignacion-tema-origen.enum.js';
 
 export interface AnulacionAsignacion {
   causa: AsignacionTemaCausa;
@@ -28,6 +30,7 @@ export class AsignacionTemaPersistenciaService {
     private readonly auditoria: AuditoriaService,
     private readonly asignacionesTutor: AsignacionTutorPersistenciaService,
     private readonly notificaciones: NotificacionesPersistenciaService,
+    private readonly grupos: GrupoIntegrantePersistenciaService,
   ) {}
 
   async tieneVigenteParaEstudiante(manager: EntityManager, estudianteId: string): Promise<boolean> {
@@ -78,8 +81,10 @@ export class AsignacionTemaPersistenciaService {
     ip: string | null,
   ): Promise<void> {
     const schema = this.schema(manager);
-    const rows = await manager.query(`SELECT a."id" FROM ${schema}."asignacion_tema" a JOIN ${schema}."postulacion" p ON p."id"=a."postulacion_id" JOIN ${schema}."tema" t ON t."id"=a."tema_id" WHERE a."periodo_id"=$1 AND a."estado"='VIGENTE' AND (a."estudiante_id"=$2 OR EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=$2 AND gi."estado"='ACTIVO')) ORDER BY t."id",p."id",a."id" FOR UPDATE OF t,p,a`, [periodoId, estudianteId]) as Array<{ id: string }>;
+    const candidatas = await manager.query(`SELECT a."id" FROM ${schema}."asignacion_tema" a WHERE a."periodo_id"=$1 AND a."estado"='VIGENTE' AND (a."estudiante_id"=$2 OR EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=a."grupo_id" AND gi."estudiante_id"=$2 AND gi."estado"='ACTIVO'))`, [periodoId, estudianteId]) as Array<{ id: string }>;
+    const rows = await this.bloquearAsignaciones(manager, candidatas.map((row) => row.id));
     for (const row of rows) {
+      if (row.estado !== AsignacionTemaEstado.VIGENTE) continue;
       await this.anularBloqueada(manager, row.id, {
         causa: AsignacionTemaCausa.INCUMPLIMIENTO_CONDICION,
         motivo: observacion,
@@ -95,25 +100,46 @@ export class AsignacionTemaPersistenciaService {
    */
   async bloquearParaAnulacion(manager: EntityManager, periodoId: string, asignacionId: string): Promise<AsignacionTemaEstado | null> {
     const schema = this.schema(manager);
-    const rows = await manager.query(`SELECT a."id",a."estado"::text AS estado FROM ${schema}."asignacion_tema" a JOIN ${schema}."postulacion" p ON p."id"=a."postulacion_id" JOIN ${schema}."tema" t ON t."id"=a."tema_id" WHERE a."id"=$1 AND a."periodo_id"=$2 ORDER BY t."id",p."id",a."id" FOR UPDATE OF t,p,a`, [asignacionId, periodoId]) as Array<{ id: string; estado: AsignacionTemaEstado }>;
+    const existe = await manager.query(`SELECT 1 FROM ${schema}."asignacion_tema" WHERE "id"=$1 AND "periodo_id"=$2`, [asignacionId, periodoId]) as unknown[];
+    if (!existe.length) return null;
+    const rows = await this.bloquearAsignaciones(manager, [asignacionId]);
     return rows[0]?.estado ?? null;
+  }
+
+  /**
+   * Bloquea en el orden tema → postulación → asignación (el de la anulación desde su origen).
+   * Las asignaciones administrativas no tienen postulación; por eso cada tabla se bloquea en su
+   * propia sentencia (FOR UPDATE no admite el lado anulable de un LEFT JOIN).
+   */
+  private async bloquearAsignaciones(manager: EntityManager, ids: string[]): Promise<Array<{ id: string; estado: AsignacionTemaEstado }>> {
+    if (!ids.length) return [];
+    const schema = this.schema(manager);
+    const refs = await manager.query(`SELECT a."id",a."tema_id",a."postulacion_id" FROM ${schema}."asignacion_tema" a WHERE a."id"=ANY($1::uuid[])`, [ids]) as Array<{ id: string; tema_id: string; postulacion_id: string | null }>;
+    await manager.query(`SELECT 1 FROM ${schema}."tema" WHERE "id"=ANY($1::uuid[]) ORDER BY "id" FOR UPDATE`, [refs.map((ref) => ref.tema_id)]);
+    const postulaciones = refs.map((ref) => ref.postulacion_id).filter((id): id is string => id !== null);
+    if (postulaciones.length) await manager.query(`SELECT 1 FROM ${schema}."postulacion" WHERE "id"=ANY($1::uuid[]) ORDER BY "id" FOR UPDATE`, [postulaciones]);
+    return await manager.query(`SELECT "id","estado"::text AS estado FROM ${schema}."asignacion_tema" WHERE "id"=ANY($1::uuid[]) ORDER BY "tema_id","id" FOR UPDATE`, [ids]) as Array<{ id: string; estado: AsignacionTemaEstado }>;
   }
 
   /**
    * Anula una asignación VIGENTE ya bloqueada: asignación ANULADA con la causa indicada,
    * tutor vigente terminado, postulación ACEPTADA → ANULADA, tema ASIGNADO → PUBLICADO con
    * historial, auditorías y aviso TEMA_ANULADO. Las postulaciones rechazadas no se reactivan.
+   * Un equipo administrativo grupal se disuelve en esta misma transacción, después de persistir
+   * la anulación, para que sus estudiantes puedan volver a conformar un equipo. Una postulación
+   * no disuelve su grupo.
    */
   async anularBloqueada(manager: EntityManager, asignacionId: string, anulacion: AnulacionAsignacion, actor: Usuario, ip: string | null): Promise<void> {
     const motivo = anulacion.motivo.trim();
     const assignmentRepo = manager.getRepository(AsignacionTema);
     const assignment = await assignmentRepo.findOneByOrFail({ id: asignacionId });
     const postRepo = manager.getRepository(Postulacion);
-    const application = await postRepo.findOneByOrFail({ id: assignment.postulacion_id });
+    // Las asignaciones administrativas (origen ADMIN) no tienen postulación que anular.
+    const application = assignment.postulacion_id ? await postRepo.findOneByOrFail({ id: assignment.postulacion_id }) : null;
     const topicRepo = manager.getRepository(Tema);
     const topic = await topicRepo.findOneOrFail({ where: { id: assignment.tema_id }, relations: { linea: true, docente_proponente: true } });
     const previousAssignment = { estado: assignment.estado, causa_anulacion: assignment.causa_anulacion, motivo_anulacion: assignment.motivo_anulacion, anulada_por_id: assignment.anulada_por_id, fecha_anulacion: assignment.fecha_anulacion };
-    const previousApplication = { estado: application.estado, observacion: application.observacion };
+    const previousApplication = application ? { estado: application.estado, observacion: application.observacion } : null;
     const previousTopic = this.topicValues(topic);
     const now = new Date();
 
@@ -126,9 +152,11 @@ export class AsignacionTemaPersistenciaService {
     await assignmentRepo.save(assignment);
     await this.asignacionesTutor.anularPorAsignacionTema(manager, assignment.periodo_id, assignment.id, motivo, actor, ip);
 
-    application.estado = EstadoPostulacion.ANULADA;
-    application.observacion = motivo;
-    await postRepo.save(application);
+    if (application) {
+      application.estado = EstadoPostulacion.ANULADA;
+      application.observacion = motivo;
+      await postRepo.save(application);
+    }
 
     topic.estado = EstadoTema.PUBLICADO;
     await topicRepo.save(topic);
@@ -138,9 +166,12 @@ export class AsignacionTemaPersistenciaService {
       cambios: { anteriores: previousTopic, nuevos: nextTopic }, fecha: now,
     }));
     await this.auditoria.registrar(manager, { actor, accion: 'ANULAR_ASIGNACION_TEMA', entidad_tipo: 'asignacion_tema', entidad_id: assignment.id, valores_anteriores: previousAssignment, valores_nuevos: { estado: assignment.estado, causa_anulacion: assignment.causa_anulacion, motivo_anulacion: motivo, anulada_por_id: actor.id, fecha_anulacion: now }, ip_origen: ip });
-    await this.auditoria.registrar(manager, { actor, accion: anulacion.accionPostulacion, entidad_tipo: 'postulacion', entidad_id: application.id, valores_anteriores: previousApplication, valores_nuevos: { estado: application.estado, observacion: application.observacion }, ip_origen: ip });
+    if (application) await this.auditoria.registrar(manager, { actor, accion: anulacion.accionPostulacion, entidad_tipo: 'postulacion', entidad_id: application.id, valores_anteriores: previousApplication, valores_nuevos: { estado: application.estado, observacion: application.observacion }, ip_origen: ip });
     await this.auditoria.registrar(manager, { actor, accion: anulacion.accionTema, entidad_tipo: 'tema', entidad_id: topic.id, valores_anteriores: previousTopic, valores_nuevos: nextTopic, ip_origen: ip });
     await this.notificaciones.asignacionTema(manager, assignment.id, NotificacionTipo.TEMA_ANULADO, actor.id);
+    if (assignment.origen === AsignacionTemaOrigen.ADMIN && assignment.grupo_id) {
+      await this.grupos.disolverEquipoAdministrativo(manager, assignment.grupo_id, actor, motivo, ip);
+    }
   }
 
   private topicValues(topic: Tema): Record<string, unknown> {

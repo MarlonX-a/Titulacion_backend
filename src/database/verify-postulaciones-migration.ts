@@ -146,9 +146,9 @@ async function verify(): Promise<void> {
 
   const audit = new AuditoriaService();
   const studentsService = new EstudiantesService(studentRepo, isolated);
-  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications);
-  const persistence = new PostulacionPersistenciaService(audit, notifications, new ReservaTemaService(isolated, audit, notifications));
   const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
+  const assignmentPersistence = new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications, groupMembership);
+  const persistence = new PostulacionPersistenciaService(audit, notifications, new ReservaTemaService(isolated, audit, notifications));
   const habilitados = new HabilitadosService(habilitadoRepo, isolated, studentsService, audit, assignmentPersistence, notifications, persistence, groupMembership);
   const temasService = new TemasService(isolated.getRepository(Tema), isolated.getRepository(TemaHistorial), teacherRepo, studentRepo, habilitadoRepo, periodRepo, isolated, audit, notifications);
   const tutores = new TutoresPropuestosService(isolated.getRepository(TutorPropuesto), teacherRepo, isolated, temasService);

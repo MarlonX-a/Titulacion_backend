@@ -1,14 +1,17 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { AsignacionTemaEstado } from '../enums/asignacion-tema-estado.enum.js';
 import { AsignacionTemaCausa } from '../enums/asignacion-tema-causa.enum.js';
+import { AsignacionTemaOrigen } from '../enums/asignacion-tema-origen.enum.js';
 
 export class AsignacionTemaResponseDto {
   @ApiProperty({ format: 'uuid' }) id: string;
   @ApiProperty({ format: 'uuid' }) periodo_id: string;
   @ApiProperty({ format: 'uuid' }) tema_id: string;
   @ApiProperty({ type: Object }) tema: { id: string; titulo: string; estado: string };
-  @ApiProperty({ format: 'uuid' }) postulacion_id: string;
-  @ApiProperty({ type: Object }) postulacion: { id: string; estado: string; modalidad: string; num_integrantes: number };
+  @ApiProperty({ enum: AsignacionTemaOrigen, description: 'POSTULACION (postulación aceptada) o ADMIN (equipo conformado por ADMIN, sin postulación).' }) origen: AsignacionTemaOrigen;
+  @ApiProperty({ enum: ['INDIVIDUAL', 'GRUPAL'] }) modalidad: 'INDIVIDUAL' | 'GRUPAL';
+  @ApiProperty({ format: 'uuid', nullable: true, description: 'Nulo en asignaciones con origen ADMIN.' }) postulacion_id: string | null;
+  @ApiProperty({ type: Object, nullable: true, description: 'Nulo en asignaciones con origen ADMIN.' }) postulacion: { id: string; estado: string; modalidad: string; num_integrantes: number } | null;
   @ApiProperty({ nullable: true, format: 'uuid' }) grupo_id: string | null;
   @ApiProperty({ type: Object, nullable: true }) grupo: { id: string; nombre: string } | null;
   @ApiProperty({ nullable: true, format: 'uuid' }) estudiante_id: string | null;

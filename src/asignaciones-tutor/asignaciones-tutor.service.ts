@@ -48,7 +48,7 @@ interface ChargeEval {
 }
 
 const relations = {
-  asignacion_tema: { tema: true, postulacion: { grupo: true, estudiante: true } },
+  asignacion_tema: { tema: true, grupo: true, postulacion: true },
   docente: { usuario: true },
   asignada_por: true,
   tutor_propuesto: true,
@@ -176,6 +176,8 @@ export class AsignacionesTutorService {
     try {
       const work = await this.trabajos.findOne({ where: { id: trabajoId, periodo_id: periodoId }, relations: { tema: { docente_proponente: true }, postulacion: true } });
       if (!work) throw new NotFoundException('No existe el trabajo asignado en el período indicado.');
+      // Los equipos administrativos no tienen postulación: sus candidatos están en candidato_tutor.
+      if (!work.postulacion_id) return { data: [], total: 0, page, limit };
       const qb = this.propuestas.createQueryBuilder('proposal')
         .innerJoinAndSelect('proposal.docente', 'docente')
         .innerJoinAndSelect('docente.usuario', 'user')
@@ -320,9 +322,8 @@ export class AsignacionesTutorService {
     return this.repository.createQueryBuilder('tutor')
       .innerJoinAndSelect('tutor.asignacion_tema', 'work')
       .innerJoinAndSelect('work.tema', 'topic')
-      .innerJoinAndSelect('work.postulacion', 'application')
-      .leftJoinAndSelect('application.grupo', 'group')
-      .leftJoinAndSelect('application.estudiante', 'student')
+      .leftJoinAndSelect('work.postulacion', 'application')
+      .leftJoinAndSelect('work.grupo', 'group')
       .innerJoinAndSelect('tutor.docente', 'teacher')
       .innerJoinAndSelect('teacher.usuario', 'teacherUser')
       .innerJoinAndSelect('tutor.asignada_por', 'responsable')
@@ -331,6 +332,7 @@ export class AsignacionesTutorService {
 
   private async toResponse(record: AsignacionTutor, visor: VisorDatos): Promise<AsignacionTutorResponseDto> {
     const work = record.asignacion_tema;
+    const modalidad = work.grupo_id ? ModalidadPostulacion.GRUPAL : ModalidadPostulacion.INDIVIDUAL;
     const participants = (await this.participants(work.estudiante_id, work.grupo_id, visor.esAdmin)).map((row) => datosEstudianteVisibles(visor, row));
     return {
       id: record.id,
@@ -338,6 +340,7 @@ export class AsignacionesTutorService {
       asignacion_tema_id: work.id,
       docente_id: record.docente_id,
       tutor_propuesto_id: record.tutor_propuesto_id,
+      candidato_tutor_id: record.candidato_tutor_id,
       tipo: record.tipo,
       estado: record.estado,
       asignada_por_id: record.asignada_por_id,
@@ -359,12 +362,10 @@ export class AsignacionesTutorService {
       trabajo: {
         id: work.id,
         tema: { id: work.tema.id, titulo: work.tema.titulo },
-        postulacion: {
-          id: work.postulacion.id,
-          modalidad: work.grupo_id ? ModalidadPostulacion.GRUPAL : ModalidadPostulacion.INDIVIDUAL,
-          num_integrantes: work.postulacion.num_integrantes,
-        },
-        grupo: work.postulacion.grupo ? { id: work.postulacion.grupo.id, nombre: work.postulacion.grupo.nombre } : null,
+        origen: work.origen,
+        modalidad,
+        postulacion: work.postulacion ? { id: work.postulacion.id, modalidad, num_integrantes: work.postulacion.num_integrantes } : null,
+        grupo: work.grupo ? { id: work.grupo.id, nombre: work.grupo.nombre } : null,
         participantes: participants,
       },
     };
@@ -402,7 +403,7 @@ export class AsignacionesTutorService {
     const workRepo = manager.getRepository(AsignacionTema);
     const locked = await workRepo.findOne({ where: { id, periodo_id: periodoId }, lock: { mode: 'pessimistic_write' } });
     if (!locked) throw new NotFoundException('No existe el trabajo asignado en el período indicado.');
-    const work = await workRepo.findOne({ where: { id }, relations: { tema: true, postulacion: { grupo: true, estudiante: true } } });
+    const work = await workRepo.findOne({ where: { id }, relations: { tema: true, grupo: true, postulacion: true } });
     if (!work) throw new NotFoundException('No existe el trabajo asignado en el período indicado.');
     return work;
   }
@@ -421,6 +422,7 @@ export class AsignacionesTutorService {
   }
 
   private async lockProposal(manager: EntityManager, id: string, work: AsignacionTema, docenteId: string): Promise<TutorPropuesto> {
+    if (!work.postulacion_id) throw new ConflictException('El trabajo es de un equipo administrativo y no tiene preferencias de postulación; confirma uno de sus candidatos.');
     const proposal = await manager.getRepository(TutorPropuesto).findOne({
       where: { id, postulacion: { id: work.postulacion_id }, docente: { id: docenteId } },
     });
@@ -457,7 +459,8 @@ export class AsignacionesTutorService {
   }
 
   private assertWorkAssigned(work: AsignacionTema): void {
-    if (work.estado !== AsignacionTemaEstado.VIGENTE || work.tema.estado !== EstadoTema.ASIGNADO || work.postulacion.estado !== 'ACEPTADA') {
+    // Un equipo administrativo (origen ADMIN) no tiene postulación; uno de postulación exige que siga ACEPTADA.
+    if (work.estado !== AsignacionTemaEstado.VIGENTE || work.tema.estado !== EstadoTema.ASIGNADO || (work.postulacion !== null && work.postulacion.estado !== 'ACEPTADA')) {
       throw new ConflictException('El tutor solo se asigna a un trabajo vigente, con tema asignado y postulación aceptada.');
     }
   }

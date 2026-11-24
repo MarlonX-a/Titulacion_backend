@@ -10,11 +10,13 @@ import { AsignacionTemaPersistenciaService } from './asignacion-tema-persistenci
 import { AsignacionTema } from './entities/asignacion-tema.entity.js';
 import { AsignacionTemaCausa } from './enums/asignacion-tema-causa.enum.js';
 import { AsignacionTemaEstado } from './enums/asignacion-tema-estado.enum.js';
+import { AsignacionTemaOrigen } from './enums/asignacion-tema-origen.enum.js';
 
 function setup() {
   const actor = { id: 'admin-id' };
   const assignment = {
-    id: 'asignacion-id', periodo_id: 'periodo-id', tema_id: 'tema-id', postulacion_id: 'postulacion-id',
+    id: 'asignacion-id', periodo_id: 'periodo-id', tema_id: 'tema-id', postulacion_id: 'postulacion-id' as string | null,
+    origen: AsignacionTemaOrigen.POSTULACION, grupo_id: null as string | null,
     estado: AsignacionTemaEstado.VIGENTE, causa_anulacion: null as AsignacionTemaCausa | null, motivo_anulacion: null as string | null,
     anulada_por_id: null as string | null, anulada_por: null as unknown, fecha_anulacion: null as Date | null,
   };
@@ -29,7 +31,14 @@ function setup() {
     topic: { findOneOrFail: vi.fn(async () => topic), save: vi.fn(async (value: unknown) => value) },
     history: { create: vi.fn((value: unknown) => value), save: vi.fn(async (value: unknown) => value) },
   };
-  const query = vi.fn(async (_sql: string, _params?: unknown[]) => [{ id: 'asignacion-id', estado: AsignacionTemaEstado.VIGENTE }]);
+  // Responde según la sentencia: existencia, candidatas, referencias, bloqueos de tema/postulación y de la asignación.
+  const query = vi.fn(async (sql: string, params?: unknown[]): Promise<unknown[]> => {
+    if (sql.startsWith('SELECT 1 FROM "titulacion_dev"."asignacion_tema"')) return params?.[0] === 'asignacion-id' ? [{ '?column?': 1 }] : [];
+    if (sql.includes('a."tema_id",a."postulacion_id"')) return [{ id: 'asignacion-id', tema_id: 'tema-id', postulacion_id: assignment.postulacion_id }];
+    if (sql.includes('"estado"::text AS estado')) return [{ id: 'asignacion-id', estado: AsignacionTemaEstado.VIGENTE }];
+    if (sql.includes('FOR UPDATE')) return [];
+    return [{ id: 'asignacion-id' }];
+  });
   const manager = {
     connection: { options: { schema: 'titulacion_dev' } },
     query,
@@ -44,8 +53,15 @@ function setup() {
   const auditoria = { registrar: vi.fn(async () => undefined) };
   const tutores = { anularPorAsignacionTema: vi.fn(async () => undefined) };
   const notificaciones = { asignacionTema: vi.fn(async () => undefined) };
-  const service = new AsignacionTemaPersistenciaService(auditoria as never, tutores as never, notificaciones as never);
-  return { service, actor, assignment, application, topic, repos, query, manager, auditoria, tutores, notificaciones };
+  const grupos = { disolverEquipoAdministrativo: vi.fn(async () => undefined) };
+  const service = new AsignacionTemaPersistenciaService(auditoria as never, tutores as never, notificaciones as never, grupos as never);
+  return { service, actor, assignment, application, topic, repos, query, manager, auditoria, tutores, notificaciones, grupos };
+}
+
+/** Tablas bloqueadas con FOR UPDATE, en el orden en que se emitieron las sentencias. */
+function ordenBloqueos(calls: unknown[][]): string[] {
+  return calls.map((call) => String(call[0])).filter((sql) => sql.includes('FOR UPDATE'))
+    .map((sql) => /FROM "titulacion_dev"\."(\w+)"/.exec(sql)?.[1] ?? '?');
 }
 
 describe('AsignacionTemaPersistenciaService', () => {
@@ -68,13 +84,13 @@ describe('AsignacionTemaPersistenciaService', () => {
     const acciones = state.auditoria.registrar.mock.calls.map((call) => ((call as unknown[])[1] as { accion: string }).accion);
     expect(acciones).toEqual(['ANULAR_ASIGNACION_TEMA', 'ANULAR_POSTULACION_MANUAL', 'REPUBLICAR_TEMA_ANULACION']);
     expect(state.notificaciones.asignacionTema).toHaveBeenCalledWith(state.manager, 'asignacion-id', NotificacionTipo.TEMA_ANULADO, 'admin-id');
+    expect(state.grupos.disolverEquipoAdministrativo).not.toHaveBeenCalled();
   });
 
   it('la anulación por incumplimiento reutiliza el mismo flujo con su causa y acciones', async () => {
     const state = setup();
-    state.query.mockResolvedValueOnce([{ id: 'asignacion-id' }] as never);
     await state.service.anularPorIncumplimiento(state.manager as never, 'periodo-id', 'estudiante-id', state.actor as never, 'No admitido', null);
-    expect(state.query.mock.calls[0]?.[0]).toContain('FOR UPDATE OF t,p,a');
+    expect(ordenBloqueos(state.query.mock.calls)).toEqual(['tema', 'postulacion', 'asignacion_tema']);
     expect(state.assignment.causa_anulacion).toBe(AsignacionTemaCausa.INCUMPLIMIENTO_CONDICION);
     const acciones = state.auditoria.registrar.mock.calls.map((call) => ((call as unknown[])[1] as { accion: string }).accion);
     expect(acciones).toEqual(['ANULAR_ASIGNACION_TEMA', 'ANULAR_POSTULACION_INCUMPLIMIENTO', 'REPUBLICAR_TEMA_INCUMPLIMIENTO']);
@@ -83,9 +99,54 @@ describe('AsignacionTemaPersistenciaService', () => {
   it('bloquea tema, postulación y asignación del período y devuelve su estado', async () => {
     const state = setup();
     await expect(state.service.bloquearParaAnulacion(state.manager as never, 'periodo-id', 'asignacion-id')).resolves.toBe(AsignacionTemaEstado.VIGENTE);
-    expect(state.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE OF t,p,a'), ['asignacion-id', 'periodo-id']);
-    state.query.mockResolvedValueOnce([] as never);
+    expect(state.query.mock.calls[0]).toEqual([expect.stringContaining('"periodo_id"=$2'), ['asignacion-id', 'periodo-id']]);
+    expect(ordenBloqueos(state.query.mock.calls)).toEqual(['tema', 'postulacion', 'asignacion_tema']);
     await expect(state.service.bloquearParaAnulacion(state.manager as never, 'periodo-id', 'otra')).resolves.toBeNull();
+  });
+
+  it('una asignación administrativa (sin postulación) se bloquea y anula sin tocar postulaciones', async () => {
+    const state = setup();
+    state.assignment.postulacion_id = null;
+    state.assignment.origen = AsignacionTemaOrigen.ADMIN;
+    await expect(state.service.bloquearParaAnulacion(state.manager as never, 'periodo-id', 'asignacion-id')).resolves.toBe(AsignacionTemaEstado.VIGENTE);
+    expect(ordenBloqueos(state.query.mock.calls)).toEqual(['tema', 'asignacion_tema']);
+    await state.service.anularBloqueada(state.manager as never, 'asignacion-id', {
+      causa: AsignacionTemaCausa.OTRA, motivo: 'Equipo reorganizado',
+      accionPostulacion: 'ANULAR_POSTULACION_MANUAL', accionTema: 'REPUBLICAR_TEMA_ANULACION',
+    }, state.actor as never, null);
+    expect(state.repos.application.findOneByOrFail).not.toHaveBeenCalled();
+    expect(state.repos.application.save).not.toHaveBeenCalled();
+    expect(state.assignment.estado).toBe(AsignacionTemaEstado.ANULADA);
+    expect(state.topic.estado).toBe(EstadoTema.PUBLICADO);
+    const acciones = state.auditoria.registrar.mock.calls.map((call) => ((call as unknown[])[1] as { accion: string }).accion);
+    expect(acciones).toEqual(['ANULAR_ASIGNACION_TEMA', 'REPUBLICAR_TEMA_ANULACION']);
+    expect(state.grupos.disolverEquipoAdministrativo).not.toHaveBeenCalled();
+  });
+
+  it('al anular un equipo administrativo grupal disuelve el grupo después de dejar la asignación ANULADA', async () => {
+    const state = setup();
+    state.assignment.postulacion_id = null;
+    state.assignment.origen = AsignacionTemaOrigen.ADMIN;
+    state.assignment.grupo_id = 'grupo-id';
+    await state.service.anularBloqueada(state.manager as never, 'asignacion-id', {
+      causa: AsignacionTemaCausa.OTRA, motivo: 'Equipo reorganizado',
+      accionPostulacion: 'ANULAR_POSTULACION_MANUAL', accionTema: 'REPUBLICAR_TEMA_ANULACION',
+    }, state.actor as never, null);
+    expect(state.assignment.estado).toBe(AsignacionTemaEstado.ANULADA);
+    expect(state.grupos.disolverEquipoAdministrativo).toHaveBeenCalledWith(state.manager, 'grupo-id', state.actor, 'Equipo reorganizado', null);
+    expect(state.repos.assignment.save.mock.invocationCallOrder[0]).toBeLessThan(state.grupos.disolverEquipoAdministrativo.mock.invocationCallOrder[0]!);
+    expect(state.repos.application.save).not.toHaveBeenCalled();
+  });
+
+  it('una postulación grupal anulada no disuelve el grupo', async () => {
+    const state = setup();
+    state.assignment.grupo_id = 'grupo-postulacion';
+    await state.service.anularBloqueada(state.manager as never, 'asignacion-id', {
+      causa: AsignacionTemaCausa.OTRA, motivo: 'Desistimiento',
+      accionPostulacion: 'ANULAR_POSTULACION_MANUAL', accionTema: 'REPUBLICAR_TEMA_ANULACION',
+    }, state.actor as never, null);
+    expect(state.application.estado).toBe(EstadoPostulacion.ANULADA);
+    expect(state.grupos.disolverEquipoAdministrativo).not.toHaveBeenCalled();
   });
 });
 
@@ -110,7 +171,7 @@ describe('AsignacionTemaPersistenciaService.rechazarAbiertasDeOtrosPeriodos', ()
     const manager = { connection: { options: { schema: 'titulacion_dev' } }, query, getRepository: () => repo };
     const auditoria = { registrar: vi.fn(async () => undefined) };
     const notificaciones = { postulacion: vi.fn(async () => undefined) };
-    const service = new AsignacionTemaPersistenciaService(auditoria as never, {} as never, notificaciones as never);
+    const service = new AsignacionTemaPersistenciaService(auditoria as never, {} as never, notificaciones as never, { disolverEquipoAdministrativo: vi.fn() } as never);
     return { service, actor, applications, query, repo, manager, auditoria, notificaciones };
   }
 

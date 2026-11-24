@@ -255,11 +255,13 @@ export class AsignacionesTemaService {
   private async toResponse(item: AsignacionTema, visor: VisorDatos): Promise<AsignacionTemaResponseDto> {
     const schema = this.schema(this.dataSource.manager);
     const participantRows = await this.dataSource.query(`SELECT e."id",u."nombres",u."apellidos",e."matricula",h."situacion_ingreso"::text AS situacion_ingreso FROM ${schema}."estudiante" e JOIN ${schema}."usuario" u ON u."id"=e."usuario_id" LEFT JOIN ${schema}."estudiante_habilitado" h ON h."periodo_id"=$1 AND h."estudiante_id"=e."id" WHERE ($2::uuid IS NOT NULL AND e."id"=$2) OR ($3::uuid IS NOT NULL AND EXISTS (SELECT 1 FROM ${schema}."grupo_integrante" gi WHERE gi."grupo_id"=$3 AND gi."estudiante_id"=e."id" AND ($4::boolean OR gi."estado"='ACTIVO'))) ORDER BY e."id"`, [item.periodo_id, item.estudiante_id, item.grupo_id, visor.esAdmin]) as Array<{ id: string; nombres: string; apellidos: string; matricula: string; situacion_ingreso: string | null }>;
+    const modalidad = item.grupo_id ? ModalidadPostulacion.GRUPAL : ModalidadPostulacion.INDIVIDUAL;
     return {
       id: item.id, periodo_id: item.periodo_id, tema_id: item.tema_id,
       tema: { id: item.tema.id, titulo: item.tema.titulo, estado: item.tema.estado },
+      origen: item.origen, modalidad,
       postulacion_id: item.postulacion_id,
-      postulacion: { id: item.postulacion.id, estado: item.postulacion.estado, modalidad: item.grupo_id ? ModalidadPostulacion.GRUPAL : ModalidadPostulacion.INDIVIDUAL, num_integrantes: item.postulacion.num_integrantes },
+      postulacion: item.postulacion ? { id: item.postulacion.id, estado: item.postulacion.estado, modalidad, num_integrantes: item.postulacion.num_integrantes } : null,
       grupo_id: item.grupo_id, grupo: item.grupo ? { id: item.grupo.id, nombre: item.grupo.nombre } : null,
       estudiante_id: item.estudiante_id, participantes: participantRows.map((row) => datosEstudianteVisibles(visor, row)),
       aprobada_por_id: item.aprobada_por_id, aprobada_por: { id: item.aprobada_por.id, nombres: item.aprobada_por.nombres, apellidos: item.aprobada_por.apellidos },

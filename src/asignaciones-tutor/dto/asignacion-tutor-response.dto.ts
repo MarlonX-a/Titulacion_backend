@@ -11,6 +11,7 @@ export class AsignacionTutorResponseDto {
   @ApiProperty({ format: 'uuid' }) asignacion_tema_id: string;
   @ApiProperty({ format: 'uuid' }) docente_id: string;
   @ApiProperty({ format: 'uuid', nullable: true }) tutor_propuesto_id: string | null;
+  @ApiProperty({ format: 'uuid', nullable: true, description: 'Candidato del equipo administrativo confirmado (tipo CANDIDATO_CONFIRMADO).' }) candidato_tutor_id: string | null;
   @ApiProperty({ enum: AsignacionTutorTipo }) tipo: AsignacionTutorTipo;
   @ApiProperty({ enum: AsignacionTutorEstado }) estado: AsignacionTutorEstado;
   @ApiProperty({ format: 'uuid' }) asignada_por_id: string;
@@ -22,7 +23,10 @@ export class AsignacionTutorResponseDto {
   @ApiProperty({ type: Object }) trabajo: {
     id: string;
     tema: { id: string; titulo: string };
-    postulacion: { id: string; modalidad: 'INDIVIDUAL' | 'GRUPAL'; num_integrantes: number };
+    origen: 'POSTULACION' | 'ADMIN';
+    modalidad: 'INDIVIDUAL' | 'GRUPAL';
+    /** Nulo en trabajos de equipos administrativos (origen ADMIN). */
+    postulacion: { id: string; modalidad: 'INDIVIDUAL' | 'GRUPAL'; num_integrantes: number } | null;
     grupo: { id: string; nombre: string } | null;
     participantes: ParticipanteTutorResponseDto[];
   };

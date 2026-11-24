@@ -115,15 +115,16 @@ async function verify(): Promise<void> {
     estado: PeriodoEstado.BORRADOR, max_integrantes_default: 5,
   }));
   const audit = new AuditoriaService();
+  const groupMembership = new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications));
   const service = new HabilitadosService(
     isolatedDataSource.getRepository(EstudianteHabilitado),
     isolatedDataSource,
     new EstudiantesService(students, isolatedDataSource),
     audit,
-    new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications),
+    new AsignacionTemaPersistenciaService(audit, new AsignacionTutorPersistenciaService(audit), notifications, groupMembership),
     notifications,
     new PostulacionPersistenciaService(audit, notifications, new ReservaTemaService(isolatedDataSource, audit, notifications)),
-    new GrupoIntegrantePersistenciaService(audit, new InvitacionPersistenciaService(audit, notifications)),
+    groupMembership,
   );
   const conditional = {
     estudiante_id: studentProfiles[0].id,

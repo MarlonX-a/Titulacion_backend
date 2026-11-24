@@ -9,7 +9,7 @@ import { AsignacionTutorTipo } from '../enums/asignacion-tutor-tipo.enum.js';
 @Entity({ name: 'asignacion_tutor' })
 @Index('UQ_asignacion_tutor_vigente_trabajo', ['asignacion_tema_id'], { unique: true, where: '"estado" = \'VIGENTE\'' })
 @Index('IDX_asignacion_tutor_docente_estado', ['docente_id', 'estado', 'fecha_asignacion'])
-@Check('CHK_asignacion_tutor_tipo_propuesta', '("tipo" = \'PROPUESTO_CONFIRMADO\' AND "tutor_propuesto_id" IS NOT NULL) OR ("tipo" = \'ASIGNADO_DIRECTO\' AND "tutor_propuesto_id" IS NULL)')
+@Check('CHK_asignacion_tutor_tipo_propuesta', '("tipo" = \'PROPUESTO_CONFIRMADO\' AND "tutor_propuesto_id" IS NOT NULL AND "candidato_tutor_id" IS NULL) OR ("tipo" = \'ASIGNADO_DIRECTO\' AND "tutor_propuesto_id" IS NULL AND "candidato_tutor_id" IS NULL) OR ("tipo" = \'CANDIDATO_CONFIRMADO\' AND "tutor_propuesto_id" IS NULL AND "candidato_tutor_id" IS NOT NULL)')
 @Check('CHK_asignacion_tutor_estado_fecha_fin', '("estado" = \'VIGENTE\' AND "fecha_fin" IS NULL AND "motivo_cambio" IS NULL) OR ("estado" IN (\'REEMPLAZADA\', \'ANULADA\') AND "fecha_fin" IS NOT NULL AND "motivo_cambio" IS NOT NULL AND length(btrim("motivo_cambio")) BETWEEN 1 AND 1000)')
 @Check('CHK_asignacion_tutor_cronologia', '"fecha_fin" IS NULL OR "fecha_fin" >= "fecha_asignacion"')
 export class AsignacionTutor {
@@ -29,6 +29,9 @@ export class AsignacionTutor {
   @ManyToOne(() => TutorPropuesto, { nullable: true, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'tutor_propuesto_id', foreignKeyConstraintName: 'FK_asignacion_tutor_propuesta' })
   tutor_propuesto: TutorPropuesto | null;
+
+  /** Candidato del equipo administrativo confirmado como tutor (FK compuesta al mismo trabajo y docente). */
+  @Column({ type: 'uuid', name: 'candidato_tutor_id', nullable: true }) candidato_tutor_id: string | null;
 
   @Column({ type: 'enum', enum: AsignacionTutorTipo, enumName: 'asignacion_tutor_tipo_enum' }) tipo: AsignacionTutorTipo;
   @Column({ type: 'enum', enum: AsignacionTutorEstado, enumName: 'asignacion_tutor_estado_enum', default: AsignacionTutorEstado.VIGENTE }) estado: AsignacionTutorEstado;

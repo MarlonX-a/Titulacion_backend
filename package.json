@@ -32,6 +32,7 @@
     "db:verify-banco-temas-sql": "npm run build && node dist/database/verify-banco-temas-sql.js",
     "db:verify-grupos": "npm run build && node dist/database/verify-grupos-migration.js",
     "db:verify-postulaciones": "npm run build && node dist/database/verify-postulaciones-migration.js",
+    "db:verify-equipos-admin": "npm run build && node dist/database/verify-equipos-admin-migration.js",
     "db:verify-tutores-propuestos": "npm run build && node dist/database/verify-postulaciones-migration.js",
     "db:verify-conflictos": "npm run build && node dist/database/verify-conflictos-migration.js",
     "db:verify-asignaciones-tema": "npm run build && node dist/database/verify-asignaciones-tema.js",

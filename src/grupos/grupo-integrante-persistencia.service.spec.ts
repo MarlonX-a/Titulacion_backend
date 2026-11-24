@@ -96,3 +96,21 @@ describe('GrupoIntegrantePersistenciaService.retirarPorNoAdmision', () => {
     ]);
   });
 });
+
+describe('GrupoIntegrantePersistenciaService.disolverEquipoAdministrativo', () => {
+  it('retira a todos los integrantes, disuelve el grupo y cancela invitaciones pendientes', async () => {
+    const representante = member('a', GrupoIntegranteRol.REPRESENTANTE);
+    const integrante = member('b');
+    const state = setup({ members: [representante, integrante] });
+    await state.service.disolverEquipoAdministrativo(state.manager as never, 'grupo-id', actor as never, ' Equipo reorganizado ', null);
+    expect(state.group.estado).toBe(GrupoEstado.DISUELTO);
+    expect(representante).toMatchObject({ estado: GrupoIntegranteEstado.RETIRADO, motivo_salida: 'Equipo reorganizado' });
+    expect(integrante).toMatchObject({ estado: GrupoIntegranteEstado.RETIRADO, motivo_salida: 'Equipo reorganizado' });
+    expect(state.calls).toEqual([
+      'lock-grupo', 'lock-integrantes',
+      'save:a:REPRESENTANTE:RETIRADO', 'audit:DISOLVER_GRUPO',
+      'save:b:INTEGRANTE:RETIRADO', 'audit:DISOLVER_GRUPO',
+      'invitaciones:DISOLVER_GRUPO', 'grupo:DISUELTO', 'audit:DISOLVER_GRUPO',
+    ]);
+  });
+});

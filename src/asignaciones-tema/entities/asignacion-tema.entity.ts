@@ -6,6 +6,7 @@ import { Estudiante } from '../../estudiantes/entities/estudiante.entity.js';
 import { Usuario } from '../../usuarios/entities/usuario.entity.js';
 import { AsignacionTemaEstado } from '../enums/asignacion-tema-estado.enum.js';
 import { AsignacionTemaCausa } from '../enums/asignacion-tema-causa.enum.js';
+import { AsignacionTemaOrigen } from '../enums/asignacion-tema-origen.enum.js';
 
 @Entity({ name: 'asignacion_tema' })
 @Index('UQ_asignacion_tema_postulacion', ['postulacion_id'], { unique: true })
@@ -13,6 +14,7 @@ import { AsignacionTemaCausa } from '../enums/asignacion-tema-causa.enum.js';
 @Index('UQ_asignacion_tema_vigente_grupo', ['grupo_id'], { unique: true, where: '"estado" = \'VIGENTE\' AND "grupo_id" IS NOT NULL' })
 @Index('UQ_asignacion_tema_vigente_estudiante', ['estudiante_id'], { unique: true, where: '"estado" = \'VIGENTE\' AND "estudiante_id" IS NOT NULL' })
 @Index('IDX_asignacion_tema_periodo_fecha', ['periodo_id', 'fecha_asignacion', 'id'])
+@Check('CHK_asignacion_tema_origen', '("origen" = \'POSTULACION\' AND "postulacion_id" IS NOT NULL) OR ("origen" = \'ADMIN\' AND "postulacion_id" IS NULL)')
 @Check('CHK_asignacion_tema_modalidad', '("grupo_id" IS NULL) <> ("estudiante_id" IS NULL)')
 @Check('CHK_asignacion_tema_anulacion', '("estado" = \'VIGENTE\' AND "causa_anulacion" IS NULL AND "motivo_anulacion" IS NULL AND "anulada_por_id" IS NULL AND "fecha_anulacion" IS NULL) OR ("estado" = \'ANULADA\' AND "causa_anulacion" IS NOT NULL AND "motivo_anulacion" IS NOT NULL AND length(btrim("motivo_anulacion")) > 0 AND "anulada_por_id" IS NOT NULL AND "fecha_anulacion" IS NOT NULL)')
 export class AsignacionTema {
@@ -20,8 +22,10 @@ export class AsignacionTema {
   @Column({ type: 'uuid', name: 'tema_id' }) tema_id: string;
   @ManyToOne(() => Tema, { nullable: false, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'tema_id' }) tema: Tema;
   @Column({ type: 'uuid', name: 'periodo_id' }) periodo_id: string;
-  @Column({ type: 'uuid', name: 'postulacion_id' }) postulacion_id: string;
-  @ManyToOne(() => Postulacion, { nullable: false, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'postulacion_id' }) postulacion: Postulacion;
+  /** Nulo solo en asignaciones administrativas (origen ADMIN), que no provienen de una postulación. */
+  @Column({ type: 'uuid', name: 'postulacion_id', nullable: true }) postulacion_id: string | null;
+  @ManyToOne(() => Postulacion, { nullable: true, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'postulacion_id' }) postulacion: Postulacion | null;
+  @Column({ type: 'enum', enum: AsignacionTemaOrigen, enumName: 'asignacion_tema_origen_enum', default: AsignacionTemaOrigen.POSTULACION }) origen: AsignacionTemaOrigen;
   @Column({ type: 'uuid', name: 'grupo_id', nullable: true }) grupo_id: string | null;
   @ManyToOne(() => Grupo, { nullable: true, onDelete: 'RESTRICT' }) @JoinColumn({ name: 'grupo_id' }) grupo: Grupo | null;
   @Column({ type: 'uuid', name: 'estudiante_id', nullable: true }) estudiante_id: string | null;

@@ -26,8 +26,13 @@ export class PostulacionPersistenciaService {
     return `"${schema}"`;
   }
 
+  /**
+   * Composición cerrada: el grupo registró alguna postulación o recibió una asignación de tema
+   * (los equipos administrativos no tienen postulación). Igual que `proteger_composicion_postulacion`.
+   */
   async grupoTienePostulaciones(manager: EntityManager, grupoId: string): Promise<boolean> {
-    const rows = await manager.query(`SELECT 1 FROM ${this.schema(manager)}."postulacion" WHERE "grupo_id" = $1 LIMIT 1`, [grupoId]) as unknown[];
+    const s = this.schema(manager);
+    const rows = await manager.query(`SELECT 1 FROM ${s}."postulacion" WHERE "grupo_id" = $1 UNION ALL SELECT 1 FROM ${s}."asignacion_tema" WHERE "grupo_id" = $1 LIMIT 1`, [grupoId]) as unknown[];
     return rows.length > 0;
   }
 

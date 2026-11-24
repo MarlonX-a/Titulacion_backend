@@ -51,6 +51,28 @@ export class GrupoIntegrantePersistenciaService {
     await this.auditoria.registrar(manager, { actor, accion: action, entidad_tipo: 'grupo_integrante', entidad_id: member.id, valores_anteriores: { estado: previousState, rol_en_grupo: previousRole }, valores_nuevos: { estado: member.estado, rol_en_grupo: member.rol_en_grupo, fecha_salida: member.fecha_salida, motivo_salida: member.motivo_salida ?? reason.trim() }, ip_origen: ip });
   }
 
+  /**
+   * Disuelve el grupo de un equipo administrativo cuya asignación acaba de quedar ANULADA, en la
+   * transacción del llamador. Retira a todos los integrantes activos (quedan libres para otro
+   * equipo), cancela invitaciones pendientes y deja el grupo DISUELTO. No aplica a postulaciones:
+   * el llamador solo lo invoca cuando el origen es ADMIN. El disparador de composición admite este
+   * retiro únicamente después de que la asignación dejó de estar VIGENTE.
+   */
+  async disolverEquipoAdministrativo(manager: EntityManager, grupoId: string, actor: Usuario, motivo: string, ip: string | null): Promise<void> {
+    const group = await manager.getRepository(Grupo).findOne({ where: { id: grupoId }, lock: { mode: 'pessimistic_write' } });
+    if (!group) throw new Error('El equipo administrativo no tiene el grupo que debe disolverse.');
+    if (group.estado === GrupoEstado.DISUELTO || group.estado === GrupoEstado.ANULADO) return;
+    const members = await this.lockActiveMembers(manager, group.id);
+    const reason = motivo.trim();
+    const now = new Date();
+    for (const member of members) {
+      await this.retireMember(manager, member, reason, now);
+      await this.auditMember(manager, actor, 'DISOLVER_GRUPO', member, GrupoIntegranteEstado.ACTIVO, ip, reason);
+    }
+    await this.invitaciones.resolverPendientesDelGrupo(manager, group.id, actor, reason, ip, 'DISOLVER_GRUPO');
+    await this.updateGroupState(manager, group, GrupoEstado.DISUELTO, actor, ip, 'DISOLVER_GRUPO', reason);
+  }
+
   /** Estado del grupo tras retirar integrantes: mismas reglas que salir/retirar en la gestión de grupos. */
   nextStateAfterLeaving(group: Grupo, remaining: number): GrupoEstado {
     if (remaining === 0) return GrupoEstado.DISUELTO;

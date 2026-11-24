@@ -383,7 +383,8 @@ export class HabilitadosService {
   /**
    * Efectos de una habilitación que ya quedó NO_ADMITIDO dentro de la transacción del llamador, en
    * este orden:
-   * 1. anula la asignación de tema vigente del estudiante (tutor, postulación ACEPTADA y tema);
+   * 1. anula la asignación de tema vigente del estudiante (tutor, postulación ACEPTADA y tema).
+   *    Si es un equipo administrativo grupal, disuelve ese grupo en el mismo paso;
    * 2. cancela sus postulaciones PENDIENTE del período, individual y del grupo al que pertenece
    *    (los participantes activos reciben POSTULACION_CANCELADA antes del retiro);
    * 3. lo retira de su grupo activo (traspaso de representación o disolución incluidos), salvo que

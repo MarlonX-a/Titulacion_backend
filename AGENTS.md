@@ -787,7 +787,8 @@ uno y exclusivo en el otro provoca interbloqueos (40P01).
 
 ## Asignación de tema
 
-Una asignación debe provenir de una postulación aceptada.
+Una asignación debe provenir de una postulación aceptada o de un equipo conformado por ADMIN
+(`origen = 'ADMIN'`, ver «Equipos administrativos» abajo).
 
 Un tema puede tener como máximo una asignación VIGENTE.
 
@@ -831,6 +832,29 @@ tutor vigente terminado, postulación ACEPTADA → ANULADA, tema ASIGNADO →
 PUBLICADO con historial, auditorías y aviso `TEMA_ANULADO`. Con causa OTRA las
 auditorías son `ANULAR_POSTULACION_MANUAL` y `REPUBLICAR_TEMA_ANULACION`. Las
 postulaciones rechazadas previamente no se reactivan.
+
+Equipos administrativos (diseño `docs/superpowers/specs/2026-11-23-equipos-admin-y-pat-inverso-design.md`,
+pieza A; migración `20261123120000-EquiposAdmin`): ADMIN conforma un equipo sin postulación con
+`POST /periodos/:periodoId/equipos` (`estudiante_ids` 1..10, el primero es el representante;
+`tema_id`; `docente_ids` 1..10 en orden de prioridad; `nombre_grupo` opcional; `motivo`). Solo con el
+período en POSTULACION_CERRADA o EN_CURSO, tema PUBLICADO sin postulaciones abiertas en el período,
+composición acorde al tipo del tema y estudiantes habilitados elegibles (PENDIENTE solo antes del
+inicio), de la carrera del tema, sin grupo activo, asignación vigente ni postulación activa. En una
+transacción SERIALIZABLE crea el grupo ACTIVO (con dos o más), la asignación con
+`asignacion_tema.origen = 'ADMIN'` y `postulacion_id` nulo (`CHK_asignacion_tema_origen`), el tema
+ASIGNADO con historial, los candidatos en `candidato_tutor` (únicos por docente y prioridad, inmutables)
+y, si hay un único candidato, el tutor vigente `CANDIDATO_CONFIRMADO` (respeta la carga tutorial).
+Con varios candidatos `POST .../equipos/:asignacionId/tutor` (`candidato_id`, `motivo` obligatorio si
+ya hay tutor) confirma uno. `GET .../equipos` lista los equipos ADMIN y `GET .../equipos/:id` da el
+detalle con el estado PAT por integrante. Los disparadores aceptan el origen ADMIN, exigen
+habilitación en PostgreSQL y cierran la composición del grupo mientras la asignación está
+VIGENTE (un alta sigue cerrado por cualquier asignación del grupo, vigente o anulada). Anular
+esa asignación —manual o por incumplimiento— disuelve el grupo en la misma transacción
+(`DISOLVER_GRUPO`): los integrantes quedan RETIRADOS y pueden volver a conformar un equipo. Una
+postulación no disuelve su grupo. La anulación existente funciona sin postulación. Auditoría
+`CONFORMAR_EQUIPO`, `CREAR_GRUPO`, `INCORPORAR_INTEGRANTE_GRUPO`, `ASIGNAR_TEMA`,
+`ASIGNAR_TUTOR`/`REEMPLAZAR_TUTOR`, `DISOLVER_GRUPO`. Verificador
+`npm run db:verify-equipos-admin`; comportamiento en `test/attack/equipos-admin.attack-spec.ts`.
 
 ---
 
