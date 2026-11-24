@@ -7,8 +7,8 @@ import { CrearEquipoDto } from './dto/crear-equipo.dto.js';
 import { nombreGrupoPorDefecto, periodoAdmiteEquipos, situacionAdmiteAsignacion } from './reglas-equipo.js';
 
 describe('reglas de equipos administrativos', () => {
-  it('solo conforma equipos con la postulación cerrada o durante la titulación', () => {
-    expect(Object.values(PeriodoEstado).filter(periodoAdmiteEquipos)).toEqual([PeriodoEstado.POSTULACION_CERRADA, PeriodoEstado.EN_CURSO]);
+  it('conforma equipos durante la postulación, con la postulación cerrada o durante la titulación', () => {
+    expect(Object.values(PeriodoEstado).filter(periodoAdmiteEquipos)).toEqual([PeriodoEstado.POSTULACION_ABIERTA, PeriodoEstado.POSTULACION_CERRADA, PeriodoEstado.EN_CURSO]);
   });
 
   it('admite ADMITIDO siempre y PENDIENTE solo antes del inicio de titulación', () => {

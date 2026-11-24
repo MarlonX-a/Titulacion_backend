@@ -837,7 +837,9 @@ Equipos administrativos (diseño `docs/superpowers/specs/2026-11-23-equipos-admi
 pieza A; migración `20261123120000-EquiposAdmin`): ADMIN conforma un equipo sin postulación con
 `POST /periodos/:periodoId/equipos` (`estudiante_ids` 1..10, el primero es el representante;
 `tema_id`; `docente_ids` 1..10 en orden de prioridad; `nombre_grupo` opcional; `motivo`). Solo con el
-período en POSTULACION_CERRADA o EN_CURSO, tema PUBLICADO sin postulaciones abiertas en el período,
+período en POSTULACION_ABIERTA, POSTULACION_CERRADA o EN_CURSO (migración `20261124150000-EquiposPostulacionAbierta`:
+en la postulación abierta solo ADMIN opera este flujo y el tutor de un equipo ADMIN puede asignarse; las
+asignaciones por postulación siguen limitadas a CERRADA o EN_CURSO), tema PUBLICADO sin postulaciones abiertas en el período,
 composición acorde al tipo del tema y estudiantes habilitados elegibles (PENDIENTE solo antes del
 inicio), de la carrera del tema, sin grupo activo, asignación vigente ni postulación activa. En una
 transacción SERIALIZABLE crea el grupo ACTIVO (con dos o más), la asignación con

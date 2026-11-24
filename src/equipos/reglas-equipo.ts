@@ -2,11 +2,15 @@ import { PeriodoEstado } from '../periodos/enums/periodo-estado.enum.js';
 import { SituacionIngreso } from '../habilitados/enums/situacion-ingreso.enum.js';
 
 /**
- * Estados del período en que ADMIN conforma equipos: con la postulación cerrada (no compite con
- * postulaciones en curso) y durante la titulación. Coinciden con los estados en que
- * `proteger_asignacion_tutor` admite asignar el tutor vigente.
+ * Estados del período en que ADMIN conforma equipos: durante la postulación, cerrada o en curso.
+ * En la primera etapa solo ADMIN opera este flujo, así que puede convivir con postulaciones
+ * abiertas. `proteger_asignacion_tutor` admite el tutor de un equipo ADMIN en los mismos estados.
  */
-export const ESTADOS_PERIODO_EQUIPOS: readonly PeriodoEstado[] = [PeriodoEstado.POSTULACION_CERRADA, PeriodoEstado.EN_CURSO];
+export const ESTADOS_PERIODO_EQUIPOS: readonly PeriodoEstado[] = [
+  PeriodoEstado.POSTULACION_ABIERTA,
+  PeriodoEstado.POSTULACION_CERRADA,
+  PeriodoEstado.EN_CURSO,
+];
 
 export function periodoAdmiteEquipos(estado: PeriodoEstado): boolean {
   return ESTADOS_PERIODO_EQUIPOS.includes(estado);
