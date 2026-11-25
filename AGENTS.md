@@ -837,7 +837,9 @@ Equipos administrativos (diseño `docs/superpowers/specs/2026-11-23-equipos-admi
 pieza A; migración `20261123120000-EquiposAdmin`): ADMIN conforma un equipo sin postulación con
 `POST /periodos/:periodoId/equipos` (`estudiante_ids` 1..10, el primero es el representante;
 `tema_id`; `docente_ids` 1..10 en orden de prioridad; `nombre_grupo` opcional; `motivo`). Solo con el
-período en POSTULACION_CERRADA o EN_CURSO, tema PUBLICADO sin postulaciones abiertas en el período,
+período en POSTULACION_ABIERTA, POSTULACION_CERRADA o EN_CURSO (migración `20261124150000-EquiposPostulacionAbierta`:
+en la postulación abierta solo ADMIN opera este flujo y el tutor de un equipo ADMIN puede asignarse; las
+asignaciones por postulación siguen limitadas a CERRADA o EN_CURSO), tema PUBLICADO sin postulaciones abiertas en el período,
 composición acorde al tipo del tema y estudiantes habilitados elegibles (PENDIENTE solo antes del
 inicio), de la carrera del tema, sin grupo activo, asignación vigente ni postulación activa. En una
 transacción SERIALIZABLE crea el grupo ACTIVO (con dos o más), la asignación con
@@ -863,7 +865,8 @@ institucionales no se pisan. `.../confirmar` escribe `estudiante_datos_pat` y
 `contenido_pat_estudiante` (`modalidad_detalle` se imprime en el Word) y deja el tutor
 vigente desde los candidatos. ADMIN puede generar (`.../generar-pat`; el disparador acepta
 ADMIN como solicitante y el estudiante sigue siendo el dueño) y subir el PDF firmado
-(`.../documento-pat`). El camino del estudiante no cambia.
+(`.../documento-pat`), también con el período en POSTULACION_ABIERTA (migración `20261124170000-EntregaPatEquiposAbierta`: solo
+asignaciones `origen = 'ADMIN'`). El camino del estudiante no cambia.
 
 Verificador
 `npm run db:verify-equipos-admin`; comportamiento en `test/attack/equipos-admin.attack-spec.ts`.
@@ -974,7 +977,7 @@ camino opcional (`origen=FIRMADO`, `firmado=true`). Contrato HTTP:
 `docs/superpowers/specs/2026-11-19-pat-automatico-design.md`.
 
 Ambas entregas (directa o firmada) requieren una generación propia y una
-asignación de tema vigente; la carga firmada acepta únicamente PDF. Se permiten en `POSTULACION_CERRADA` o `EN_CURSO`. Cada
+asignación de tema vigente; la carga firmada acepta únicamente PDF. Se permiten en `POSTULACION_ABIERTA`, `POSTULACION_CERRADA` o `EN_CURSO` (migración `20261124180000-PatPostulacionAbierta`, que alinea los triggers de contenido, generación y documento; las revisiones también se admiten en `POSTULACION_ABIERTA`, migración `20261124190000-RevisionPatPostulacionAbierta`). Cada
 integrante puede entregar por su cuenta. Las versiones se numeran por
 asignación y estudiante, registran SHA-256 y no se sobrescriben. Una nueva
 versión solo se permite si la entrega individual más reciente está `OBSERVADO`

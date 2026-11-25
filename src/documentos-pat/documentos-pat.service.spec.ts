@@ -170,7 +170,7 @@ describe('DocumentosPatService', () => {
       const admin = setup();
       await expect(admin.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', { id: 'admin', rol: UsuarioRol.ADMIN } as Usuario, null)).rejects.toMatchObject({ status: 403 });
       const closed = setup({ periodState: 'ARCHIVADO' });
-      await expect(closed.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', closed.actor, null)).rejects.toThrow('postulaciones cerradas');
+      await expect(closed.service.entregarGenerada('period-id', 'assignment-id', 'generation-id', closed.actor, null)).rejects.toThrow('postulaciones abiertas, cerradas');
     });
 
     it('un integrante activo del grupo entrega su propia generación', async () => {

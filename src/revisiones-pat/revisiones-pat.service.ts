@@ -37,7 +37,7 @@ export class RevisionesPatService {
           `SELECT "estado"::text AS estado FROM ${this.schema()}."periodo_titulacion" WHERE "id"=$1 FOR UPDATE`, [periodoId],
         ) as Array<{ estado: string }>;
         if (!period[0]) throw new NotFoundException('No existe el período indicado.');
-        if (!['POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('Solo se pueden revisar PAT con postulaciones cerradas o durante titulación.');
+        if (!['POSTULACION_ABIERTA', 'POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('Solo se pueden revisar PAT con postulaciones abiertas, cerradas o durante titulación.');
         const assignments = await manager.query(
           `SELECT "id", "estado"::text AS estado FROM ${this.schema()}."asignacion_tema" WHERE "id"=$1 AND "periodo_id"=$2 FOR UPDATE`, [asignacionId, periodoId],
         ) as Array<{ id: string; estado: string }>;

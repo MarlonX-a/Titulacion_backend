@@ -76,10 +76,9 @@ export class DocumentosPatService {
           `SELECT "estado"::text AS estado FROM ${this.schema()}."periodo_titulacion" WHERE "id"=$1 FOR UPDATE`, [periodoId],
         ) as Array<{ estado: string }>;
         if (!period[0]) throw new NotFoundException('No existe el período indicado.');
-        if (!['POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('La entrega PAT solo se permite con postulaciones cerradas o durante titulación.');
+        if (!['POSTULACION_ABIERTA', 'POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('La entrega PAT solo se permite con postulaciones abiertas, cerradas o durante titulación.');
         const context = await this.context(manager, periodoId, asignacionId, true);
-        if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');
-        if (estudianteObjetivo) await this.exigirParticipante(manager, periodoId, asignacionId, estudianteObjetivo);
+        if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');        if (estudianteObjetivo) await this.exigirParticipante(manager, periodoId, asignacionId, estudianteObjetivo);
         else await this.authorizeUpload(manager, context, actor);
         const participantId = estudianteObjetivo ?? await this.studentId(manager, actor.id);
         if (!participantId || participantId !== studentId) throw new ForbiddenException('No se pudo validar el estudiante de la sesión.');
@@ -148,10 +147,9 @@ export class DocumentosPatService {
           `SELECT "estado"::text AS estado FROM ${this.schema()}."periodo_titulacion" WHERE "id"=$1 FOR UPDATE`, [periodoId],
         ) as Array<{ estado: string }>;
         if (!period[0]) throw new NotFoundException('No existe el período indicado.');
-        if (!['POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('La entrega PAT solo se permite con postulaciones cerradas o durante titulación.');
+        if (!['POSTULACION_ABIERTA', 'POSTULACION_CERRADA', 'EN_CURSO'].includes(period[0].estado)) throw new ConflictException('La entrega PAT solo se permite con postulaciones abiertas, cerradas o durante titulación.');
         const context = await this.context(manager, periodoId, asignacionId, true);
-        if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');
-        await this.authorizeUpload(manager, context, actor);
+        if (context.asignacion_estado !== AsignacionTemaEstado.VIGENTE) throw new ConflictException('La asignación de tema ya no está vigente.');        await this.authorizeUpload(manager, context, actor);
         const generation = await manager.getRepository(GeneracionPat).findOne({ where: { id: generacionId, asignacion_tema_id: asignacionId, estudiante_id: studentId }, lock: { mode: 'pessimistic_write' } });
         if (!generation) throw new NotFoundException('No existe esa generación PAT.');
         if (generation.estado !== 'LISTO' || !generation.ruta_almacenamiento || !generation.hash_sha256 || !generation.tamano_bytes) throw new ConflictException('La generación todavía no está disponible.');

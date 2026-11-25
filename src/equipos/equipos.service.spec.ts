@@ -115,6 +115,14 @@ describe('EquiposService.crear', () => {
     expect(result).toEqual({ equipo: { id: s.saved.asignaciones[0]!.id }, advertencias: [] });
   });
 
+  it('conforma un equipo con el período en POSTULACION_ABIERTA', async () => {
+    const s = setup({ periodo: PeriodoEstado.POSTULACION_ABIERTA });
+    const result = await s.service.crear('periodo-id', dto(['e1'], ['d1']), s.actor as never, '127.0.0.1');
+
+    expect(s.saved.asignaciones[0]).toMatchObject({ origen: AsignacionTemaOrigen.ADMIN, estado: AsignacionTemaEstado.VIGENTE });
+    expect(result).toEqual({ equipo: { id: s.saved.asignaciones[0]!.id }, advertencias: [] });
+  });
+
   it('conforma un grupo con el primero como representante y registra los candidatos en orden sin tutor vigente', async () => {
     const s = setup({ tipoTema: TipoTema.GRUPO });
     const result = await s.service.crear('periodo-id', dto(['e2', 'e1', 'e3'], ['d3', 'd1', 'd2']), s.actor as never, null);
@@ -229,6 +237,6 @@ describe('EquiposService.asignarTutorDesdeCandidatos', () => {
 
   it('no admite asignar tutores con el período en BORRADOR', async () => {
     const s = setup({ periodo: PeriodoEstado.BORRADOR, asignacionExistente: {} });
-    await expect(s.service.asignarTutorDesdeCandidatos('periodo-id', 'asig-1', { candidato_id: 'cand-2' }, s.actor as never, null)).rejects.toThrow('POSTULACION_CERRADA o EN_CURSO');
+    await expect(s.service.asignarTutorDesdeCandidatos('periodo-id', 'asig-1', { candidato_id: 'cand-2' }, s.actor as never, null)).rejects.toThrow('POSTULACION_ABIERTA o POSTULACION_CERRADA o EN_CURSO');
   });
 });
