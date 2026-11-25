@@ -35,6 +35,7 @@ interface Opciones {
   propuestas?: typeof propuestas;
   grupal?: boolean;
   periodo?: string;
+  origen?: string;
   generacion?: Partial<GeneracionPat> | null;
   atascadas?: Array<{ id: string; ciclo: number }>;
   updateAffected?: number;
@@ -70,7 +71,7 @@ function setup(options: Opciones = {}) {
     }
     if (sql.includes('SELECT t."descripcion",t."linea_id"')) return [{ descripcion: 'Descripción del tema', linea_id: 'line-id' }];
     if (sql.includes('"periodo_titulacion" WHERE "id"=$1 FOR UPDATE')) return [{ estado: options.periodo ?? 'POSTULACION_CERRADA' }];
-    if (sql.includes('SELECT "id","periodo_id","estado"::text AS estado FROM')) return [{ id: ASIGNACION, periodo_id: PERIODO, estado: 'VIGENTE' }];
+    if (sql.includes('SELECT "id","periodo_id","estado"::text AS estado,"origen"::text AS origen FROM')) return [{ id: ASIGNACION, periodo_id: PERIODO, estado: 'VIGENTE', origen: options.origen ?? 'POSTULACION' }];
     if (sql.includes('SELECT 1 FROM "public"."asignacion_tema" a')) return options.owner === false ? [] : [{}];
     if (sql.includes('"estudiante" WHERE "usuario_id"')) return [{ id: 'student-id' }];
     return [];
@@ -195,6 +196,30 @@ describe('GeneracionesPatService', () => {
       expect(error).toBeInstanceOf(BadRequestException);
       expect(((error as BadRequestException).getResponse() as { pendientes: string[] }).pendientes).toEqual(resumen.pendientes);
       expect(queue.add).not.toHaveBeenCalled();
+    });
+
+    it('genera el PAT de un equipo ADMIN con la postulación abierta', async () => {
+      const { service, actor, generacionRepo } = setup({ personal: personalCompleto, contenido: { confirma_problematica: true }, periodo: 'POSTULACION_ABIERTA', origen: 'ADMIN' });
+      await expect(service.solicitar(PERIODO, ASIGNACION, {}, actor, null)).resolves.toEqual({ id: 'new-gen', estado: 'EN_COLA' });
+      expect(generacionRepo.create).toHaveBeenCalled();
+    });
+
+    it('genera el PAT de un equipo ADMIN con datos pendientes y deja en blanco lo que falte', async () => {
+      const { service, actor, generacionRepo } = setup({ periodo: 'POSTULACION_ABIERTA', origen: 'ADMIN' });
+      await expect(service.solicitar(PERIODO, ASIGNACION, {}, actor, null)).resolves.toEqual({ id: 'new-gen', estado: 'EN_COLA' });
+      expect(generacionRepo.create).toHaveBeenCalled();
+    });
+
+    it('genera el PAT de una asignación por postulación con la postulación abierta', async () => {
+      const { service, actor, generacionRepo } = setup({ personal: personalCompleto, contenido: { confirma_problematica: true }, periodo: 'POSTULACION_ABIERTA', origen: 'POSTULACION' });
+      await expect(service.solicitar(PERIODO, ASIGNACION, {}, actor, null)).resolves.toEqual({ id: 'new-gen', estado: 'EN_COLA' });
+      expect(generacionRepo.create).toHaveBeenCalled();
+    });
+
+    it('exige datos completos al estudiante con la postulación abierta', async () => {
+      const { service, actor, generacionRepo } = setup({ periodo: 'POSTULACION_ABIERTA', origen: 'POSTULACION' });
+      await expect(service.solicitar(PERIODO, ASIGNACION, {}, actor, null)).rejects.toThrow('Completa los datos obligatorios');
+      expect(generacionRepo.create).not.toHaveBeenCalled();
     });
 
     it('congela los valores autocompletados y el tutor predeterminado en la instantánea', async () => {
